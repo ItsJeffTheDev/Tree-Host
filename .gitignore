@@ -1,0 +1,7 @@
+data/
+team-data/
+team-data-merged-*/
+local-data/
+node_modules/
+*.log
+BuildTools.log.txt

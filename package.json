@@ -1,0 +1,14 @@
+{
+  "name": "mc-plugin-test",
+  "version": "1.0.0",
+  "description": "Local Minecraft test server manager for plugin developers (Paper, Purpur, Folia, Spigot, Vanilla, Fabric, Velocity, BungeeCord...)",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

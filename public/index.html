@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Honey Host</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 34'%3E%3Cpath d='M17 1.5l14 8v15l-14 8-14-8v-15z' fill='%23f5b50a'/%3E%3Cpath d='M17 9l7 4v8l-7 4-7-4v-8z' fill='%23b37d00'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="offline" class="offline hidden">Lost connection to the manager. Is the Honey Host window still open? Reconnecting...</div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <div class="brand-name">Honey Host</div>
+          <div class="brand-sub">by Honey Pixel Studios</div>
+        </div>
+      </div>
+      <div id="space-switch" class="space-switch hidden"></div>
+      <button id="btn-new" class="btn primary block">+ New server</button>
+      <nav id="server-list" class="server-list"></nav>
+      <a href="help.html" target="_blank" class="help-link">📖 Help &amp; guides</a>
+      <div id="user-box" class="user-box hidden"></div>
+      <div id="sys-info" class="sys-info"></div>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toasts" class="toasts"></div>
+  <script src="team.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
