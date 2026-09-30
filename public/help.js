@@ -7,6 +7,7 @@ const DOCS = [
   { id: 'servers', title: 'Servers and plugins', icon: '🧱', group: 'Using Honey Host' },
   { id: 'roles', title: 'Roles & permissions', icon: '🔑', group: 'Using Honey Host' },
   { id: 'admin-guide', title: 'Admin guide', icon: '🛠', group: 'For admins' },
+  { id: 'cloud-hosting', title: 'Hosting on Render', icon: '☁', group: 'For admins' },
   { id: 'troubleshooting', title: 'Troubleshooting', icon: '🩹', group: 'Help' },
 ];
 

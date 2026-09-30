@@ -12,6 +12,7 @@ The guides are also in the dashboard under **📖 Help & guides**.
 | [Getting started](public/docs/getting-started.md) | Everyone: get an account, Team vs Solo, join a server |
 | [Servers and plugins](public/docs/servers.md) | Developers: create servers, add plugins, deploy from Gradle/Maven, debug |
 | [Admin guide](public/docs/admin-guide.md) | The admin: host PC, playit.gg, the Gateway, inviting and approving people, backups |
+| [Hosting on Render](public/docs/cloud-hosting.md) | The admin: running Honey Host on Render instead of a PC |
 | [Troubleshooting](public/docs/troubleshooting.md) | Common problems and fixes |
 
 ## Quick start (host PC)
@@ -23,6 +24,12 @@ The guides are also in the dashboard under **📖 Help & guides**.
 4. Invite your developers: **Team → Invite a developer**, or let them **Request access** and approve them.
 
 Full steps: [Admin guide](public/docs/admin-guide.md).
+
+## Hosting on Render
+
+The repo includes a `render.yaml` Blueprint. Build command `npm install`, start command `node src/server.js`,
+a disk mounted at `/var/data` with `MCPT_DATA=/var/data/honey-host`, and `PLAYIT_SECRET` so players can join.
+Minecraft needs a plan with at least 2 GB of RAM. Full steps and limits: [Hosting on Render](public/docs/cloud-hosting.md).
 
 ## Features
 
@@ -39,7 +46,13 @@ Full steps: [Admin guide](public/docs/admin-guide.md).
 - **Automatic whitelisting** of everyone's Minecraft name.
 - **Reach it from anywhere:** a permanent public dashboard link (Tailscale Funnel, or Cloudflare automatically),
   home-network links, and public game addresses (playit.gg).
-- **Stays up:** keeps the host PC awake while running, and starts chosen servers automatically after a restart.
+- **Stays up:** keeps the host PC awake while running, starts chosen servers automatically after a restart, and
+  restarts servers after a crash (with a crash-loop limit).
+- **Team tools:** an activity feed of who did what, Discord notifications, "I'm testing this" markers so nobody
+  restarts a server mid-test, and per-server notes.
+- **Backups:** one-click and scheduled backups of worlds and plugins, with restore.
+- **Plugin browser:** search Modrinth and install plugins that match the server's type and version.
+- **Memory overview:** real memory use per server and a low-memory warning.
 
 ## Files and scripts
 

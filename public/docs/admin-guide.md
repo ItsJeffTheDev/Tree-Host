@@ -166,12 +166,33 @@ Send new developers:
 
 ---
 
+## 5b. Activity feed and Discord notifications
+
+**📋 Activity** (bottom of the sidebar) lists who did what: starts, stops, deploys, plugin installs, crashes,
+backups, new servers and new people. Everyone can see it; activity on Solo servers is only shown to their owner and
+admins.
+
+To also get these in Discord:
+
+1. In Discord, open the channel's settings (⚙) → **Integrations** → **Webhooks** → **New Webhook** →
+   **Copy Webhook URL**.
+2. In Honey Host: **Team → Discord notifications**, paste the link and click **Save**.
+3. Click **Send test**, then tick the events you want (crashes, deploys, new people, testing sessions and so on).
+
+> **Note:** Solo servers are never posted to Discord.
+
+---
+
 ## 6. Day-to-day
 
 - **The dashboard link:** with Tailscale Funnel (section 1c) it never changes. Without it, the Cloudflare link changes
   whenever Honey Host restarts; the new one is shown in the Honey Host window and in the sidebar (**Internet:**).
   Game addresses from playit don't change either way.
-- **Memory:** check the host PC isn't running out. Stop servers nobody uses; admins can see and stop anyone's.
+- **Memory:** the bar at the bottom of the sidebar shows how much of the host PC's memory is in use (hover it to see
+  each running server). Honey Host also warns in the console when a server starts with too little free memory.
+  Stop servers nobody uses; admins can see and stop anyone's.
+- **Crashes:** turn on **Settings → Restart after a crash** for servers that should stay up, and turn on crash
+  notifications in Discord (section 5b).
 - **Updating Honey Host:** close the window, replace the `src`, `public` and `tools` folders and the `.bat` files
   with the new version, and start `Start.bat` again. Everything in `data/` is kept.
 
@@ -181,7 +202,9 @@ Send new developers:
 
 Everything lives in the **`data/`** folder: accounts, servers, worlds, plugins, settings.
 
-- **Back up:** stop the servers (or close Honey Host), then copy `data/` somewhere safe.
+- **Back up a server's world:** use its **Backups** tab (see [Servers and plugins](servers.md#backups)). Backups are
+  stored in `data/backups/`.
+- **Back up everything:** stop the servers (or close Honey Host), then copy `data/` somewhere safe.
 - **Move to a new PC:** copy the whole Honey Host folder **including `data/`**, run `Start.bat` there, then in the
   dashboard: **Team → Public game addresses → Disconnect → Connect** so it uses the new PC's playit. Recreate the
   Gateway tunnel for the new PC's agent on playit.gg, and run `Remove-Playit.bat` on the old PC.

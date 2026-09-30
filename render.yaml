@@ -1,0 +1,22 @@
+# Render Blueprint for Honey Host (https://render.com/docs/blueprint-spec).
+# Render → New → Blueprint → pick this repo, or use these values in a normal Web Service.
+services:
+  - type: web
+    name: honey-host
+    runtime: node
+    # Minecraft servers need memory: 512 MB plans can run the dashboard but not a real server.
+    # "standard" (2 GB) fits the Gateway plus one small Paper server.
+    plan: standard
+    buildCommand: npm install
+    startCommand: node src/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: MCPT_DATA
+        value: /var/data/honey-host
+      - key: PLAYIT_SECRET
+        sync: false # paste the secret key of a playit.gg agent made for Render (see docs/cloud-hosting.md)
+    # Accounts, servers, worlds and backups live here. Without a disk they are wiped on every deploy.
+    disk:
+      name: honey-host-data
+      mountPath: /var/data
+      sizeGB: 10

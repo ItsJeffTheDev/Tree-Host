@@ -131,6 +131,53 @@ the server restarts automatically.
 
 ---
 
+## Browse and install plugins
+
+On the **Plugins** tab, click **🔎 Browse plugins** (or **Browse mods** on Fabric). It searches
+[Modrinth](https://modrinth.com) and **only shows plugins that work on this server's type and version**, so you
+don't have to check compatibility yourself.
+
+1. Search for a plugin (or pick one from the popular list).
+2. Click **Install**. The newest matching version is downloaded into `plugins/` (checked against Modrinth's checksum).
+3. If the server is running, **Restart** it to load the plugin.
+
+> **Tip:** handy for dependencies your plugin needs while testing, like LuckPerms, Vault, WorldEdit or ProtocolLib.
+
+---
+
+## "I'm testing this"
+
+On a Team server, click **🙋 I'm testing this** before you start testing. Add what you're testing (optional) and
+for how long. Then:
+
+- Everyone sees a yellow banner with your name, and a 🙋 next to the server in the sidebar.
+- Anyone else who clicks **Stop**, **Restart** or **Kill** is asked to confirm first.
+- It ends by itself when the time runs out, or click **Done testing**. Admins can end anyone's session.
+
+> **Note:** it's a friendly heads-up, not a lock. People can still stop the server after confirming.
+
+---
+
+## Backups
+
+The **Backups** tab keeps copies of a server's worlds (overworld, nether, end) and its `plugins/` folder,
+including plugin configs and data.
+
+- **Back up now:** give it a name like *before testing the new economy* and click the button. It works while the
+  server is running: the world is saved first, and saving is paused while it copies.
+- **Automatic backups:** pick *every 6 hours*, *every 12 hours* or *once a day*. The newest 7 automatic backups are
+  kept; ones you make yourself are kept until you delete them.
+- **Restore:** stop the server, then click **Restore** on a backup. The current world and `plugins/` folder are
+  replaced by the backup's copies.
+
+> **Warning:** restoring throws away anything changed since that backup. Make a fresh backup first if you might
+> want the current state back.
+
+> **Note:** a few files a running server keeps locked (for example LuckPerms' database on Windows) can't be copied
+> while it runs. The console lists any skipped files. Back up a stopped server to get absolutely everything.
+
+---
+
 ## Edit config files
 
 The **Files** tab shows everything in the server's folder. Click a file to edit it, then **Save** (or Ctrl+S). The
@@ -143,7 +190,12 @@ only exist after the server has started once, and most changes need a **Restart*
 
 The **Settings** tab:
 
-- **General**: name, memory, port.
+- **General**: name, memory, port, and:
+  - **Start automatically** when Honey Host starts.
+  - **Restart after a crash**: waits 5 seconds and starts it again. It gives up after 3 crashes in 10 minutes
+    so a broken plugin can't crash-loop forever.
+  - **Notes**: shown to everyone at the top of the server, e.g. what it's for or "don't reset the world".
+- The header shows how much memory the server is really using next to its limit (for example **RAM 1.1 GB / 1.5 GB**).
 - **Server software**: switch type, version or build. The new jar is downloaded on the next start; worlds and
   plugins are kept. **Re-download jar now** gets the latest build.
 - **Java**: leave on **Automatic**. Honey Host picks and downloads the right Java for the version.

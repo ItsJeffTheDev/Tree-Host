@@ -16,14 +16,21 @@ const { detectFunnel } = require('./funnel');
 const { keepAwake } = require('./keepawake');
 const providers = require('./providers');
 const java = require('./java');
+const { Activity } = require('./activity');
+const backups = require('./backups');
+const modrinth = require('./modrinth');
+const { startPlayitAgent } = require('./playitagent');
 
+// Cloud hosting (Render sets RENDER=true): always team mode, behind the host's HTTPS proxy, on the port it gives us.
+const CLOUD = process.env.RENDER === 'true' || process.env.MCPT_CLOUD === '1';
+const CLOUD_URL = process.env.RENDER_EXTERNAL_URL || process.env.MCPT_PUBLIC_URL || null;
 // Team mode: logins required, reachable through a tunnel, deploy API for remote developers.
-const TEAM = process.env.MCPT_TEAM === '1';
-const USE_TUNNEL = TEAM && process.env.MCPT_TUNNEL === '1';
-const PORT = Number(process.env.MCPT_PORT) || (TEAM ? 8766 : 8765);
+const TEAM = process.env.MCPT_TEAM === '1' || CLOUD;
+const USE_TUNNEL = TEAM && !CLOUD && process.env.MCPT_TUNNEL === '1';
+const PORT = Number(process.env.MCPT_PORT) || (CLOUD && Number(process.env.PORT)) || (TEAM ? 8766 : 8765);
 // Team mode also listens on the local network (logins protect it); personal mode stays on this PC only.
 const HOST = process.env.MCPT_HOST || (TEAM ? '0.0.0.0' : '127.0.0.1');
-const NO_OPEN = process.argv.includes('--no-open');
+const NO_OPEN = process.argv.includes('--no-open') || CLOUD;
 const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
 const SESSION_COOKIE = 'mcpt_session';
 // In personal mode everyone who can reach the dashboard is the PC's owner.
@@ -33,7 +40,9 @@ const manager = new Manager();
 const auth = new Auth();
 const tunnel = new Tunnel();
 const playit = new Playit();
+const activity = new Activity();
 manager.teamMode = TEAM;
+manager.activity = activity;
 // Who gets whitelisted on a server: everyone for team servers, only the owner for solo servers.
 manager.accessNames = (inst) => {
   if (inst.cfg.space === 'solo') {
@@ -99,8 +108,12 @@ function openBrowser(url) {
 
 // ---------- auth helpers ----------
 
-/** True for requests from this PC, which is where the Cloudflare tunnel connects from. */
+/**
+ * True for requests from this PC, which is where the Cloudflare tunnel connects from.
+ * In the cloud every request comes through the host's own proxy, so its forwarding headers are trusted.
+ */
 function fromThisPc(req) {
+  if (CLOUD) return true;
   const a = req.socket.remoteAddress || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
@@ -140,7 +153,7 @@ function isHttps(req) {
 // The public dashboard link: a permanent Tailscale Funnel link if set up, otherwise the Cloudflare quick tunnel.
 let funnelUrl = null;
 
-const publicUrl = () => funnelUrl || tunnel.url;
+const publicUrl = () => CLOUD_URL || funnelUrl || tunnel.url;
 
 function sessionCookie(req, token, maxAge = 30 * 86400) {
   return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
@@ -230,6 +243,20 @@ function broadcast(event, data, inst) {
 
 manager.on('status', (inst) => broadcast('status', inst.toJSON(), inst));
 manager.on('removed', (id) => broadcast('removed', { id }));
+
+/** Activity about a solo server is only shown to its owner and admins; sign-ups only to admins. */
+function canSeeEvent(user, e) {
+  if (!TEAM) return true;
+  if (!user) return false;
+  if (e.kind === 'people') return user.role === 'admin';
+  if (e.space === 'solo') return e.owner === user.id || user.role === 'admin';
+  return true;
+}
+activity.listeners.add((e) => {
+  const msg = `event: activity\ndata: ${JSON.stringify(e)}\n\n`;
+  for (const [res, user] of clients) if (canSeeEvent(user, e)) res.write(msg);
+});
+const who = (req) => (req.user && !req.user.local ? req.user.username : 'You');
 manager.on('log', (id, line) => {
   if (!pendingLogs.has(id)) pendingLogs.set(id, []);
   pendingLogs.get(id).push(line);
@@ -257,10 +284,11 @@ route(
       needsSetup: TEAM && auth.users.length === 0,
       user: user ? (user.local ? user : auth.publicUser(user)) : null,
       publicUrl: publicUrl(),
-      permanentLink: !!funnelUrl,
+      permanentLink: !!(funnelUrl || CLOUD_URL),
+      cloud: CLOUD,
       allowSignup: TEAM && auth.settings.allowSignup,
       pendingCount: user && user.role === 'admin' && TEAM ? auth.pendingCount() : 0,
-      lanUrls: TEAM && HOST !== '127.0.0.1' && user ? lanUrls() : [],
+      lanUrls: TEAM && !CLOUD && HOST !== '127.0.0.1' && user ? lanUrls() : [],
     };
   },
   { public: true },
@@ -292,7 +320,9 @@ route(
   'POST',
   '/api/auth/accept-invite',
   async (req, res) => {
-    const token = await auth.acceptInvite(await readJson(req), clientIp(req));
+    const body = await readJson(req);
+    const token = await auth.acceptInvite(body, clientIp(req));
+    activity.log('people', String(body.username || 'Someone'), 'joined the team with an invite link');
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     return HANDLED;
   },
@@ -303,7 +333,9 @@ route(
   'POST',
   '/api/auth/signup',
   async (req, res) => {
-    const token = await auth.signup(await readJson(req), clientIp(req));
+    const body = await readJson(req);
+    const token = await auth.signup(body, clientIp(req));
+    activity.log('people', String(body.username || 'Someone'), 'asked to join the team (waiting for approval)');
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     return HANDLED;
   },
@@ -350,7 +382,11 @@ route(
 route(
   'POST',
   '/api/team/users/:uid/approve',
-  async (req, res, p) => auth.publicUser(await auth.approve(p.uid, (await readJson(req)).role)),
+  async (req, res, p) => {
+    const u = auth.publicUser(await auth.approve(p.uid, (await readJson(req)).role));
+    activity.log('people', who(req), `approved ${u.username} as ${u.role}`);
+    return u;
+  },
   { admin: true },
 );
 route(
@@ -370,6 +406,28 @@ route(
   async (req, res, p) => {
     if (p.uid === req.user.id) throw httpError(400, 'You cannot remove yourself.');
     await auth.removeUser(p.uid);
+    return { ok: true };
+  },
+  { admin: true },
+);
+
+// ---------- activity feed & Discord notifications ----------
+
+route('GET', '/api/activity', (req, res, p, q) => {
+  const serverId = q.get('server');
+  const limit = Math.min(Number(q.get('limit')) || 100, 500);
+  return activity.events
+    .filter((e) => canSeeEvent(req.user, e) && (!serverId || e.serverId === serverId))
+    .slice(-limit)
+    .reverse();
+});
+route('GET', '/api/team/notifications', () => activity.publicSettings(), { admin: true });
+route('PUT', '/api/team/notifications', async (req) => activity.setSettings(await readJson(req)), { admin: true });
+route(
+  'POST',
+  '/api/team/notifications/test',
+  async (req) => {
+    await activity.testDiscord(who(req));
     return { ok: true };
   },
   { admin: true },
@@ -490,10 +548,14 @@ route('GET', '/api/events', (req, res) => {
   return HANDLED;
 });
 
-route('GET', '/api/system', async () => ({
+route('GET', '/api/health', () => ({ ok: true }), { public: true });
+route('GET', '/api/system', async (req) => ({
   platform: process.platform,
   totalMemMb: Math.floor(os.totalmem() / 1048576),
   freeMemMb: Math.floor(os.freemem() / 1048576),
+  servers: [...manager.instances.values()]
+    .filter((i) => i.proc)
+    .map((i) => ({ id: i.cfg.id, name: i.cfg.name, usedMb: i.memUsedMb || null, maxMb: Number(i.cfg.memoryMb) || null })),
   dataDir: DATA,
   lanIps: Object.values(os.networkInterfaces())
     .flat()
@@ -517,7 +579,9 @@ route('POST', '/api/servers', async (req) => {
   delete body.gateway;
   if (TEAM && req.user.role === 'tester') throw httpError(403, "Testers can't create servers.");
   const space = TEAM ? (body.space === 'solo' ? 'solo' : 'team') : undefined;
-  return (await manager.create(body, { space, owner: space === 'solo' ? req.user.id : undefined, createdBy: req.user.id })).toJSON();
+  const inst = await manager.create(body, { space, owner: space === 'solo' ? req.user.id : undefined, createdBy: req.user.id });
+  inst.logActivity('server', who(req), `created ${inst.provider.label} ${inst.cfg.version} server "${inst.cfg.name}"`);
+  return inst.toJSON();
 });
 route('GET', '/api/servers/:id', (req, res, p) => getFor(req, p.id).toJSON());
 route('PATCH', '/api/servers/:id', async (req, res, p) => {
@@ -532,7 +596,8 @@ route('PATCH', '/api/servers/:id', async (req, res, p) => {
   return (await manager.update(p.id, body)).toJSON();
 });
 route('DELETE', '/api/servers/:id', async (req, res, p) => {
-  getFor(req, p.id, 'manage');
+  const inst = getFor(req, p.id, 'manage');
+  inst.logActivity('server', who(req), `deleted server "${inst.cfg.name}"`);
   await manager.remove(p.id);
   return { ok: true };
 });
@@ -615,20 +680,81 @@ route('POST', '/api/servers/:id/launch-client', async (req, res, p) => getFor(re
   admin: true,
 });
 
+// "I'm testing this": tells the team someone is using a server right now.
+route('POST', '/api/servers/:id/claim', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'control');
+  const body = await readJson(req);
+  const cl = manager.claim(p.id, req.user.local ? { id: 'local', username: 'You' } : req.user, body);
+  inst.logActivity('claim', who(req), `started testing${cl.note ? `: ${cl.note}` : ''}`);
+  return inst.toJSON();
+});
+route('DELETE', '/api/servers/:id/claim', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'control');
+  const cl = inst.activeClaim();
+  if (cl && TEAM && cl.userId !== req.user.id && req.user.role !== 'admin') {
+    throw httpError(403, `${cl.username} is testing on this server. Only they or an admin can end it.`);
+  }
+  manager.release(p.id);
+  if (cl) inst.logActivity('claim', who(req), cl.userId === req.user.id ? 'finished testing' : `ended ${cl.username}'s test session`);
+  return inst.toJSON();
+});
+
+// Backups
+route('GET', '/api/servers/:id/backups', (req, res, p) => backups.list(getFor(req, p.id)));
+route('POST', '/api/servers/:id/backups', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'control');
+  const b = await backups.create(inst, { label: (await readJson(req)).label, by: who(req) });
+  inst.sysLog(
+    `Backup made by ${who(req)}: ${b.label} (${(b.size / 1048576).toFixed(1)} MB).` +
+      (b.skipped.length ? ` Skipped ${b.skipped.length} file(s) the server had locked: ${b.skipped.slice(0, 5).join(', ')}` : ''),
+  );
+  inst.logActivity('backup', who(req), `made a backup "${b.label}"`);
+  return b;
+});
+route('POST', '/api/servers/:id/backups/:bid/restore', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'manage');
+  const b = await backups.restore(inst, p.bid);
+  inst.sysLog(`${who(req)} restored the backup "${b.label}" from ${new Date(b.createdAt).toLocaleString()}.`);
+  inst.logActivity('backup', who(req), `restored the backup "${b.label}"`);
+  return b;
+});
+route('DELETE', '/api/servers/:id/backups/:bid', async (req, res, p) => {
+  await backups.remove(getFor(req, p.id, 'manage'), p.bid);
+  return { ok: true };
+});
+
+// Plugin / mod browser (Modrinth)
+route('GET', '/api/servers/:id/modrinth/search', (req, res, p, q) => modrinth.search(getFor(req, p.id), q.get('q')));
+route('POST', '/api/servers/:id/modrinth/install', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'plugins');
+  const body = await readJson(req);
+  const r = await modrinth.install(inst, body.project);
+  const what = body.title || r.file;
+  inst.sysLog(`${who(req)} installed ${what} ${r.version} from Modrinth${inst.proc ? ' (restart the server to load it)' : ''}.`);
+  inst.logActivity('deploy', who(req), `installed ${what} ${r.version} from Modrinth`);
+  return r;
+});
+
 route('POST', '/api/servers/:id/:action', async (req, res, p, q) => {
   const needs = { install: 'settings', 'reset-worlds': 'manage' }[p.action] || 'control';
   const inst = getFor(req, p.id, needs);
   switch (p.action) {
     case 'start':
+      if (!inst.proc) inst.logActivity('start', who(req), 'started the server');
+      inst.crashTimes = [];
       inst.start();
       break;
     case 'stop':
+      if (inst.proc) inst.logActivity('stop', who(req), 'stopped the server');
       inst.stop();
       break;
     case 'restart':
+      inst.logActivity('start', who(req), 'restarted the server');
+      inst.crashTimes = [];
       inst.restart();
       break;
     case 'kill':
+      if (inst.proc) inst.logActivity('stop', who(req), 'force-killed the server');
       inst.kill();
       break;
     case 'install':
@@ -636,6 +762,7 @@ route('POST', '/api/servers/:id/:action', async (req, res, p, q) => {
       break;
     case 'reset-worlds':
       await inst.resetWorlds();
+      inst.logActivity('server', who(req), 'reset the world');
       break;
     case 'open-folder': {
       requireAdmin(req);
@@ -745,6 +872,7 @@ async function main() {
     await playit.init();
     manager.defaultOwner = () => (auth.firstAdmin() || {}).id || null;
   }
+  await activity.init();
   await manager.init();
   const url = `http://localhost:${PORT}`;
   server.on('error', (e) => {
@@ -761,7 +889,10 @@ async function main() {
     console.log('');
     console.log(`  Honey Host by Honey Pixel Studios${TEAM ? ' - TEAM SERVER' : ' - local Minecraft test server manager'}`);
     console.log(`  Dashboard on this PC: ${url}`);
-    if (TEAM && HOST !== '127.0.0.1') {
+    if (CLOUD) {
+      console.log(`  Running in the cloud${CLOUD_URL ? ` at ${CLOUD_URL}` : ''}.`);
+      console.log('  Minecraft players can only join through playit.gg here (set PLAYIT_SECRET). See docs/cloud-hosting.');
+    } else if (TEAM && HOST !== '127.0.0.1') {
       console.log('  Dashboard from other PCs on your network:');
       for (const u of lanUrls()) console.log(`    ${u}`);
     }
@@ -774,8 +905,9 @@ async function main() {
     console.log('  Keep this window open while you use it. Press Ctrl+C to stop all servers and quit.');
     console.log('');
     if (!NO_OPEN) openBrowser(url);
-    if (TEAM && keepAwake()) console.log('  This PC will not go to sleep while Honey Host runs (the screen can still turn off).');
+    if (TEAM && !CLOUD && keepAwake()) console.log('  This PC will not go to sleep while Honey Host runs (the screen can still turn off).');
     if (USE_TUNNEL) startPublicLink();
+    if (process.env.PLAYIT_SECRET) startPlayitAgent(process.env.PLAYIT_SECRET.trim()).catch((e) => console.log(`  playit agent: ${e.message}`));
   });
 }
 

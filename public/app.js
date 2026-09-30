@@ -138,7 +138,7 @@ function serverItem(s) {
       <button class="server-item ${s.id === state.selected ? 'active' : ''}" data-id="${esc(s.id)}">
         <span class="dot ${esc(s.status)}"></span>
         <div>
-          <div class="si-name">${esc(s.name)}${s.isGateway ? ' <span class="badge green">Gateway</span>' : ''}</div>
+          <div class="si-name">${esc(s.name)}${s.isGateway ? ' <span class="badge green">Gateway</span>' : ''}${s.claim ? ` <span title="${esc(s.claim.username)} is testing${s.claim.note ? `: ${esc(s.claim.note)}` : ''}">🙋</span>` : ''}</div>
           <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)} · :${s.port}${s.players.length ? ` · ${s.players.length} online` : ''}</div>
         </div>
       </button>`;
@@ -166,8 +166,15 @@ function renderSysInfo() {
   const s = state.system;
   if (!s) return;
   const javas = [...new Set([...(s.java.managed || []), ...(s.java.system ? [s.java.system] : [])])].sort((a, b) => a - b);
+  const used = s.totalMemMb - s.freeMemMb;
+  const pct = Math.round((used / s.totalMemMb) * 100);
+  const running = (s.servers || []).filter((x) => state.servers.has(x.id));
   $('#sys-info').innerHTML = `
-    <div>RAM: ${fmtMem(s.totalMemMb)} total</div>
+    <div title="${running.map((x) => `${esc(x.name)}: ${x.usedMb ? fmtMem(x.usedMb) : '?'} of ${fmtMem(x.maxMb)}`).join('&#10;') || 'No servers running'}">
+      RAM: ${fmtMem(used)} of ${fmtMem(s.totalMemMb)} in use${running.length ? ` · ${running.length} server${running.length > 1 ? 's' : ''} running` : ''}
+      <div class="mem-bar ${pct > 90 ? 'high' : pct > 75 ? 'mid' : ''}"><div style="width:${pct}%"></div></div>
+      ${s.freeMemMb < 1024 ? '<div class="ub-warn">Memory is almost full. Stop a server or lower its memory.</div>' : ''}
+    </div>
     <div>Java ready: ${javas.length ? javas.map((j) => `<b>${j}</b>`).join(', ') : 'none yet (auto-downloads)'}</div>`;
 }
 
@@ -209,7 +216,7 @@ function renderMain() {
     <header class="srv-header">
       <div id="srv-head"></div>
       <div class="tabs">
-        ${['console', 'plugins', 'files', 'settings']
+        ${['console', 'plugins', 'backups', 'files', 'settings']
           .filter((t) => (t === 'files' ? can('files', s) : t === 'settings' ? can('settings', s) : true))
           .map(
             (t) =>
@@ -276,9 +283,10 @@ function renderHeader() {
         ${s.isGateway ? '<div class="small muted" style="margin:-2px 0 6px">The front door for every server. Players join here and switch with <b>/server &lt;name&gt;</b>. Its server list is managed by Honey Host.</div>' : ''}
         <div class="meta">
           <span><b>${esc(s.typeLabel)}</b> ${esc(s.version)} ${buildText ? `<span class="muted">(${esc(buildText)})</span>` : ''}</span>
-          <span>RAM <b>${fmtMem(s.memoryMb)}</b></span>
+          <span title="Memory the server is using right now / the most it may use">RAM <b>${s.memUsedMb ? `${fmtMem(s.memUsedMb)} / ` : ''}${fmtMem(s.memoryMb)}</b></span>
           <span>Java <b>${s.javaMajor || 'auto'}</b></span>
           ${alive && s.startedAt ? `<span>Up <b id="uptime">${fmtUptime(Date.now() - s.startedAt)}</b></span>` : ''}
+          ${s.autoRestart ? '<span title="Restarts by itself after a crash">♻ auto-restart</span>' : ''}
           ${s.kind !== 'proxy' && alive ? `<span title="${esc(s.players.join(', '))}">Players <b>${s.players.length}</b>${s.players.length ? `: ${esc(s.players.slice(0, 5).join(', '))}${s.players.length > 5 ? '…' : ''}` : ''}</span>` : ''}
         </div>
       </div>
@@ -323,6 +331,7 @@ function renderHeader() {
           : ''
       }
       <div class="actions">
+        ${claimButton(s)}
         <button class="btn primary" data-act="start" ${alive || busy ? 'disabled' : ''}>▶ Start</button>
         <button class="btn" data-act="restart" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>⟳ Restart</button>
         <button class="btn" data-act="stop" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>■ Stop</button>
@@ -330,10 +339,16 @@ function renderHeader() {
         ${hostFeatures() ? '<button class="btn" data-act="open-folder" title="Open the server folder">📁 Folder</button>' : ''}
       </div>
     </div>
+    ${claimBanner(s)}
+    ${s.notes ? `<div class="srv-notes"><span class="muted small">📝 Notes</span> ${esc(s.notes)}</div>` : ''}
     ${progress}`;
   $$('[data-act]', el).forEach((b) =>
-    b.addEventListener('click', () => attempt(() => api('POST', `/api/servers/${s.id}/${b.dataset.act}`))),
+    b.addEventListener('click', () => {
+      if (!confirmClaimed(current() || s, b.dataset.act)) return;
+      attempt(() => api('POST', `/api/servers/${s.id}/${b.dataset.act}`));
+    }),
   );
+  bindClaim(s, el);
   if ($('#btn-play', el)) $('#btn-play', el).addEventListener('click', () => launchClient(s));
   if ($('#btn-share', el)) {
     $('#btn-share', el).addEventListener('click', (e) => {
@@ -415,6 +430,7 @@ function renderTab() {
   if (state.tab === 'console') renderConsole(body);
   else if (state.tab === 'plugins') renderPlugins(body);
   else if (state.tab === 'files') renderFiles(body);
+  else if (state.tab === 'backups') renderBackups(body);
   else renderSettings(body);
 }
 
@@ -671,6 +687,7 @@ async function renderPlugins(body) {
       <div class="row" style="justify-content:space-between;margin-bottom:10px">
         <h3>${isMods ? 'Installed mods' : 'Installed plugins'}</h3>
         <div class="row">
+          ${!noPlugins && can('plugins', s) ? `<button class="btn sm primary" id="browse-plugins">🔎 Browse ${isMods ? 'mods' : 'plugins'}</button>` : ''}
           ${hostFeatures() ? `<button class="btn sm" id="open-plugins">📁 Open ${dirName}/</button>` : ''}
           <button class="btn sm" id="refresh-plugins">Refresh</button>
         </div>
@@ -705,6 +722,7 @@ async function renderPlugins(body) {
     );
   }
   $('#refresh-plugins').addEventListener('click', loadPlugins);
+  if ($('#browse-plugins')) $('#browse-plugins').addEventListener('click', () => openPluginBrowser(s));
 
   const dz = $('#dropzone');
   dz.addEventListener('dragover', (e) => {
@@ -1008,6 +1026,11 @@ async function renderSettings(body) {
         </div>
         <label class="check"><input type="checkbox" name="autoStart" ${s.autoStart ? 'checked' : ''}>
           <span>Start automatically when Honey Host starts <span class="muted">(so it comes back by itself after the host PC restarts)</span></span></label>
+        <label class="check"><input type="checkbox" name="autoRestart" ${s.autoRestart ? 'checked' : ''}>
+          <span>Restart after a crash <span class="muted">(waits 5 seconds; gives up after 3 crashes in 10 minutes)</span></span></label>
+        <label class="field">Notes <span class="muted small" style="font-weight:400">(shown to everyone at the top of this server, e.g. what it's for or test accounts)</span>
+          <textarea name="notes" rows="2" maxlength="2000" placeholder="e.g. Used for testing the shop plugin. Don't reset the world.">${esc(s.notes || '')}</textarea>
+        </label>
         <label class="field">Public join address <span class="muted small" style="font-weight:400">(e.g. from playit.gg, shown to everyone as the address to join)</span>
           <input type="text" name="publicAddress" value="${esc(s.manualAddress || '')}" placeholder="${s.autoAddress ? `Automatic: ${esc(s.autoAddress)} (leave empty to keep it)` : 'Automatic when playit.gg is connected, or type one, e.g. my-team.joinmc.link'}">
         </label>
@@ -1136,6 +1159,8 @@ async function renderSettings(body) {
       clientVersion: f.clientVersion.value.trim() || 'auto',
       publicAddress: f.publicAddress.value.trim(),
       autoStart: f.autoStart.checked,
+      autoRestart: f.autoRestart.checked,
+      notes: f.notes.value,
     };
     if (f.eula) patch.eula = f.eula.checked;
     if (!hostFeatures()) {
@@ -1485,6 +1510,7 @@ function connectEvents() {
   });
   es.addEventListener('status', (e) => applyStatus(JSON.parse(e.data)));
   es.addEventListener('removed', (e) => applyRemoved(JSON.parse(e.data).id));
+  es.addEventListener('activity', (e) => onActivity(JSON.parse(e.data)));
   es.addEventListener('log', (e) => {
     const { id, lines } = JSON.parse(e.data);
     if (id === state.selected && state.log.id === id) appendLines(lines);
@@ -1548,6 +1574,12 @@ async function init() {
   renderSpaceSwitch();
   renderUserBox();
   $('#btn-new').addEventListener('click', openNewServer);
+  $('#activity-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    openActivity();
+  });
+  renderActivityLink();
+  setInterval(refreshSystem, 20000);
   try {
     state.types = await api('GET', '/api/types');
     state.typeMap = new Map(state.types.map((t) => [t.id, t]));

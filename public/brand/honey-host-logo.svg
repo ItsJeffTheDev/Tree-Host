@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="honey" gradientUnits="userSpaceOnUse" x1="0" y1="48" x2="0" y2="480">
+      <stop offset="0" stop-color="#ffd54a"/>
+      <stop offset="1" stop-color="#f29d00"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#23262d"/>
+      <stop offset="1" stop-color="#121418"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- outer honeycomb cell -->
+  <polygon points="256,62 424,159 424,353 256,450 88,353 88,159" fill="url(#honey)" stroke="url(#honey)" stroke-width="28" stroke-linejoin="round"/>
+  <!-- inner cell -->
+  <polygon points="256,118 375,187 375,325 256,394 137,325 137,187" fill="#1a1c21" stroke="#1a1c21" stroke-width="14" stroke-linejoin="round"/>
+  <!-- H -->
+  <g fill="url(#honey)">
+    <rect x="190" y="188" width="38" height="136" rx="8"/>
+    <rect x="284" y="188" width="38" height="136" rx="8"/>
+    <rect x="220" y="238" width="72" height="34" rx="6"/>
+  </g>
+  <!-- honey drip -->
+  <path d="M236 440 L276 440 L276 458 C276 470 267 478 256 478 C245 478 236 470 236 458 Z" fill="url(#honey)"/>
+</svg>

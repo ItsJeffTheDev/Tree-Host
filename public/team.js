@@ -34,7 +34,8 @@ function isTester() {
 
 /** Features that act on the host PC itself (Play, open folder, local build watching, custom paths). */
 function hostFeatures() {
-  return isAdmin();
+  // In the cloud there is no desktop to open folders or play on.
+  return isAdmin() && !state.me?.cloud;
 }
 
 // ---------- sign in / setup / invite ----------
@@ -297,6 +298,10 @@ async function openTeam() {
           : '<p class="hint small" style="margin:0">⚠ No public address yet. Invite links only work once the tunnel is running (start with Start-Team.bat).</p>'
       }
     </div>
+    <div class="card stack" id="notify-card">
+      <h3>Discord notifications</h3>
+      <div id="notify-body" class="muted">Loading...</div>
+    </div>
     <div class="card stack" id="gateway-card">
       <h3>Gateway: one address for every server</h3>
       <div id="gateway-body" class="muted">Loading...</div>
@@ -373,6 +378,7 @@ async function openTeam() {
   load().catch((e) => toast(e.message, 'error'));
   renderPlayit(root).catch((e) => toast(e.message, 'error'));
   renderGateway(root);
+  renderNotifications(root).catch((e) => toast(e.message, 'error'));
   api('GET', '/api/team/settings')
     .then((st) => {
       const box = $('#allow-signup', root);

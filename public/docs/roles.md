@@ -22,6 +22,11 @@ it at any time under **Team → Members**.
 | See Team servers and their console log | ✓ | ✓ | ✓ |
 | Join Team servers in Minecraft (whitelisted automatically) | ✓ | ✓ | ✓ |
 | Start, stop and restart Team servers | ✓ | ✓ | ✓ |
+| Mark a server with **I'm testing this** | ✓ | ✓ | ✓ |
+| End someone else's testing session | | | ✓ |
+| See backups, make a backup | ✓ | ✓ | ✓ |
+| Restore or delete backups | | only servers **they created** | ✓ |
+| See the Activity feed | ✓ | ✓ | ✓ |
 | Create Team servers | | ✓ | ✓ |
 | Have private **Solo** servers | | ✓ | ✓ |
 | Change settings, game settings and memory | | ✓ | ✓ |
@@ -35,6 +40,7 @@ it at any time under **Team → Members**.
 | See which plugins are installed | ✓ | ✓ | ✓ |
 | Type console commands, use Whitelist/OP buttons | | ✓ | ✓ |
 | Upload, enable, disable and delete plugins | | ✓ | ✓ |
+| Browse and install plugins from Modrinth | | ✓ | ✓ |
 | Deploy from their build (API tokens) | | ✓ | ✓ |
 | Browse and edit server files | | ✓ | ✓ |
 
@@ -45,6 +51,7 @@ it at any time under **Team → Members**.
 | Invite people, approve or reject access requests | | | ✓ |
 | Change roles, remove people, turn access requests on or off | | | ✓ |
 | Connect playit.gg, set up and configure the Gateway | | | ✓ |
+| Set up Discord notifications | | | ✓ |
 | Custom Java paths and Custom JAR servers | | | ✓ |
 | 🎮 Play on host, 📁 open folders, auto-deploy from a folder on the host PC | | | ✓ |
 

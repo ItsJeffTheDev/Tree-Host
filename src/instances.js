@@ -9,6 +9,8 @@ const EventEmitter = require('events');
 const { SERVERS, CONFIG_FILE, DATA } = require('./paths');
 const { getProvider } = require('./providers');
 const java = require('./java');
+const os = require('os');
+const backups = require('./backups');
 const client = require('./client');
 const {
   exists,
@@ -172,6 +174,12 @@ class Instance extends EventEmitter {
       space: c.space || 'solo',
       isGateway: !!c.gateway,
       autoStart: !!c.autoStart,
+      autoRestart: !!c.autoRestart,
+      autoBackup: c.autoBackup || 'off',
+      notes: c.notes || '',
+      claim: this.activeClaim(),
+      memUsedMb: this.proc ? this.memUsedMb || null : null,
+      crashes: (this.crashTimes || []).length,
       gatewayDefault: c.gatewayDefault || null,
       gateway: this.manager.gatewayInfo(this),
       owner: c.owner || null,
@@ -413,6 +421,24 @@ class Instance extends EventEmitter {
     }
   }
 
+  // ----- team: claims & activity -----
+
+  /** "Someone is testing on this server" marker; expires by itself. */
+  activeClaim() {
+    const cl = this.cfg.claim;
+    if (!cl) return null;
+    if (cl.until && cl.until < Date.now()) {
+      this.cfg.claim = null;
+      this.save();
+      return null;
+    }
+    return cl;
+  }
+
+  logActivity(kind, who, text) {
+    if (this.manager.activity) this.manager.activity.log(kind, who, text, this);
+  }
+
   // ----- Gateway (one Velocity proxy in front of every server) -----
 
   /**
@@ -503,6 +529,14 @@ class Instance extends EventEmitter {
         throw new Error(`Port ${this.cfg.port} is already in use (another server running?). Change it in Settings.`);
       }
       await this.syncWatchedPlugins();
+      const freeMb = Math.floor(os.freemem() / 1048576);
+      const needMb = Math.max(512, Number(this.cfg.memoryMb) || 2048);
+      if (freeMb < needMb + 512) {
+        this.sysLog(
+          `Warning: this PC only has about ${freeMb} MB of free memory and this server can use up to ${needMb} MB. ` +
+            'It may run slowly or load the world very slowly. Stop other servers or lower this one\'s memory in Settings.',
+        );
+      }
       const javaExe = await this.resolveJavaExe();
       this.progress = null;
       this.spawnServer(javaExe);
@@ -566,9 +600,26 @@ class Instance extends EventEmitter {
       this.players.clear();
       c.lastPid = null;
       this.save();
-      if (expected || code === 0) this.sysLog(`Server stopped${code != null ? ` (exit code ${code})` : ''}.`);
+      const crashed = !expected && code !== 0;
+      if (!crashed) this.sysLog(`Server stopped${code != null ? ` (exit code ${code})` : ''}.`);
       else this.sysLog(`Server exited unexpectedly (${signal || `exit code ${code}`}). Check the log above for errors.`);
+      this.memUsedMb = null;
       this.setStatus('stopped');
+      if (crashed) {
+        this.crashTimes = (this.crashTimes || []).filter((t) => Date.now() - t < 10 * 60 * 1000).concat(Date.now());
+        const lastLines = this.logs.slice(-40).map((l) => stripAnsi(l.t)).filter((t) => !t.startsWith('[Honey Host]') && /exception|error|caused by/i.test(t)).slice(-2);
+        this.logActivity('crash', 'Honey Host', `reports a crash (exit code ${code})${lastLines.length ? `: ${lastLines.join(' / ').slice(0, 300)}` : ''}`);
+        if (c.autoRestart && !this.restartPending) {
+          if (this.crashTimes.length > 3) {
+            this.sysLog('Crashed more than 3 times in 10 minutes, so it won\'t be restarted automatically. Check the log above.');
+          } else {
+            this.sysLog('Restarting automatically in 5 seconds (Settings → Restart after a crash)...');
+            setTimeout(() => {
+              if (!this.proc && this.status === 'stopped') this.start();
+            }, 5000);
+          }
+        }
+      }
       if (this.restartPending) {
         setTimeout(() => {
           if (!this.restartPending) return;
@@ -972,6 +1023,7 @@ class Instance extends EventEmitter {
       `Deployed ${file}${meta.name ? ` (${meta.name} ${meta.version || ''})` : ''} from ${by}` +
         (replaced.length ? `, replacing ${replaced.join(', ')}` : ''),
     );
+    this.logActivity('deploy', by, `deployed ${meta.name ? `${meta.name} ${meta.version || ''}`.trim() : file}`);
     const restarted = wasRunning && restart;
     if (restarted) this.start();
     return { file, plugin: meta.name || null, version: meta.version || null, replaced, restarted };
@@ -1114,6 +1166,7 @@ class Manager extends EventEmitter {
     this.ownerName = () => null;
     this.defaultOwner = () => null;
     this.teamMcNames = () => [];
+    this.activity = null;
   }
 
   async init() {
@@ -1143,6 +1196,8 @@ class Manager extends EventEmitter {
       if (cfg.lastPid) await this.cleanupOrphan(inst, cfg.lastPid);
     }
     await this.fixDuplicatePorts();
+    this.memTimer = setInterval(() => this.pollMemory().catch(() => {}), 15000);
+    this.backupTimer = setInterval(() => this.autoBackups().catch(() => {}), 10 * 60 * 1000);
     // Bring servers back after a restart: the Gateway first, then servers marked "start automatically".
     const gw = this.gateway();
     if (gw && this.teamMode) setTimeout(() => gw.start(), 2000);
@@ -1360,7 +1415,7 @@ class Manager extends EventEmitter {
   async update(id, body) {
     const inst = this.get(id);
     const c = { ...inst.cfg };
-    const fields = ['name', 'type', 'version', 'build', 'memoryMb', 'port', 'java', 'jvmArgs', 'serverArgs', 'eula', 'customJar', 'onPluginChange', 'clientVersion', 'publicAddress', 'autoStart'];
+    const fields = ['name', 'type', 'version', 'build', 'memoryMb', 'port', 'java', 'jvmArgs', 'serverArgs', 'eula', 'customJar', 'onPluginChange', 'clientVersion', 'publicAddress', 'autoStart', 'autoRestart', 'autoBackup', 'notes'];
     for (const f of fields) if (body[f] !== undefined) c[f] = body[f];
     c.memoryMb = Number(c.memoryMb);
     c.port = Number(c.port);
@@ -1372,6 +1427,9 @@ class Manager extends EventEmitter {
     c.clientVersion = String(c.clientVersion || 'auto').trim() || 'auto';
     c.publicAddress = String(c.publicAddress || '').trim().slice(0, 200);
     c.autoStart = !!c.autoStart;
+    c.autoRestart = !!c.autoRestart;
+    c.autoBackup = ['off', '6h', '12h', 'daily'].includes(c.autoBackup) ? c.autoBackup : 'off';
+    c.notes = String(c.notes || '').slice(0, 2000);
     this.validate(c);
     if (c.port !== inst.cfg.port && this.usedPorts(id).has(c.port)) throw new Error(`Port ${c.port} is used by another server here`);
     if (c.type !== inst.cfg.type || c.version !== inst.cfg.version) c.javaMajor = null;
@@ -1389,6 +1447,7 @@ class Manager extends EventEmitter {
     this.instances.delete(id);
     await this.saveNow();
     await fsp.rm(inst.dir, { recursive: true, force: true }).catch(() => {});
+    await backups.removeAll(id);
     this.emit('removed', id);
     this.serversChanged();
   }
@@ -1420,6 +1479,85 @@ class Manager extends EventEmitter {
     inst.watchState.delete(wid);
     this.save();
     inst.emitStatus();
+  }
+
+  // ----- claims -----
+
+  claim(id, user, { note, minutes }) {
+    const inst = this.get(id);
+    const mins = Math.min(Math.max(Number(minutes) || 60, 5), 24 * 60);
+    inst.cfg.claim = {
+      userId: user.id,
+      username: user.username,
+      note: String(note || '').trim().slice(0, 120),
+      since: Date.now(),
+      until: Date.now() + mins * 60000,
+    };
+    this.save();
+    inst.emitStatus();
+    return inst.cfg.claim;
+  }
+
+  release(id) {
+    const inst = this.get(id);
+    const had = inst.cfg.claim;
+    inst.cfg.claim = null;
+    this.save();
+    inst.emitStatus();
+    return had;
+  }
+
+  // ----- memory monitor -----
+
+  /** Reads how much memory each running server's Java process really uses. */
+  async pollMemory() {
+    const running = [...this.instances.values()].filter((i) => i.proc && i.proc.pid);
+    if (!running.length) return;
+    const byPid = new Map();
+    try {
+      if (process.platform === 'win32') {
+        const { stdout } = await run('tasklist', ['/FO', 'CSV', '/NH', '/FI', 'IMAGENAME eq java.exe']);
+        for (const line of stdout.split(/\r?\n/)) {
+          const cols = line.split('","').map((x) => x.replace(/"/g, ''));
+          if (cols.length >= 5) byPid.set(Number(cols[1]), Math.round(Number(cols[4].replace(/[^\d]/g, '')) / 1024));
+        }
+      } else {
+        for (const i of running) {
+          const st = await fsp.readFile(`/proc/${i.proc.pid}/status`, 'utf8').catch(() => '');
+          const m = /VmRSS:\s+(\d+)/.exec(st);
+          if (m) byPid.set(i.proc.pid, Math.round(Number(m[1]) / 1024));
+        }
+      }
+    } catch {
+      return;
+    }
+    for (const i of running) {
+      const mb = byPid.get(i.proc.pid);
+      if (mb && mb !== i.memUsedMb) {
+        i.memUsedMb = mb;
+        i.emitStatus();
+      }
+    }
+  }
+
+  // ----- automatic backups -----
+
+  async autoBackups() {
+    const every = { '6h': 6, '12h': 12, daily: 24 };
+    for (const inst of this.instances.values()) {
+      const hours = every[inst.cfg.autoBackup];
+      if (!hours || inst.backingUp) continue;
+      if (Date.now() - (inst.cfg.lastAutoBackup || 0) < hours * 3600 * 1000) continue;
+      // Only back up servers that have been used since the last backup (or have never been backed up).
+      inst.cfg.lastAutoBackup = Date.now();
+      this.save();
+      try {
+        const b = await backups.create(inst, { automatic: true });
+        inst.sysLog(`Automatic backup made (${(b.size / 1048576).toFixed(1)} MB).`);
+      } catch (e) {
+        if (!/Nothing to back up/.test(e.message)) inst.sysLog(`Automatic backup failed: ${e.message}`);
+      }
+    }
   }
 
   /** Graceful shutdown of every running server (used when the app exits). */

@@ -148,6 +148,18 @@ playit only lets its website create tunnels. With the Gateway you need exactly o
 Nothing is listening on that tunnel's local port on this PC. Either the Gateway isn't running, the tunnel points at
 the wrong port, or playit is installed on a different PC than Honey Host.
 
+**The playit window keeps saying `timeout waiting for register response` or `timeout waiting for pong`**
+The playit app can't reach playit.gg's servers, so no tunnel works (players time out). In order:
+
+1. Check [status.playit.gg](https://status.playit.gg) for an outage.
+2. Restart the agent: close the playit window, or run `net stop playit` then `net start playit` in an admin
+   Command Prompt.
+3. Make sure the same agent isn't running on two PCs, or in the cloud too. One agent = one PC.
+4. Allow playit through the firewall: **Windows Security → Firewall → Allow an app** → tick playit for
+   **Private** and **Public**. playit uses **UDP**; some routers, school/work networks and VPNs block it.
+5. If Tailscale is set to use an **exit node** on that PC, turn the exit node off.
+6. Still stuck? Try another network (e.g. a phone hotspot) to confirm it's the network.
+
 **Honey Host is linked to a different playit agent**
 Happens after moving to another PC. **Team → Public game addresses → Use this PC's playit.**
 
