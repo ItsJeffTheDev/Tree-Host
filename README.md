@@ -21,7 +21,7 @@ Tree Host is a small project looking for people who want to build a hosting comp
 | **Community & support** | Moderating the Discord, helping customers |
 
 **How to join:** hop into the [Discord](https://discord.gg/a37pbwajKd), open a ticket in **#get-help** and tell us what
-you'd like to do. Developers: read [CONTRIBUTING.md](CONTRIBUTING.md) and look at the
+you'd like to do. Team members get invited to this (private) GitHub repo. Developers: read [CONTRIBUTING.md](CONTRIBUTING.md) and look at the
 [roadmap](docs/ROADMAP.md) for good first tasks.
 
 ## Quick start (development)
@@ -102,6 +102,11 @@ Also on the website under **Help**.
 | [Troubleshooting](public/docs/troubleshooting.md) | Common problems and fixes |
 | [Roles & permissions](public/docs/roles.md) | Admins: what customers, support staff and admins can do |
 | [Running Tree Host](public/docs/hosting-guide.md) | Admins: rent a server, DNS, install, Stripe, email, go-live checklist |
+
+## License
+
+This is a **private repository**. The Tree Host code is proprietary (all rights reserved): please don't share or
+reuse it outside the team.
 
 ## Security
 
