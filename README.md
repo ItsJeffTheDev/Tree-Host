@@ -28,7 +28,15 @@ sudo bash /opt/tree-host/deploy/install.sh
 ```
 
 Settings live in `/etc/tree-host.env` (template: [deploy/tree-host.env.example](deploy/tree-host.env.example)).
-Updates: `sudo bash /opt/tree-host/deploy/update.sh`. Full steps: [Running Tree Host](public/docs/hosting-guide.md).
+Full steps: [Running Tree Host](public/docs/hosting-guide.md).
+
+| Command (on the server) | What it does |
+|---|---|
+| `sudo bash /opt/tree-host/deploy/doctor.sh` | Health check: services, settings, DNS, HTTPS, firewall, disk, backups |
+| `sudo bash /opt/tree-host/deploy/update.sh` | Pull the newest code and restart (servers stop cleanly) |
+| `sudo bash /opt/tree-host/deploy/deploy-key.sh` | One time: lets the server pull from the private GitHub repo |
+| `sudo systemctl start tree-host-backup` | Back up now (also runs every night) |
+| `journalctl -u tree-host -f` | Live log |
 
 ## Run locally (development)
 
@@ -69,7 +77,7 @@ on Windows/macOS set `TREEHOST_ISOLATION=docker` (with Docker Desktop running) t
 | `src/auth.js` | Accounts, sessions, invites, Firebase sign-in, API tokens |
 | `src/firebase.js`, `src/store.js` | Firebase token checks, Realtime Database storage (local files as backup) |
 | `public/` | Website, dashboard and docs |
-| `deploy/` | Installer, systemd service, Caddy config, settings template |
+| `deploy/` | Installer, updater, health check, nightly backups, systemd units, Caddy config, settings template |
 
 ## Security
 

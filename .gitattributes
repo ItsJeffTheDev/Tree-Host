@@ -2,3 +2,4 @@
 deploy/* text eol=lf
 *.bat text eol=crlf
 *.png binary
+*.service text eol=lf

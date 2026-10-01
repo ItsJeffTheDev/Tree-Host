@@ -1,11 +1,12 @@
 {
   "name": "tree-host",
   "version": "1.0.0",
-  "description": "Tree Host: Minecraft test server manager for plugin developers (Paper, Purpur, Folia, Spigot, Vanilla, Fabric, Velocity, BungeeCord...)",
+  "description": "Tree Host: Minecraft server hosting platform (website, billing, dashboard, Docker-isolated servers)",
   "private": true,
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "check": "node -e \"for (const d of ['src','public']) for (const f of require('fs').readdirSync(d)) if (f.endsWith('.js')) require('child_process').execFileSync(process.execPath, ['--check', d + '/' + f], { stdio: 'inherit' })\""
   },
   "engines": {
     "node": ">=20"

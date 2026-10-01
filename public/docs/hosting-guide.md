@@ -133,20 +133,24 @@ show your server's IP).
    sudo git clone https://github.com/ItsJeffTheDev/Honey-Host.git /opt/tree-host
    ```
 
-3. Run the installer. It installs Docker, Node.js, Caddy and a firewall, creates a `treehost` user, and starts
-   everything:
+3. Run the installer. It installs Docker, Node.js, Caddy and a firewall, creates a `treehost` user, turns on nightly
+   backups, and starts everything. It asks for **your email** (that account becomes the admin) and ends with a health
+   check:
 
    ```bash
    sudo bash /opt/tree-host/deploy/install.sh
    ```
 
-4. Before opening the site, put **your own email** in `/etc/tree-host.env`:
+4. Fix anything the health check marks **FAIL**, and run it again whenever something seems wrong:
 
-   ```
-   TREEHOST_ADMIN_EMAILS=you@example.com
+   ```bash
+   sudo bash /opt/tree-host/deploy/doctor.sh
    ```
 
-   and run `sudo systemctl restart tree-host`. Then sign up at **https://treehost.online/dashboard** with that email,
+   It checks the services, your settings, that `treehost.online`, `www` and `play` point at this server, HTTPS, the
+   firewall, disk space and backups.
+
+5. Sign up at **https://treehost.online/dashboard** with that email,
    click the link in the verification email Firebase sends you, and sign in again: you're the admin. (Signing in with
    Google using that email works straight away.) Everyone else who signs up is a normal customer. Want your own servers
    too? Give yourself a free plan in **Admin → People → More → Give a free plan**.
@@ -258,7 +262,11 @@ Password reset emails come from Firebase. Tree Host itself only emails customers
 
 ### Updating Tree Host
 
-Push the new code to GitHub, then on the server:
+Once, so the server can download updates from the private repo without a token, run
+`sudo bash /opt/tree-host/deploy/deploy-key.sh` and add the key it prints in GitHub (repo → **Settings → Deploy keys**,
+read-only).
+
+Then each time: push the new code to GitHub, and on the server:
 
 ```bash
 sudo bash /opt/tree-host/deploy/update.sh
@@ -273,8 +281,19 @@ updates.
 
 Accounts, plans and subscriptions are safe in Firebase. Worlds and server files live in **`/var/lib/tree-host`**, and
 your settings in **`/etc/tree-host.env`** and **`/etc/tree-host-firebase.json`**.
-The Backups tab protects against mistakes, but not against the server dying. Copy those folders to another place every
-night, for example with your host's backup space (Hetzner Storage Box) and `restic` or `rsync`.
+The installer turns on a **nightly backup** of all three (`deploy/backup.sh`, at about 04:30). Archives go to
+`/var/backups/tree-host`, and the newest 3 are kept (`TREEHOST_BACKUP_KEEP`). Run one by hand with
+`sudo systemctl start tree-host-backup` and check it with `journalctl -u tree-host-backup -n 20`.
+
+Copies on the same machine don't help if the server dies. To also send them somewhere else, get storage you can reach
+over SSH (e.g. a Hetzner Storage Box, or any other Linux machine), give root's SSH key access to it, and set:
+
+```
+TREEHOST_BACKUP_RSYNC=u123456@u123456.your-storagebox.de:tree-host
+```
+
+**Restoring** on a new server: run the installer, `sudo systemctl stop tree-host`, then
+`sudo tar -xzf tree-host-....tar.gz -C /` and `sudo systemctl start tree-host`.
 
 ---
 
@@ -286,4 +305,6 @@ night, for example with your host's backup space (Hetzner Storage Box) and `rest
   a read-only system, and only its own folder mounted. Don't turn isolation off on a public host.
 - Only give **Admin** to people you trust with money and every customer's data. Use **Support** for helpers.
 - Never share `/etc/tree-host.env` or `/etc/tree-host-firebase.json`: they hold your Stripe, email and Firebase keys.
+- Leave `TREEHOST_TRUST_CLOUDFLARE=0` unless the website really sits behind Cloudflare's orange-cloud proxy; otherwise
+  visitors could fake their IP address to dodge sign-in limits.
 - Keep the Realtime Database rules locked (`.read`/`.write` false). Test-mode rules would let anyone read every account.

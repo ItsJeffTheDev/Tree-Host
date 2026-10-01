@@ -1,0 +1,8 @@
+[Unit]
+Description=Tree Host backup (worlds, server files, settings)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/tree-host/deploy/backup.sh
+Nice=19
+IOSchedulingClass=idle

@@ -9,3 +9,8 @@ test-site-data/
 # Firebase service account keys are secret
 *firebase-adminsdk*.json
 tree-host-firebase.json
+promo/
+# Secrets: any .env file, anywhere (the .env.example templates are safe to commit)
+.env
+*.env
+!*.env.example

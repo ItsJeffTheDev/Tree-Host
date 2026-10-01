@@ -22,7 +22,7 @@ const backups = require('./backups');
 const modrinth = require('./modrinth');
 
 const env = (name, fallback) => process.env[`TREEHOST_${name}`] ?? process.env[`MCPT_${name}`] ?? fallback;
-// Production: the public website address (e.g. https://treehost.net). Turns on accounts, billing and the landing page.
+// Production: the public website address (e.g. https://treehost.online). Turns on accounts, billing and the landing page.
 const PUBLIC_URL = (env('PUBLIC_URL', '') || '').replace(/\/$/, '') || null;
 const HOSTED = !!PUBLIC_URL;
 // Accounts mode: logins required (always on when hosted; TREEHOST_TEAM=1 for a private team setup).
@@ -145,7 +145,7 @@ function publicMessage(e, user) {
   let msg = (e && e.message) || String(e);
   if (TEAM && (!user || user.role !== 'admin')) {
     for (const p of [DATA, path.resolve(DATA)]) msg = msg.split(p).join('…');
-    msg = msg.replace(/[A-Za-z]:\[^\s'"]+|\/(?:home|opt|var|srv|root|tmp)\/[^\s'"]+/g, '…');
+    msg = msg.replace(/[A-Za-z]:\\[^\s'"]+|\/(?:home|opt|var|srv|root|tmp)\/[^\s'"]+/g, '…');
   }
   return msg;
 }
@@ -185,9 +185,12 @@ function fromThisPc(req) {
 }
 
 // Forwarding headers are only trusted from the local reverse proxy; anyone else could fake them.
+// Caddy replaces X-Forwarded-For with the real client address, but passes CF-Connecting-IP through untouched,
+// so that one is only trusted when the site really sits behind Cloudflare's proxy (TREEHOST_TRUST_CLOUDFLARE=1).
+const TRUST_CLOUDFLARE = env('TRUST_CLOUDFLARE') === '1';
 function clientIp(req) {
   if (fromThisPc(req)) {
-    const fwd = req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    const fwd = (TRUST_CLOUDFLARE && req.headers['cf-connecting-ip']) || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
     if (fwd) return fwd;
   }
   return req.socket.remoteAddress || 'unknown';
@@ -940,6 +943,7 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.md': 'text/markdown; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
   '.jpg': 'image/jpeg',

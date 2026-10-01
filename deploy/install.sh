@@ -10,7 +10,7 @@ DATA=/var/lib/tree-host
 
 echo "==> Installing packages (Docker, Node.js 22, Caddy, firewall)..."
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg git ufw debian-keyring debian-archive-keyring apt-transport-https
+apt-get install -y ca-certificates curl gnupg git ufw rsync unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https
 if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com | sh; fi
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
@@ -34,6 +34,11 @@ chmod 750 "$DATA"
 if [ ! -f /etc/tree-host.env ]; then
   cp "$APP/deploy/tree-host.env.example" /etc/tree-host.env
   echo "    Created /etc/tree-host.env: fill in your Stripe and email keys there."
+fi
+# Without an admin email nobody can manage the site, so ask for it now.
+if ! grep -qE '^TREEHOST_ADMIN_EMAILS=.+' /etc/tree-host.env && [ -t 0 ]; then
+  read -rp "    Your email (you become the admin when you sign up with it): " ADMIN_EMAIL
+  if [ -n "$ADMIN_EMAIL" ]; then sed -i "s|^TREEHOST_ADMIN_EMAILS=.*|TREEHOST_ADMIN_EMAILS=$ADMIN_EMAIL|" /etc/tree-host.env; fi
 fi
 chown root:treehost /etc/tree-host.env
 chmod 640 /etc/tree-host.env
@@ -76,14 +81,20 @@ for v in 21 17 8 25; do docker pull -q "eclipse-temurin:$v-jre" || true; done
 
 echo "==> Starting Tree Host and HTTPS..."
 cp "$APP/deploy/tree-host.service" /etc/systemd/system/tree-host.service
+cp "$APP/deploy/tree-host-backup.service" "$APP/deploy/tree-host-backup.timer" /etc/systemd/system/
 cp "$APP/deploy/Caddyfile" /etc/caddy/Caddyfile
 systemctl daemon-reload
-systemctl enable --now tree-host
+systemctl enable --now tree-host tree-host-backup.timer
 systemctl reload caddy || systemctl restart caddy
 
-sleep 4
+sleep 5
 echo ""
-echo "Done! Tree Host is running."
+echo "==> Checking the setup..."
+bash "$APP/deploy/doctor.sh" || true
+echo ""
+echo "Tree Host is installed."
 echo "  Website:     $(grep -E '^TREEHOST_PUBLIC_URL=' /etc/tree-host.env | cut -d= -f2)"
-echo "  Admin:       sign up with the email in TREEHOST_ADMIN_EMAILS (in /etc/tree-host.env) to become the admin."
+echo "  Settings:    sudo nano /etc/tree-host.env   then   sudo systemctl restart tree-host"
+echo "  Admin:       sign up with the email in TREEHOST_ADMIN_EMAILS to become the admin."
+echo "  Check again: sudo bash $APP/deploy/doctor.sh"
 echo "  Logs:        journalctl -u tree-host -f"
