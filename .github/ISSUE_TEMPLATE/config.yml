@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security problem
+    url: https://discord.gg/a37pbwajKd
+    about: Please report security issues privately with a ticket in our Discord, not in a public issue.
+  - name: Questions and chat
+    url: https://discord.gg/a37pbwajKd
+    about: Ask in the Tree Host Discord.
