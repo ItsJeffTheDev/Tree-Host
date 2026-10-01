@@ -1,0 +1,20 @@
+{
+  "name": "tree-host-discord",
+  "version": "1.0.0",
+  "description": "Builds and runs the Tree Host Discord server: roles, channels, permissions, embeds, AutoMod, verification, tickets, YouTube notifications",
+  "private": true,
+  "main": "src/bot.js",
+  "scripts": {
+    "setup": "node src/setup.js",
+    "check": "node src/setup.js --check",
+    "invite": "node src/invite.js",
+    "start": "node src/bot.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.27.0"
+  }
+}
