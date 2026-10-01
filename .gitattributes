@@ -1,0 +1,4 @@
+*.sh text eol=lf
+deploy/* text eol=lf
+*.bat text eol=crlf
+*.png binary

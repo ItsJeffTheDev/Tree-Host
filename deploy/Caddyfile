@@ -1,0 +1,12 @@
+# Caddy gets and renews the HTTPS certificate for treehost.online automatically.
+treehost.online {
+	encode gzip
+	reverse_proxy 127.0.0.1:8766 {
+		# live console and status updates (server-sent events) must not be buffered
+		flush_interval -1
+	}
+}
+
+www.treehost.online {
+	redir https://treehost.online{uri} permanent
+}

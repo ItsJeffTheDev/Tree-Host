@@ -4,7 +4,6 @@ const fsp = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const { DATA } = require('./paths');
-const { exists } = require('./util');
 
 const ROOT = path.join(DATA, 'backups');
 const KEEP_AUTOMATIC = 7; // automatic backups kept per server (manual ones are kept until deleted)
@@ -20,7 +19,7 @@ async function dirSize(p) {
   for (const e of entries) {
     const full = path.join(p, e.name);
     if (e.isDirectory()) total += await dirSize(full);
-    else total += (await fsp.stat(full).catch(() => ({ size: 0 }))).size;
+    else if (e.isFile()) total += (await fsp.lstat(full).catch(() => ({ size: 0 }))).size;
   }
   return total;
 }
@@ -34,8 +33,9 @@ async function copyDir(src, dest, skipped, rel = '') {
   for (const e of await fsp.readdir(src, { withFileTypes: true })) {
     const from = path.join(src, e.name);
     const to = path.join(dest, e.name);
+    if (e.isSymbolicLink()) continue; // never follow links out of the server folder
     if (e.isDirectory()) await copyDir(from, to, skipped, path.join(rel, e.name));
-    else if (e.name === 'session.lock') continue;
+    else if (!e.isFile() || e.name === 'session.lock') continue;
     else {
       try {
         await fsp.copyFile(from, to);
@@ -52,7 +52,10 @@ async function backupFolders(inst) {
   const level = (await inst.getProperties())['level-name'] || 'world';
   const names = inst.kind === 'proxy' ? ['plugins'] : [level, `${level}_nether`, `${level}_the_end`, inst.pluginDirName];
   const out = [];
-  for (const n of names) if (await exists(path.join(inst.dir, n))) out.push(n);
+  for (const n of names) {
+    const st = await fsp.lstat(path.join(inst.dir, n)).catch(() => null);
+    if (st && st.isDirectory()) out.push(n);
+  }
   return out;
 }
 
@@ -76,7 +79,10 @@ async function list(inst) {
 }
 
 /** Makes a backup. While the server runs, it saves and pauses world writes so the copy is consistent. */
-async function create(inst, { label = '', by = 'Honey Host', automatic = false } = {}) {
+async function create(inst, { label = '', by = 'Tree Host', automatic = false, maxManual = 0 } = {}) {
+  if (maxManual && !automatic && (await list(inst)).filter((b) => !b.automatic).length >= maxManual) {
+    throw Object.assign(new Error(`You can keep up to ${maxManual} backups on this plan. Delete an old one first.`), { status: 400 });
+  }
   if (inst.backingUp) throw Object.assign(new Error('A backup of this server is already running.'), { status: 400 });
   inst.backingUp = true;
   const running = inst.proc && inst.status === 'running' && inst.kind !== 'proxy';
@@ -115,7 +121,8 @@ async function create(inst, { label = '', by = 'Honey Host', automatic = false }
 
 async function prune(inst) {
   const autos = (await list(inst)).filter((b) => b.automatic);
-  for (const b of autos.slice(KEEP_AUTOMATIC)) await remove(inst, b.id);
+  // Customer servers keep fewer automatic backups (they take disk space on the host).
+  for (const b of autos.slice(inst.isCustomer ? 3 : KEEP_AUTOMATIC)) await remove(inst, b.id);
 }
 
 function backupDir(inst, id) {

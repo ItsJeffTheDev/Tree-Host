@@ -1,47 +1,15 @@
-# Servers and plugins
+# Your server
 
-Everything you need to create test servers, get your plugin onto them, and debug it.
-
-> **Note:** most of this guide is for **Developers** and **Admins**. **Testers** can start, stop and join servers and
-> watch the console. See [Roles & permissions](roles.md).
-
----
-
-## Create a server
-
-1. Pick **👥 Team** or **👤 Solo** at the top of the sidebar (see [Getting started](getting-started.md#3-team-and-solo-servers)).
-2. Click **+ New team server** / **+ New solo server**.
-3. Choose the **server software**:
-
-   | Type | Use it for |
-   |---|---|
-   | **Paper** | The default for Bukkit/Paper plugins. Pick this if unsure. |
-   | **Purpur** | Paper plus extra gameplay options. |
-   | **Folia** | Testing that your plugin works with Folia's regionised threading. |
-   | **Spigot / CraftBukkit** | Testing on plain Spigot/Bukkit. The first build of a version takes 5-15 minutes. |
-   | **Vanilla** | Official Mojang server, no plugins. Joined directly, not through the Gateway. |
-   | **Fabric** | Fabric mods (put them in the Mods tab). Joined directly, not through the Gateway. |
-   | **Velocity / Waterfall / BungeeCord** | Testing proxy plugins. |
-   | **Custom JAR** | Admins only: any server jar on the host PC. |
-
-4. Choose the **Minecraft version**. Tick **Show pre-releases and snapshots** to see test versions.
-5. **Build**: leave on **Latest stable** unless you need a specific build.
-6. Give it a **name**. It also becomes the Gateway name used with `/server`, e.g. "Lobby Test" becomes `lobby-test`.
-7. **Memory**: 2 GB is fine for most plugin tests. Don't take more than you need.
-8. **Port**: leave the suggested one.
-9. Tick **I agree to the Minecraft EULA** and click **Create server**.
-
-Honey Host downloads the server (and the right Java version) and, if ticked, starts it. The progress bar at the top
-shows what it's doing. The first start of a new version takes a minute or two.
+Everything you can do with your server from the dashboard: the console, plugins and mods, backups, files and settings.
 
 ---
 
 ## Start, stop and the console
 
-Buttons at the top of every server page:
+Buttons at the top of your server's page:
 
 - **▶ Start**: starts the server. It's ready when the status says **Running**.
-- **⟳ Restart**: stops and starts it again (needed after most config changes).
+- **⟳ Restart**: stops and starts it again (needed after most config and plugin changes).
 - **■ Stop**: saves the world and stops cleanly.
 - **Kill**: force-stops a frozen server. You may lose unsaved progress.
 
@@ -52,135 +20,82 @@ Quick buttons above the command box:
 
 | Button | Does |
 |---|---|
-| **Whitelist team / Whitelist me** | whitelists everyone allowed on this server (their Minecraft names from **Account**) |
-| **OP team / OP me** | whitelists and gives operator (admin) rights in-game |
+| **Whitelist me** | whitelists your Minecraft name (set it in **Account**) |
+| **OP me** | whitelists you and gives you operator rights in-game |
 | **OP player…** | op any player name |
-| **Creative / Survival / Day / Clear weather** | the usual test shortcuts |
-| **Plugins / TPS / Version** | quick checks |
+| **Creative / Survival / Day / Clear weather** | the usual shortcuts |
+| **Players / Plugins / TPS / Version** | quick checks |
+
+The header also shows how much **memory** the server is using right now next to its plan limit, and how much **disk** it uses.
 
 ---
 
 ## Add plugins
 
-### Option 1: drag and drop
+### Browse and install (easiest)
 
-1. Open the **Plugins** tab (**Mods** on Fabric).
+1. Open the **Plugins** tab (**Mods** on Fabric) and click **🔎 Browse plugins**.
+2. Search for a plugin. Tree Host searches [Modrinth](https://modrinth.com) and **only shows plugins that work on your
+   server's type and version**.
+3. Click **Install**, then **Restart** your server to load it.
+
+### Upload your own
+
+1. Open the **Plugins** tab.
 2. Drag your `.jar` onto the drop area, or click **browse**.
-3. **Restart** the server to load it.
+3. **Restart** the server.
 
-The list shows each plugin's name, version and `api-version` from its `plugin.yml`. **Disable** keeps the jar but
-stops it loading; **Delete** removes it.
+The list shows each plugin's name and version. **Disable** keeps the jar but stops it loading; **Delete** removes it.
 
-### Option 2: deploy straight from your build (recommended)
+### Upload straight from your build (plugin developers)
 
-Build your plugin in your IDE and it lands on the server automatically: the old version is removed, the new jar is
-installed, and the server restarts.
+Build your plugin in your IDE and it lands on your server automatically: the old version is replaced and the server restarts.
 
-**One-time setup**
+1. Click **Account → API tokens**, name the token (e.g. "Laptop") and click **Create token**.
+2. **Copy the token now.** It starts with `th_` and is only shown once.
+3. Save it as the `TREEHOST_TOKEN` environment variable on your computer:
 
-1. In Honey Host, click **Account → API tokens**, name the token (e.g. "Laptop") and click **Create token**.
-2. **Copy the token now.** It starts with `mcpt_` and is only shown once.
-3. Save it as the `MCPT_TOKEN` environment variable on your computer:
-
-   **Windows** (PowerShell), then restart your IDE and terminals:
+   **Windows** (PowerShell), then restart your IDE:
 
    ```powershell
-   setx MCPT_TOKEN "mcpt_your_token_here"
+   setx TREEHOST_TOKEN "th_your_token_here"
    ```
 
-   **macOS / Linux**: add this line to `~/.zshrc` or `~/.bashrc`, then open a new terminal:
+   **macOS / Linux**: add this to `~/.zshrc` or `~/.bashrc`:
 
    ```bash
-   export MCPT_TOKEN="mcpt_your_token_here"
+   export TREEHOST_TOKEN="th_your_token_here"
    ```
 
-4. Also set `MCPT_URL` to the dashboard link (once; it doesn't change):
+4. On the server's **Plugins** tab, open **Developers: upload your plugin straight from your build**. Copy the Gradle task
+   into your `build.gradle.kts` and run `./gradlew deployServer`, or use the curl / PowerShell command after `mvn package`.
 
-   ```powershell
-   setx MCPT_URL "https://honey-host.tail6a10e2.ts.net"
-   ```
-
-**Gradle**
-
-1. Open the server's **Plugins** tab. The **Deploy from your build** card has a ready-made `deployTest` task with
-   this server's ID already filled in.
-2. Click **Copy** and paste it at the end of your `build.gradle.kts`.
-3. Run it from your IDE's Gradle panel, or:
-
-   ```bash
-   ./gradlew deployTest
-   ```
-
-   It builds your plugin, uploads the newest jar from `build/libs`, and prints `Deployed …`.
-
-> **Tip:** using the Shadow plugin? The task picks the newest jar in `build/libs`. If it picks the wrong one, change the
-> `filter { … }` line to match your `-all.jar`.
-
-**Maven or anything else**
-
-Build first (`mvn package`), then use the **curl** (macOS/Linux/Git Bash) or **PowerShell** command from the same
-card. Change the jar path and file name to yours.
-
-**Deploying to a different server:** each server has its own ID in the task/command. Copy the snippet from that
-server's Plugins tab.
-
-### Option 3: watch a folder on the host PC (admins)
-
-Admins working on the host PC itself can point **Auto-deploy** at a build folder there; new builds are copied in and
-the server restarts automatically.
-
----
-
-## Browse and install plugins
-
-On the **Plugins** tab, click **🔎 Browse plugins** (or **Browse mods** on Fabric). It searches
-[Modrinth](https://modrinth.com) and **only shows plugins that work on this server's type and version**, so you
-don't have to check compatibility yourself.
-
-1. Search for a plugin (or pick one from the popular list).
-2. Click **Install**. The newest matching version is downloaded into `plugins/` (checked against Modrinth's checksum).
-3. If the server is running, **Restart** it to load the plugin.
-
-> **Tip:** handy for dependencies your plugin needs while testing, like LuckPerms, Vault, WorldEdit or ProtocolLib.
-
----
-
-## "I'm testing this"
-
-On a Team server, click **🙋 I'm testing this** before you start testing. Add what you're testing (optional) and
-for how long. Then:
-
-- Everyone sees a yellow banner with your name, and a 🙋 next to the server in the sidebar.
-- Anyone else who clicks **Stop**, **Restart** or **Kill** is asked to confirm first.
-- It ends by itself when the time runs out, or click **Done testing**. Admins can end anyone's session.
-
-> **Note:** it's a friendly heads-up, not a lock. People can still stop the server after confirming.
+> **Warning:** a token can change your servers. Keep it out of your code and Git. Delete it in Account if it leaks.
 
 ---
 
 ## Backups
 
-The **Backups** tab keeps copies of a server's worlds (overworld, nether, end) and its `plugins/` folder,
-including plugin configs and data.
+The **Backups** tab keeps copies of your worlds (overworld, nether, end) and your `plugins/` folder, including plugin
+configs and data.
 
-- **Back up now:** give it a name like *before testing the new economy* and click the button. It works while the
-  server is running: the world is saved first, and saving is paused while it copies.
-- **Automatic backups:** pick *every 6 hours*, *every 12 hours* or *once a day*. The newest 7 automatic backups are
-  kept; ones you make yourself are kept until you delete them.
-- **Restore:** stop the server, then click **Restore** on a backup. The current world and `plugins/` folder are
+- **Back up now:** give it a name like *before the 1.21 update* and click the button. It works while the server is
+  running: the world is saved first.
+- **Automatic backups:** pick *every 6 hours*, *every 12 hours* or *once a day*. The newest 3 automatic backups are kept.
+  You can keep up to 5 backups you made yourself.
+- **Restore:** stop the server, then click **Restore** on a backup. Your current world and `plugins/` folder are
   replaced by the backup's copies.
 
-> **Warning:** restoring throws away anything changed since that backup. Make a fresh backup first if you might
-> want the current state back.
+> **Warning:** restoring throws away anything changed since that backup. Make a fresh backup first if you might want the
+> current state back.
 
-> **Note:** a few files a running server keeps locked (for example LuckPerms' database on Windows) can't be copied
-> while it runs. The console lists any skipped files. Back up a stopped server to get absolutely everything.
+> **Tip:** backups are a safety net, not a vault. Download anything you can't lose from the **Files** tab now and then.
 
 ---
 
-## Edit config files
+## Edit files
 
-The **Files** tab shows everything in the server's folder. Click a file to edit it, then **Save** (or Ctrl+S). The
+The **Files** tab shows everything in your server's folder. Click a file to edit it, then **Save** (or Ctrl+S). The
 buttons at the top open common files (`server.properties`, `bukkit.yml`, `spigot.yml`, Paper configs…). Most files
 only exist after the server has started once, and most changes need a **Restart**.
 
@@ -190,46 +105,29 @@ only exist after the server has started once, and most changes need a **Restart*
 
 The **Settings** tab:
 
-- **General**: name, memory, port, and:
-  - **Start automatically** when Honey Host starts.
-  - **Restart after a crash**: waits 5 seconds and starts it again. It gives up after 3 crashes in 10 minutes
-    so a broken plugin can't crash-loop forever.
-  - **Notes**: shown to everyone at the top of the server, e.g. what it's for or "don't reset the world".
-- The header shows how much memory the server is really using next to its limit (for example **RAM 1.1 GB / 1.5 GB**).
-- **Server software**: switch type, version or build. The new jar is downloaded on the next start; worlds and
-  plugins are kept. **Re-download jar now** gets the latest build.
-- **Java**: leave on **Automatic**. Honey Host picks and downloads the right Java for the version.
-- **Extra JVM arguments**: e.g. for the debugger (below).
-- **Game settings**: the common `server.properties` options (gamemode, difficulty, view distance, seed…).
-- **Danger zone**: **Reset worlds** gives you a fresh world (plugins and configs are kept); **Delete server**
-  removes it for good.
+- **General**: the server's name, and:
+  - **Start automatically** when Tree Host restarts (after maintenance).
+  - **Restart after a crash**: waits 5 seconds and starts it again. It gives up after 3 crashes in 10 minutes so a
+    broken plugin can't crash-loop forever.
+  - **Notes**: a note to yourself shown at the top of the server.
+- **Server software**: switch type, version or build. The new jar is downloaded on the next start; your world and
+  plugins are kept.
+- **Java**: leave on **Automatic**. Tree Host picks the right Java for the version.
+- **Game settings**: the common `server.properties` options (game mode, difficulty, whitelist, view distance, seed…).
+- **Danger zone**: **Reset worlds** gives you a fresh world (plugins and configs are kept); **Delete server** removes
+  the server for good. The plan stays, so you can create a new server with it.
 
-> **Note:** on servers behind the Gateway, `online-mode` shows **false**. That's expected: the Gateway checks accounts
-> instead.
+Memory, CPU, disk and the port come from your plan and can't be changed in Settings.
 
----
-
-## Debug your plugin with breakpoints
-
-1. In the server's **Settings → Extra JVM arguments**, add:
-
-   ```
-   -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
-   ```
-
-2. **Save** and **Restart** the server.
-3. In IntelliJ: **Run → Edit Configurations → + → Remote JVM Debug**, host = the host PC, port `5005`.
-
-> **Note:** remote debugging only works from the host PC's network (not over the internet link), and only one server can use
-> port 5005 at a time. Use 5006, 5007… for others. Windows may ask to allow Java through the firewall: allow it on
-> **Private networks**. For very old servers that run on Java 8, write `address=5005` instead of `address=*:5005`.
+> **Warning:** updating to a newer Minecraft version is usually safe (make a backup first). Going back to an **older**
+> version can break your world.
 
 ---
 
-## Test with more than one player
+## Limits of your plan
 
-Everyone on the team can join the same Team server, so the easiest multiplayer test is to ask a teammate to join.
-Each player needs their own Minecraft account, because the Gateway checks real accounts.
-
-Admins sitting at the host PC can also use **🎮 Play on host** to open extra offline test players, but only on
-servers that are **not** behind the Gateway (for example a server in a Honey Host without a Gateway).
+- **Memory:** the server can use up to the plan's memory. If it needs more, it stops with *"ran out of memory"* in the
+  console. Remove heavy plugins or mods, lower the view distance, or buy a bigger plan.
+- **CPU:** the server shares the machine fairly; your plan's cores are reserved for you.
+- **Disk:** if your server uses more disk than the plan allows, it is stopped and can't start until you delete old
+  worlds, logs or files.

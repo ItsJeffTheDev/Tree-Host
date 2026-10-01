@@ -1,72 +1,78 @@
-# Honey Host
+# Tree Host
 
-Minecraft test servers for **Honey Pixel Studios**. Create a server of any type and version in a few clicks, deploy
-your plugin straight from your build, and test it with the team from anywhere.
+Minecraft server hosting at **[treehost.online](https://treehost.online)**: customers sign up, pick a monthly plan,
+and get their own Minecraft server, on any type and version, in about a minute.
+
+Node.js with no npm dependencies. Each customer server runs in its own locked-down Docker container.
 
 ## Guides
 
-The guides are also in the dashboard under **📖 Help & guides**.
+The guides are also on the website under **Help**.
 
 | Guide | For |
 |---|---|
-| [Getting started](public/docs/getting-started.md) | Everyone: get an account, Team vs Solo, join a server |
-| [Servers and plugins](public/docs/servers.md) | Developers: create servers, add plugins, deploy from Gradle/Maven, debug |
-| [Admin guide](public/docs/admin-guide.md) | The admin: host PC, playit.gg, the Gateway, inviting and approving people, backups |
-| [Hosting on Render](public/docs/cloud-hosting.md) | The admin: running Honey Host on Render instead of a PC |
+| [Getting started](public/docs/getting-started.md) | Customers: sign up, pick a plan, create and join a server |
+| [Your server](public/docs/servers.md) | Customers: console, plugins, backups, files, settings |
+| [Billing](public/docs/billing.md) | Customers: plans, cards, canceling, failed payments |
 | [Troubleshooting](public/docs/troubleshooting.md) | Common problems and fixes |
+| [Roles & permissions](public/docs/roles.md) | Admins: what customers, support staff and admins can do |
+| [Running Tree Host](public/docs/hosting-guide.md) | Admins: rent a server, DNS for treehost.online, install, Stripe, email, go-live checklist |
 
-## Quick start (host PC)
+## Deploy (production)
 
-1. Double-click **`Start.bat`**. It installs Node.js if needed, offers to install playit.gg, and starts Honey Host.
-   Java for each Minecraft version downloads automatically.
-2. Open the dashboard link shown in the window, enter the **setup code**, and create the admin account.
-3. **Team → Gateway → Set up the Gateway**, then create **one** playit.gg tunnel for its port.
-4. Invite your developers: **Team → Invite a developer**, or let them **Request access** and approve them.
+On a fresh Ubuntu 22.04/24.04 server, with `treehost.online`, `www` and `play` pointing at its IP:
 
-Full steps: [Admin guide](public/docs/admin-guide.md).
+```bash
+git clone https://github.com/ItsJeffTheDev/Honey-Host.git /opt/tree-host
+sudo bash /opt/tree-host/deploy/install.sh
+```
 
-## Hosting on Render
+Settings live in `/etc/tree-host.env` (template: [deploy/tree-host.env.example](deploy/tree-host.env.example)).
+Updates: `sudo bash /opt/tree-host/deploy/update.sh`. Full steps: [Running Tree Host](public/docs/hosting-guide.md).
 
-The repo includes a `render.yaml` Blueprint. Build command `npm install`, start command `node src/server.js`,
-a disk mounted at `/var/data` with `MCPT_DATA=/var/data/honey-host`, and `PLAYIT_SECRET` so players can join.
-Minecraft needs a plan with at least 2 GB of RAM. Full steps and limits: [Hosting on Render](public/docs/cloud-hosting.md).
+## Run locally (development)
+
+```bash
+node src/server.js                                   # personal mode: http://localhost:8765, no accounts
+TREEHOST_PUBLIC_URL=http://localhost:8766 BILLING_DEMO=1 node src/server.js   # the full hosted site, fake payments
+```
+
+On Windows, `Start.bat` installs Node.js if needed and runs the whole site locally with fake payments (its own
+`test-site-data` folder). Docker isolation is on by default on Linux;
+on Windows/macOS set `TREEHOST_ISOLATION=docker` (with Docker Desktop running) to test it.
 
 ## Features
 
-- **Every server type and version:** Paper, Purpur, Folia, Spigot, CraftBukkit, Vanilla, Fabric, Velocity,
-  Waterfall, BungeeCord, or any custom jar. The right Java (8 to 25) is picked and downloaded automatically.
-- **Team and Solo servers:** shared servers for everyone, plus private servers per person.
-- **Accounts:** sign-in required, invite links, access requests with admin approval, Developer and Admin roles.
-- **One address for everything:** the Gateway (Velocity) sits in front of all servers. Players join once and use
-  `/server <name>`. New servers are added automatically.
-- **Deploy from your build:** a Gradle task or curl command with a personal API token replaces the old jar and
-  restarts the server.
-- **Live console,** plugin manager (drag and drop), config file editor, `server.properties` editor, world reset,
-  debugger support.
-- **Automatic whitelisting** of everyone's Minecraft name.
-- **Reach it from anywhere:** a permanent public dashboard link (Tailscale Funnel, or Cloudflare automatically),
-  home-network links, and public game addresses (playit.gg).
-- **Stays up:** keeps the host PC awake while running, starts chosen servers automatically after a restart, and
-  restarts servers after a crash (with a crash-loop limit).
-- **Team tools:** an activity feed of who did what, Discord notifications, "I'm testing this" markers so nobody
-  restarts a server mid-test, and per-server notes.
-- **Backups:** one-click and scheduled backups of worlds and plugins, with restore.
-- **Plugin browser:** search Modrinth and install plugins that match the server's type and version.
-- **Memory overview:** real memory use per server and a low-memory warning.
+- **Every server type and version:** Paper, Purpur, Folia, Spigot, CraftBukkit, Vanilla, Fabric, Velocity, Waterfall,
+  BungeeCord. The right Java version is picked automatically.
+- **Accounts:** Firebase Authentication (email/password and Google, verification and reset emails), Customer / Support /
+  Admin roles. Accounts, plans, subscriptions and activity are stored in the Firebase Realtime Database.
+- **Billing:** monthly plans by memory/CPU/disk through Stripe Checkout and the Stripe customer portal, a 3-day grace period
+  for failed payments, automatic suspension and cleanup, free plans for giveaways, capacity limits ("sold out").
+- **Isolation:** one Docker container per server with memory, CPU and process limits, a read-only system, no Linux
+  capabilities, a private network, and protection against symlink tricks.
+- **Dashboard:** live console, plugin manager and Modrinth plugin browser, file editor, game settings, backups (manual and
+  scheduled) with restore, auto-restart after crashes, memory and disk usage.
+- **Developers:** upload plugins straight from Gradle/Maven with personal API tokens.
+- **Admin tools:** admin panel (people, billing, plans, capacity), an "All servers" view for support, activity feed and
+  Discord alerts.
+- **Website:** landing page with live pricing, Terms of Service and Privacy Policy templates.
 
-## Files and scripts
+## Files
 
-| | |
+| Path | What it is |
 |---|---|
-| `Start.bat` | Starts Honey Host (and installs what's missing) |
-| `Start-Local.bat` | A no-login copy only this PC can open, e.g. on a developer's own machine (uses `local-data/`) |
-| `Setup-Permanent-Link.bat` | One-time setup of a permanent, free dashboard link (Tailscale Funnel) |
-| `Remove-Playit.bat` | Removes the playit.gg app from a PC completely |
-| `data/` | Everything Honey Host stores: accounts, servers, worlds, settings. Back this up. |
-
-Advanced: `MCPT_PORT` changes the dashboard port and `MCPT_DATA` the data folder.
+| `src/server.js` | HTTP server, API routes, permissions |
+| `src/instances.js` | Starting, stopping and managing Minecraft servers |
+| `src/docker.js` | Container isolation |
+| `src/billing.js` | Plans, subscriptions, Stripe |
+| `src/auth.js` | Accounts, sessions, invites, Firebase sign-in, API tokens |
+| `src/firebase.js`, `src/store.js` | Firebase token checks, Realtime Database storage (local files as backup) |
+| `public/` | Website, dashboard and docs |
+| `deploy/` | Installer, systemd service, Caddy config, settings template |
 
 ## Security
 
-Anyone who can deploy a plugin can run code on the host PC. Only approve people you trust, keep private files off
-the host PC, and keep servers behind the Gateway (it checks real Minecraft accounts) with whitelists on.
+- Never commit `data/` or `/etc/tree-host.env`: they hold accounts, worlds and payment keys.
+- Keep Docker isolation on for any server open to the public.
+- The Terms of Service and Privacy Policy are templates: have them reviewed for your country before launch.

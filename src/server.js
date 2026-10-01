@@ -8,51 +8,100 @@ const { spawn } = require('child_process');
 const { URL } = require('url');
 const { PUBLIC, DATA } = require('./paths');
 const { Manager } = require('./instances');
-const { Auth } = require('./auth');
-const { Tunnel } = require('./tunnel');
-const { Playit } = require('./playit');
+const { Auth, isStaff } = require('./auth');
+const { Billing } = require('./billing');
+const mail = require('./mail');
+const firebase = require('./firebase');
+const store = require('./store');
 const { migrateTeamData } = require('./migrate');
-const { detectFunnel } = require('./funnel');
 const { keepAwake } = require('./keepawake');
 const providers = require('./providers');
 const java = require('./java');
 const { Activity } = require('./activity');
 const backups = require('./backups');
 const modrinth = require('./modrinth');
-const { startPlayitAgent } = require('./playitagent');
 
-// Cloud hosting (Render sets RENDER=true): always team mode, behind the host's HTTPS proxy, on the port it gives us.
-const CLOUD = process.env.RENDER === 'true' || process.env.MCPT_CLOUD === '1';
-const CLOUD_URL = process.env.RENDER_EXTERNAL_URL || process.env.MCPT_PUBLIC_URL || null;
-// Team mode: logins required, reachable through a tunnel, deploy API for remote developers.
-const TEAM = process.env.MCPT_TEAM === '1' || CLOUD;
-const USE_TUNNEL = TEAM && !CLOUD && process.env.MCPT_TUNNEL === '1';
-const PORT = Number(process.env.MCPT_PORT) || (CLOUD && Number(process.env.PORT)) || (TEAM ? 8766 : 8765);
-// Team mode also listens on the local network (logins protect it); personal mode stays on this PC only.
-const HOST = process.env.MCPT_HOST || (TEAM ? '0.0.0.0' : '127.0.0.1');
-const NO_OPEN = process.argv.includes('--no-open') || CLOUD;
+const env = (name, fallback) => process.env[`TREEHOST_${name}`] ?? process.env[`MCPT_${name}`] ?? fallback;
+// Production: the public website address (e.g. https://treehost.net). Turns on accounts, billing and the landing page.
+const PUBLIC_URL = (env('PUBLIC_URL', '') || '').replace(/\/$/, '') || null;
+const HOSTED = !!PUBLIC_URL;
+// Accounts mode: logins required (always on when hosted; TREEHOST_TEAM=1 for a private team setup).
+const TEAM = env('TEAM') === '1' || HOSTED;
+const PORT = Number(env('PORT')) || (TEAM ? 8766 : 8765);
+// Hosted: only the reverse proxy (Caddy) on this machine talks to us. Team: the local network too.
+const HOST = env('HOST') || (HOSTED ? '127.0.0.1' : TEAM ? '0.0.0.0' : '127.0.0.1');
+const NO_OPEN = process.argv.includes('--no-open') || HOSTED;
 const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
-const SESSION_COOKIE = 'mcpt_session';
+const SESSION_COOKIE = 'th_session';
+const MAX_CUSTOMER_BACKUPS = Number(env('MAX_BACKUPS')) || 5;
 // In personal mode everyone who can reach the dashboard is the PC's owner.
 const LOCAL_ADMIN = { id: 'local', username: 'you', role: 'admin', local: true };
 
 const manager = new Manager();
 const auth = new Auth();
-const tunnel = new Tunnel();
-const playit = new Playit();
+const billing = new Billing();
 const activity = new Activity();
 manager.teamMode = TEAM;
 manager.activity = activity;
 // Who gets whitelisted on a server: everyone for team servers, only the owner for solo servers.
+// "Whitelist me" on a server whitelists its owner (personal mode: everyone in the old team list).
 manager.accessNames = (inst) => {
-  if (inst.cfg.space === 'solo') {
+  if (TEAM || inst.cfg.space === 'solo') {
     const owner = auth.userById(inst.cfg.owner);
     return owner && owner.mcName ? [owner.mcName] : [];
   }
   return auth.mcNames();
 };
 manager.ownerName = (id) => (auth.userById(id) || {}).username || null;
-manager.playit = TEAM ? playit : null;
+
+// ---------- billing <-> servers ----------
+
+manager.overheadMb = require('./billing').OVERHEAD_MB;
+manager.planInfo = (inst) => {
+  const sub = inst.cfg.subscriptionId ? billing.sub(inst.cfg.subscriptionId) : null;
+  if (!sub) return null;
+  return { planName: sub.planName, ramMb: sub.ramMb, cpus: sub.cpus, diskGb: sub.diskGb, status: sub.status, usable: billing.usable(sub), renewsAt: sub.periodEnd || null };
+};
+manager.startBlock = (inst) => {
+  if (!inst.isCustomer) return null;
+  const sub = inst.cfg.subscriptionId ? billing.sub(inst.cfg.subscriptionId) : null;
+  if (!sub) return 'this server has no plan. Contact support.';
+  if (!billing.usable(sub)) {
+    return sub.status === 'canceled'
+      ? 'the plan for this server was canceled. Buy a plan in Billing to keep using it.'
+      : 'the payment for this server failed. Update your card in Billing to start it again.';
+  }
+  if (sub.diskGb && inst.diskUsedMb && inst.diskUsedMb > sub.diskGb * 1024 * 1.1) {
+    return `the server uses ${(inst.diskUsedMb / 1024).toFixed(1)} GB of disk, more than the ${sub.diskGb} GB in its plan. Delete old worlds or files first.`;
+  }
+  return null;
+};
+billing.hooks.suspend = (sub, reason) => {
+  const inst = manager.instances.get(sub.serverId);
+  if (!inst || inst.cfg.suspended === reason) return;
+  inst.cfg.suspended = reason;
+  manager.save();
+  inst.sysLog(reason === 'canceled' ? 'The plan for this server ended, so it was stopped.' : 'The payment for this server failed, so it was stopped. Update your card in Billing.');
+  if (inst.proc) inst.stop();
+  inst.emitStatus();
+};
+billing.hooks.unsuspend = (sub) => {
+  const inst = manager.instances.get(sub.serverId);
+  if (!inst || !inst.cfg.suspended) return;
+  inst.cfg.suspended = null;
+  manager.save();
+  inst.sysLog('Payment received: the server can be started again.');
+  inst.emitStatus();
+};
+billing.hooks.deleteServer = async (id) => {
+  const inst = manager.instances.get(id);
+  if (!inst) return;
+  activity.log('billing', 'Tree Host', `deleted the server "${inst.cfg.name}" of ${manager.ownerName(inst.cfg.owner) || 'a customer'} (plan ended)`);
+  await manager.remove(id);
+};
+billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || 'A customer', text);
+billing.hooks.email = (user, subject, paragraphs) =>
+  mail.send(user.email, subject, paragraphs, PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null);
 
 // ---------- tiny router ----------
 
@@ -78,6 +127,27 @@ async function readJson(req, limit = 2 * 1024 * 1024) {
   }
   if (!chunks.length) return {};
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+async function readRaw(req, limit) {
+  let size = 0;
+  const chunks = [];
+  for await (const c of req) {
+    size += c.length;
+    if (size > limit) throw new Error('Request too large');
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/** Error text for the browser: never shows host paths (like the data folder) to anyone but admins. */
+function publicMessage(e, user) {
+  let msg = (e && e.message) || String(e);
+  if (TEAM && (!user || user.role !== 'admin')) {
+    for (const p of [DATA, path.resolve(DATA)]) msg = msg.split(p).join('…');
+    msg = msg.replace(/[A-Za-z]:\[^\s'"]+|\/(?:home|opt|var|srv|root|tmp)\/[^\s'"]+/g, '…');
+  }
+  return msg;
 }
 
 function sendJson(res, status, data, headers = {}) {
@@ -108,17 +178,13 @@ function openBrowser(url) {
 
 // ---------- auth helpers ----------
 
-/**
- * True for requests from this PC, which is where the Cloudflare tunnel connects from.
- * In the cloud every request comes through the host's own proxy, so its forwarding headers are trusted.
- */
+/** True for requests from this machine, which is where the reverse proxy (Caddy) connects from. */
 function fromThisPc(req) {
-  if (CLOUD) return true;
   const a = req.socket.remoteAddress || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
 
-// Forwarding headers are only trusted from the local tunnel; anyone on the network could fake them otherwise.
+// Forwarding headers are only trusted from the local reverse proxy; anyone else could fake them.
 function clientIp(req) {
   if (fromThisPc(req)) {
     const fwd = req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -150,10 +216,7 @@ function isHttps(req) {
   );
 }
 
-// The public dashboard link: a permanent Tailscale Funnel link if set up, otherwise the Cloudflare quick tunnel.
-let funnelUrl = null;
-
-const publicUrl = () => CLOUD_URL || funnelUrl || tunnel.url;
+const publicUrl = () => PUBLIC_URL;
 
 function sessionCookie(req, token, maxAge = 30 * 86400) {
   return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
@@ -167,22 +230,26 @@ function authenticate(req) {
 }
 
 function requireAdmin(req) {
-  if (TEAM && req.user.role !== 'admin') throw httpError(403, 'Only team admins can do that.');
+  if (TEAM && req.user.role !== 'admin') throw httpError(403, 'Only admins can do that.');
 }
 
-/** Team servers are visible to everyone; solo servers only to their owner (and admins). */
+function requireStaff(req) {
+  if (TEAM && !isStaff(req.user)) throw httpError(403, 'Only Tree Host support staff can do that.');
+}
+
+/** Customers see only their own servers; support staff and admins see every server (to help). */
 function canView(user, inst) {
   if (!TEAM || !user) return !TEAM;
-  if (inst.cfg.space !== 'solo') return true;
-  return inst.cfg.owner === user.id || user.role === 'admin';
+  if (user.role === 'customer') return inst.cfg.owner === user.id;
+  return true;
 }
 
 /**
  * What each role may do with a server it can see.
- *   Tester:    view, control (start/stop/restart)
- *   Developer: everything, except delete / reset world / change version of team servers someone else created,
- *              and anything beyond start/stop on the Gateway
- *   Admin:     everything
+ *   Customer: everything on their own servers (host-level settings stay admin-only).
+ *   Support:  everything on their own servers; on other people's servers everything except delete / reset world /
+ *             change version (those can't be undone).
+ *   Admin:    everything.
  */
 const ACTION_TEXT = {
   control: 'start or stop servers',
@@ -196,14 +263,8 @@ const ACTION_TEXT = {
 
 function permissionError(user, action, inst) {
   if (!TEAM || !user || user.role === 'admin') return null;
-  if (user.role === 'tester' && action !== 'view' && action !== 'control') {
-    return `Testers can't ${ACTION_TEXT[action] || 'do that'}. Ask an admin if you need developer access.`;
-  }
-  if (inst && inst.cfg.gateway && action !== 'view' && action !== 'control') return 'Only admins can change the Gateway.';
-  if (inst && action === 'manage' && inst.cfg.space !== 'solo' && inst.cfg.createdBy !== user.id) {
-    const who = inst.cfg.createdBy ? auth.userById(inst.cfg.createdBy) : null;
-    return `Only the person who created this team server${who ? ` (${who.username})` : ''} or an admin can ${ACTION_TEXT.manage}.`;
-  }
+  if (user.role === 'customer') return inst && inst.cfg.owner === user.id ? null : 'That is not your server.';
+  if (inst && inst.cfg.owner !== user.id) return action === 'manage' ? `Only the server's owner or an admin can ${ACTION_TEXT.manage}.` : null;
   return null;
 }
 
@@ -223,7 +284,7 @@ function publicOrigin(req) {
   return `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
 }
 
-/** In team mode, settings that point at files or programs on the host PC are admin-only. */
+/** In team mode, settings that point at files or programs on the host machine are admin-only. */
 function checkHostSettings(req, body) {
   if (!TEAM || req.user.role === 'admin') return;
   if (body.java !== undefined && !/^(auto|\d+)$/.test(String(body.java))) throw httpError(403, 'Only admins can set a custom Java path.');
@@ -244,12 +305,12 @@ function broadcast(event, data, inst) {
 manager.on('status', (inst) => broadcast('status', inst.toJSON(), inst));
 manager.on('removed', (id) => broadcast('removed', { id }));
 
-/** Activity about a solo server is only shown to its owner and admins; sign-ups only to admins. */
+/** Customers only see their own servers' activity; sign-ups and billing only admins. */
 function canSeeEvent(user, e) {
   if (!TEAM) return true;
   if (!user) return false;
-  if (e.kind === 'people') return user.role === 'admin';
-  if (e.space === 'solo') return e.owner === user.id || user.role === 'admin';
+  if (user.role === 'customer') return !!e.owner && e.owner === user.id && e.kind !== 'billing' && e.kind !== 'people';
+  if (e.kind === 'people' || e.kind === 'billing') return user.role === 'admin';
   return true;
 }
 activity.listeners.add((e) => {
@@ -281,34 +342,45 @@ route(
     const user = authenticate(req);
     return {
       teamMode: TEAM,
-      needsSetup: TEAM && auth.users.length === 0,
       user: user ? (user.local ? user : auth.publicUser(user)) : null,
       publicUrl: publicUrl(),
-      permanentLink: !!(funnelUrl || CLOUD_URL),
-      cloud: CLOUD,
+      hosted: HOSTED,
       allowSignup: TEAM && auth.settings.allowSignup,
-      pendingCount: user && user.role === 'admin' && TEAM ? auth.pendingCount() : 0,
-      lanUrls: TEAM && !CLOUD && HOST !== '127.0.0.1' && user ? lanUrls() : [],
+      mailEnabled: mail.enabled(),
+      firebase: TEAM ? firebase.publicConfig() : null,
+      billingMode: billing.mode,
+      isolated: manager.docker,
+      lanUrls: TEAM && !HOSTED && HOST !== '127.0.0.1' && user && isStaff(user) ? lanUrls() : [],
     };
   },
   { public: true },
 );
 
+// Sign-in with Firebase (email/password or Google): the browser sends its Firebase ID token.
 route(
   'POST',
-  '/api/auth/setup',
+  '/api/auth/firebase',
   async (req, res) => {
-    const token = await auth.setup(await readJson(req), clientIp(req));
-    sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+    if (!TEAM) throw httpError(400, 'Accounts only exist on a hosted Tree Host.');
+    const r = await auth.firebaseLogin(await readJson(req), clientIp(req));
+    if (!r.token) return r;
+    if (r.created) activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${r.user.role}`);
+    sendJson(res, 200, { ok: true, created: !!r.created }, { 'Set-Cookie': sessionCookie(req, r.token) });
     return HANDLED;
   },
   { public: true },
 );
 
+/** With Firebase sign-in on, the old password endpoints are closed. */
+function passwordAuthOnly() {
+  if (firebase.authEnabled()) throw httpError(400, 'Please use the sign-in form (Firebase).', 'USE_FIREBASE');
+}
+
 route(
   'POST',
   '/api/auth/login',
   async (req, res) => {
+    passwordAuthOnly();
     const token = await auth.login(await readJson(req), clientIp(req));
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     return HANDLED;
@@ -320,9 +392,10 @@ route(
   'POST',
   '/api/auth/accept-invite',
   async (req, res) => {
+    passwordAuthOnly();
     const body = await readJson(req);
     const token = await auth.acceptInvite(body, clientIp(req));
-    activity.log('people', String(body.username || 'Someone'), 'joined the team with an invite link');
+    activity.log('people', String(body.username || 'Someone'), 'joined the support staff with an invite link');
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     return HANDLED;
   },
@@ -333,9 +406,41 @@ route(
   'POST',
   '/api/auth/signup',
   async (req, res) => {
+    passwordAuthOnly();
     const body = await readJson(req);
-    const token = await auth.signup(body, clientIp(req));
-    activity.log('people', String(body.username || 'Someone'), 'asked to join the team (waiting for approval)');
+    const { user, token } = await auth.signup(body, clientIp(req));
+    activity.log('people', user.username, 'signed up');
+    sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+    return HANDLED;
+  },
+  { public: true },
+);
+
+route(
+  'POST',
+  '/api/auth/forgot',
+  async (req) => {
+    passwordAuthOnly();
+    const { email } = await readJson(req);
+    if (!mail.enabled()) throw httpError(400, 'Password reset emails are not set up yet. Please contact support.');
+    const r = await auth.createReset(email, clientIp(req));
+    if (r) {
+      await mail.send(r.user.email, 'Reset your Tree Host password', [
+        `Hi ${r.user.username}, someone (hopefully you) asked to reset your Tree Host password.`,
+        'The link works for one hour. If you did not ask for this, ignore this email.',
+      ], { text: 'Choose a new password', url: `${PUBLIC_URL || publicOrigin(req)}/dashboard?reset=${r.token}` });
+    }
+    // Same answer either way, so nobody can find out which emails have accounts.
+    return { ok: true };
+  },
+  { public: true },
+);
+route(
+  'POST',
+  '/api/auth/reset',
+  async (req, res) => {
+    passwordAuthOnly();
+    const token = await auth.resetPassword(await readJson(req), clientIp(req));
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     return HANDLED;
   },
@@ -355,7 +460,13 @@ route(
 
 route('PATCH', '/api/auth/me', async (req) => {
   if (!TEAM) throw httpError(400, 'Accounts only exist in team mode.');
-  await auth.updateUser(req.user, await readJson(req));
+  const body = await readJson(req);
+  if (req.user.firebaseUid) {
+    // Email and password belong to the Firebase account.
+    delete body.email;
+    if (body.password) throw httpError(400, 'Change your password with "Send password reset email".');
+  }
+  await auth.updateUser(req.user, body);
   return auth.publicUser(req.user);
 });
 route('GET', '/api/auth/tokens', (req) => (TEAM ? auth.listApiTokens(req.user) : []));
@@ -368,7 +479,44 @@ route('DELETE', '/api/auth/tokens/:tid', async (req, res, p) => {
   return { ok: true };
 });
 
-route('GET', '/api/team/users', () => auth.users.map((u) => auth.publicUser(u)), { admin: true });
+route(
+  'GET',
+  '/api/team/users',
+  () =>
+    auth.users.map((u) => {
+      const subs = billing.forUser(u.id);
+      return {
+        ...auth.publicUser(u),
+        servers: [...manager.instances.values()].filter((i) => i.cfg.owner === u.id && i.isCustomer).length,
+        activePlans: subs.filter((x) => x.status === 'active' || x.status === 'past_due').map((x) => x.planName),
+      };
+    }),
+  { admin: true },
+);
+route(
+  'PUT',
+  '/api/team/users/:uid/disabled',
+  async (req, res, p) => {
+    if (p.uid === req.user.id) throw httpError(400, 'You cannot suspend yourself.');
+    const { disabled } = await readJson(req);
+    const u = await auth.setDisabled(p.uid, disabled);
+    if (disabled) for (const inst of manager.instances.values()) if (inst.cfg.owner === u.id && inst.proc) inst.stop();
+    activity.log('people', who(req), `${disabled ? 'suspended' : 'unsuspended'} the account ${u.username}`);
+    return auth.publicUser(u);
+  },
+  { admin: true },
+);
+route(
+  'POST',
+  '/api/team/users/:uid/temp-password',
+  async (req, res, p) => {
+    if ((auth.userById(p.uid) || {}).firebaseUid) throw httpError(400, 'This account signs in with Firebase: use "Send password reset email" instead.');
+    const password = await auth.tempPassword(p.uid);
+    activity.log('people', who(req), `set a temporary password for ${(auth.userById(p.uid) || {}).username}`);
+    return { password };
+  },
+  { admin: true },
+);
 route(
   'POST',
   '/api/team/invites',
@@ -376,16 +524,6 @@ route(
     const { role } = await readJson(req);
     const invite = await auth.createInvite(req.user, role);
     return { link: `${publicOrigin(req)}/?invite=${invite}`, expiresInDays: 7 };
-  },
-  { admin: true },
-);
-route(
-  'POST',
-  '/api/team/users/:uid/approve',
-  async (req, res, p) => {
-    const u = auth.publicUser(await auth.approve(p.uid, (await readJson(req)).role));
-    activity.log('people', who(req), `approved ${u.username} as ${u.role}`);
-    return u;
   },
   { admin: true },
 );
@@ -405,7 +543,13 @@ route(
   '/api/team/users/:uid',
   async (req, res, p) => {
     if (p.uid === req.user.id) throw httpError(400, 'You cannot remove yourself.');
+    const u = auth.userById(p.uid);
+    if (u && billing.forUser(u.id).some((x) => x.status === 'active' || x.status === 'past_due')) {
+      throw httpError(400, 'This person still has an active plan. Cancel it in Billing first (or suspend the account instead).');
+    }
+    for (const inst of [...manager.instances.values()]) if (inst.cfg.owner === p.uid && inst.isCustomer) await manager.remove(inst.cfg.id);
     await auth.removeUser(p.uid);
+    if (u && u.firebaseUid) await firebase.deleteAuthUser(u.firebaseUid).catch(() => {});
     return { ok: true };
   },
   { admin: true },
@@ -433,99 +577,84 @@ route(
   { admin: true },
 );
 
-// ---------- playit.gg (public game addresses) ----------
+// ---------- plans & billing ----------
 
-route('GET', '/api/playit', () => playit.status(), { admin: true });
-/**
- * Creates (or finds) a playit.gg tunnel for every server that doesn't have a manual address,
- * running or not, and reports what happened for each one.
- */
-async function shareAllServers() {
-  const results = [];
-  const gw = manager.gateway();
-  // With a Gateway only it needs a tunnel; list it first.
-  const list = [...manager.instances.values()].sort((a, b) => !!b.cfg.gateway - !!a.cfg.gateway);
-  for (const inst of list) {
-    const base = { id: inst.cfg.id, name: inst.cfg.name, port: inst.cfg.port, space: inst.cfg.space || 'team', isGateway: !!inst.cfg.gateway };
-    if (gw && inst.canUseGateway) {
-      results.push({ ...base, viaGateway: manager.gatewayName(inst) });
-      continue;
-    }
-    if (inst.cfg.publicAddress) {
-      results.push({ ...base, address: inst.cfg.publicAddress, manual: true });
-      continue;
-    }
-    try {
-      results.push({ ...base, address: await inst.shareOnline() });
-    } catch (e) {
-      inst.sysLog(`Could not get a public address from playit.gg: ${e.message}`);
-      results.push({ ...base, error: e.message, needsTunnel: e.code === 'CREATE_ON_WEBSITE' });
-    }
-  }
-  return results;
-}
+route('GET', '/api/plans', () => billing.publicPlans(), { public: true });
+// Business details shown on the website, Terms and Privacy pages.
+route(
+  'GET',
+  '/api/site',
+  () => ({
+    company: env('COMPANY', 'Tree Host'),
+    supportEmail: env('SUPPORT_EMAIL', ''),
+    jurisdiction: env('JURISDICTION', ''),
+    discord: env('DISCORD_INVITE', ''),
+    location: env('LOCATION', ''),
+    allowSignup: auth.settings.allowSignup,
+  }),
+  { public: true },
+);
+route('GET', '/api/billing', (req) => ({
+  mode: billing.mode,
+  currency: billing.publicPlans().currency,
+  hasPortal: !!(req.user.stripeCustomerId && billing.mode !== 'demo'),
+  subscriptions: billing.forUser(req.user.id).map((x) => ({
+    ...billing.publicSub(x),
+    serverName: x.serverId && manager.instances.get(x.serverId) ? manager.instances.get(x.serverId).cfg.name : null,
+  })),
+}));
+route('POST', '/api/billing/checkout', async (req) => {
+  if (!TEAM) throw httpError(400, 'Billing only exists on a hosted Tree Host.');
+  if (req.user.role === 'customer' && !req.user.email) throw httpError(400, 'Add your email address in Account first.');
+  return billing.checkout(req.user, (await readJson(req)).planId, PUBLIC_URL || publicOrigin(req));
+});
+route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || publicOrigin(req)));
 route(
   'POST',
-  '/api/playit/detect',
-  async () => ({ ...(await playit.detect()), results: await shareAllServers() }),
+  '/api/billing/webhook',
+  async (req) => {
+    const raw = await readRaw(req, 1024 * 1024);
+    return billing.webhook(raw, req.headers['stripe-signature'], auth);
+  },
+  { public: true },
+);
+
+route(
+  'GET',
+  '/api/admin/billing',
+  () => ({
+    ...billing.adminSummary(),
+    plans: billing.plans,
+    subscriptions: billing.subs
+      .filter((x) => x.status !== 'pending')
+      .map((x) => ({
+        ...billing.publicSub(x),
+        userId: x.userId,
+        username: (auth.userById(x.userId) || {}).username || '(deleted)',
+        serverName: x.serverId && manager.instances.get(x.serverId) ? manager.instances.get(x.serverId).cfg.name : null,
+        stripeSubscriptionId: x.stripeSubscriptionId || null,
+      }))
+      .reverse(),
+  }),
   { admin: true },
 );
+route('PUT', '/api/admin/plans', async (req) => billing.setPlans((await readJson(req)).plans), { admin: true });
+route('PUT', '/api/admin/billing-settings', async (req) => billing.setSettings(await readJson(req)), { admin: true });
 route(
   'POST',
-  '/api/playit/secret',
-  async (req) => ({ ...(await playit.setSecret((await readJson(req)).secret)), results: await shareAllServers() }),
+  '/api/admin/subscriptions',
+  async (req) => {
+    const { userId, planId } = await readJson(req);
+    const u = auth.userById(userId);
+    if (!u) throw httpError(404, 'User not found');
+    return billing.publicSub(await billing.grant(u, planId, req.user.username));
+  },
   { admin: true },
 );
-route('POST', '/api/playit/share-all', async () => ({ results: await shareAllServers() }), { admin: true });
 route(
   'DELETE',
-  '/api/playit',
-  async () => {
-    await playit.disconnect();
-    return await playit.status();
-  },
-  { admin: true },
-);
-route('POST', '/api/servers/:id/share', async (req, res, p) => ({ address: await getFor(req, p.id, 'control').shareOnline() }));
-
-// ---------- Gateway (one address for every server) ----------
-
-route(
-  'POST',
-  '/api/gateway',
-  async (req) => {
-    if (manager.gateway()) throw httpError(400, 'There is already a Gateway.');
-    const versions = await providers.getProvider('velocity').versions();
-    const pick = versions.find((v) => !v.pre && v.id.startsWith('4.')) || versions.find((v) => !v.pre) || versions[0];
-    if (!pick) throw httpError(502, 'Could not find a Velocity version to install.');
-    const inst = await manager.create(
-      {
-        type: 'velocity',
-        version: pick.id,
-        name: 'Gateway',
-        memoryMb: 512,
-        port: await manager.nextFreePort('proxy'),
-        startAfterInstall: true,
-        gateway: true,
-      },
-      { space: TEAM ? 'team' : undefined, createdBy: req.user.id },
-    );
-    return inst.toJSON();
-  },
-  { admin: true },
-);
-route(
-  'PUT',
-  '/api/gateway',
-  async (req) => {
-    const gw = manager.gateway();
-    if (!gw) throw httpError(404, 'There is no Gateway yet.');
-    const { defaultServer } = await readJson(req);
-    gw.cfg.gatewayDefault = defaultServer || null;
-    manager.save();
-    manager.serversChanged();
-    return gw.toJSON();
-  },
+  '/api/admin/subscriptions/:sid',
+  async (req, res, p) => billing.publicSub(await billing.cancel(p.sid, req.user.username)),
   { admin: true },
 );
 
@@ -549,7 +678,7 @@ route('GET', '/api/events', (req, res) => {
 });
 
 route('GET', '/api/health', () => ({ ok: true }), { public: true });
-route('GET', '/api/system', async (req) => ({
+route('GET', '/api/system', async (req) => (TEAM && !isStaff(req.user) ? { customer: true, lanIps: [] } : {
   platform: process.platform,
   totalMemMb: Math.floor(os.totalmem() / 1048576),
   freeMemMb: Math.floor(os.freemem() / 1048576),
@@ -562,6 +691,7 @@ route('GET', '/api/system', async (req) => ({
     .filter((i) => i && i.family === 'IPv4' && !i.internal && !i.address.startsWith('169.254.'))
     .map((i) => i.address),
   java: await java.listJava(),
+  isolated: manager.docker,
 }));
 
 route('GET', '/api/types', () => providers.describe());
@@ -570,16 +700,35 @@ route('GET', '/api/types/:type/versions/:version/builds', async (req, res, p) =>
   const prov = providers.getProvider(p.type);
   return prov.hasBuilds ? prov.builds(p.version) : [];
 });
-route('GET', '/api/next-port', async (req, res, p, q) => ({ port: await manager.nextFreePort(q.get('kind')) }));
+route('GET', '/api/next-port', async (req, res, p, q) => {
+  requireStaff(req);
+  return { port: await manager.nextFreePort(q.get('kind')) };
+});
 
 route('GET', '/api/servers', (req) => visibleList(req.user));
 route('POST', '/api/servers', async (req) => {
   const body = await readJson(req);
   checkHostSettings(req, body);
   delete body.gateway;
-  if (TEAM && req.user.role === 'tester') throw httpError(403, "Testers can't create servers.");
-  const space = TEAM ? (body.space === 'solo' ? 'solo' : 'team') : undefined;
-  const inst = await manager.create(body, { space, owner: space === 'solo' ? req.user.id : undefined, createdBy: req.user.id });
+  // Hosted: every server belongs to someone and uses one of their plans.
+  const space = TEAM ? 'customer' : undefined;
+  let extra = {};
+  let sub = null;
+  if (space === 'customer') {
+    // A customer server uses one paid plan: its memory, CPU and disk come from the plan.
+    if (!body.eula) throw httpError(400, 'Please accept the Minecraft EULA.');
+    if (body.type === 'custom') throw httpError(403, 'Custom JAR servers are not available.');
+    sub = billing.sub(String(body.subscriptionId || ''));
+    if (!sub || (sub.userId !== req.user.id && req.user.role !== 'admin')) throw httpError(400, 'Pick one of your plans for this server.');
+    if (!billing.usable(sub)) throw httpError(402, 'This plan is not active. Check Billing.');
+    if (sub.serverId && manager.instances.has(sub.serverId)) throw httpError(400, 'This plan already has a server. Delete that server first, or buy another plan.');
+    body.memoryMb = sub.ramMb;
+    body.name = String(body.name || '').slice(0, 40);
+    extra = { subscriptionId: sub.id };
+  }
+  const owner = space === 'customer' ? sub.userId : undefined;
+  const inst = await manager.create(body, { space, owner, createdBy: req.user.id, extra });
+  if (sub) billing.attachServer(sub.id, sub.userId, inst.cfg.id);
   inst.logActivity('server', who(req), `created ${inst.provider.label} ${inst.cfg.version} server "${inst.cfg.name}"`);
   return inst.toJSON();
 });
@@ -588,6 +737,16 @@ route('PATCH', '/api/servers/:id', async (req, res, p) => {
   const body = await readJson(req);
   checkHostSettings(req, body);
   const inst = getFor(req, p.id, 'settings');
+  if (inst.isCustomer) {
+    // Port and memory come from the plan; host-level settings are never available on customer servers.
+    delete body.port;
+    delete body.customJar;
+    delete body.publicAddress;
+    if (body.type === 'custom') throw httpError(403, 'Custom JAR servers are not available.');
+    if (body.java !== undefined && !/^(auto|\d+)$/.test(String(body.java))) delete body.java;
+    const plan = manager.planInfo(inst);
+    if (body.memoryMb !== undefined) body.memoryMb = Math.min(Number(body.memoryMb) || 0, plan ? plan.ramMb : inst.cfg.memoryMb);
+  }
   // Switching type/version/build replaces the server jar: same rule as deleting.
   const software = ['type', 'version', 'build', 'customJar'].some(
     (k) => body[k] !== undefined && String(body[k] || '') !== String(inst.cfg[k] || ''),
@@ -599,6 +758,7 @@ route('DELETE', '/api/servers/:id', async (req, res, p) => {
   const inst = getFor(req, p.id, 'manage');
   inst.logActivity('server', who(req), `deleted server "${inst.cfg.name}"`);
   await manager.remove(p.id);
+  billing.detachServer(p.id);
   return { ok: true };
 });
 
@@ -637,7 +797,10 @@ route('POST', '/api/servers/:id/team-access', async (req, res, p) => {
   return { names: getFor(req, p.id, 'command').teamAccess({ op: !!op }) };
 });
 
-route('POST', '/api/servers/:id/watches', async (req, res, p) => manager.addWatch(p.id, (await readJson(req)).path), { admin: true });
+route('POST', '/api/servers/:id/watches', async (req, res, p) => {
+  if (HOSTED) throw httpError(400, 'Watching folders on the host is not available on a hosted Tree Host. Use the deploy API.');
+  return manager.addWatch(p.id, (await readJson(req)).path);
+}, { admin: true });
 route(
   'PATCH',
   '/api/servers/:id/watches/:wid',
@@ -676,34 +839,18 @@ route('DELETE', '/api/servers/:id/file', async (req, res, p, q) => {
   return { ok: true };
 });
 
-route('POST', '/api/servers/:id/launch-client', async (req, res, p) => getFor(req, p.id).launchClient(await readJson(req)), {
+route('POST', '/api/servers/:id/launch-client', async (req, res, p) => {
+  if (HOSTED) throw httpError(400, 'Playing on the host is not available on a hosted Tree Host.');
+  return getFor(req, p.id).launchClient(await readJson(req));
+}, {
   admin: true,
 });
 
-// "I'm testing this": tells the team someone is using a server right now.
-route('POST', '/api/servers/:id/claim', async (req, res, p) => {
-  const inst = getFor(req, p.id, 'control');
-  const body = await readJson(req);
-  const cl = manager.claim(p.id, req.user.local ? { id: 'local', username: 'You' } : req.user, body);
-  inst.logActivity('claim', who(req), `started testing${cl.note ? `: ${cl.note}` : ''}`);
-  return inst.toJSON();
-});
-route('DELETE', '/api/servers/:id/claim', async (req, res, p) => {
-  const inst = getFor(req, p.id, 'control');
-  const cl = inst.activeClaim();
-  if (cl && TEAM && cl.userId !== req.user.id && req.user.role !== 'admin') {
-    throw httpError(403, `${cl.username} is testing on this server. Only they or an admin can end it.`);
-  }
-  manager.release(p.id);
-  if (cl) inst.logActivity('claim', who(req), cl.userId === req.user.id ? 'finished testing' : `ended ${cl.username}'s test session`);
-  return inst.toJSON();
-});
-
-// Backups
+// ---------- backups ----------
 route('GET', '/api/servers/:id/backups', (req, res, p) => backups.list(getFor(req, p.id)));
 route('POST', '/api/servers/:id/backups', async (req, res, p) => {
   const inst = getFor(req, p.id, 'control');
-  const b = await backups.create(inst, { label: (await readJson(req)).label, by: who(req) });
+  const b = await backups.create(inst, { label: (await readJson(req)).label, by: who(req), maxManual: inst.isCustomer ? MAX_CUSTOMER_BACKUPS : 0 });
   inst.sysLog(
     `Backup made by ${who(req)}: ${b.label} (${(b.size / 1048576).toFixed(1)} MB).` +
       (b.skipped.length ? ` Skipped ${b.skipped.length} file(s) the server had locked: ${b.skipped.slice(0, 5).join(', ')}` : ''),
@@ -739,16 +886,20 @@ route('POST', '/api/servers/:id/:action', async (req, res, p, q) => {
   const needs = { install: 'settings', 'reset-worlds': 'manage' }[p.action] || 'control';
   const inst = getFor(req, p.id, needs);
   switch (p.action) {
-    case 'start':
+    case 'start': {
+      const blocked = manager.startBlock(inst);
+      if (blocked) throw httpError(402, `Can't start: ${blocked}`);
       if (!inst.proc) inst.logActivity('start', who(req), 'started the server');
       inst.crashTimes = [];
       inst.start();
       break;
+    }
     case 'stop':
       if (inst.proc) inst.logActivity('stop', who(req), 'stopped the server');
       inst.stop();
       break;
     case 'restart':
+      if (manager.startBlock(inst)) throw httpError(402, `Can't restart: ${manager.startBlock(inst)}`);
       inst.logActivity('start', who(req), 'restarted the server');
       inst.crashTimes = [];
       inst.restart();
@@ -766,6 +917,7 @@ route('POST', '/api/servers/:id/:action', async (req, res, p, q) => {
       break;
     case 'open-folder': {
       requireAdmin(req);
+      if (HOSTED) throw httpError(400, 'Not available on a hosted Tree Host.');
       const sub = q.get('sub');
       const target = sub ? inst.resolvePath(sub) : inst.dir;
       await fsp.mkdir(target, { recursive: true });
@@ -788,10 +940,28 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.md': 'text/markdown; charset=utf-8',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+};
+
+// Clean URLs: the website pages, and the dashboard (also at /app for older links).
+const PAGES = {
+  '/dashboard': 'dashboard.html',
+  '/app': 'dashboard.html',
+  '/features': 'features.html',
+  '/pricing': 'pricing.html',
+  '/support': 'support.html',
+  '/about': 'about.html',
+  '/terms': 'terms.html',
+  '/privacy': 'privacy.html',
 };
 
 async function serveStatic(req, res, pathname) {
-  const rel = pathname === '/' ? 'index.html' : decodeURIComponent(pathname.slice(1));
+  pathname = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname;
+  // The homepage is the website; without hosting (local use) it is the dashboard.
+  let rel = PAGES[pathname] || (pathname === '/' ? (HOSTED ? 'index.html' : 'dashboard.html') : decodeURIComponent(pathname.slice(1)));
   const file = path.resolve(PUBLIC, rel);
   if (!file.startsWith(PUBLIC + path.sep)) {
     res.writeHead(403).end();
@@ -805,10 +975,15 @@ async function serveStatic(req, res, pathname) {
       'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
+      ...(isHttps(req) ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
     });
     res.end(data);
   } catch {
-    res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
+    // Pages get the friendly 404 page; missing files (images, scripts) a plain 404.
+    const page = !path.extname(file) || file.endsWith('.html');
+    const body = page ? await fsp.readFile(path.join(PUBLIC, '404.html')).catch(() => null) : null;
+    if (body) res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' }).end(body);
+    else res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
   }
 }
 
@@ -845,13 +1020,12 @@ const server = http.createServer(async (req, res) => {
       if (!r.opts.public) {
         req.user = authenticate(req);
         if (!req.user) throw httpError(401, 'Please sign in.', 'AUTH');
-        if (req.user.role === 'pending') throw httpError(403, 'Your account is waiting for an admin to approve it.', 'PENDING');
         if (r.opts.admin) requireAdmin(req);
       }
       const result = await r.handler(req, res, params, url.searchParams);
       if (result !== HANDLED) sendJson(res, 200, result === undefined ? { ok: true } : result);
     } catch (e) {
-      if (!res.headersSent) sendJson(res, e.status || 400, { error: e.message || String(e), code: e.code });
+      if (!res.headersSent) sendJson(res, e.status || 400, { error: publicMessage(e, req.user), code: e.code });
     }
     return;
   }
@@ -869,7 +1043,10 @@ async function main() {
   if (TEAM) {
     await migrateTeamData();
     await auth.init();
-    await playit.init();
+    // Local test sites (http://localhost...) make the first account the admin; real sites use TREEHOST_ADMIN_EMAILS.
+    auth.allowFirstAdmin = !auth.adminEmails.size && (!HOSTED || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/'));
+    await billing.init();
+    setInterval(() => billing.tick().catch((e) => console.error(`Billing check failed: ${e.message}`)), 5 * 60 * 1000);
     manager.defaultOwner = () => (auth.firstAdmin() || {}).id || null;
   }
   await activity.init();
@@ -877,7 +1054,7 @@ async function main() {
   const url = `http://localhost:${PORT}`;
   server.on('error', (e) => {
     if (e.code === 'EADDRINUSE') {
-      console.log(`Honey Host is already running at ${url} - opening it.`);
+      console.log(`Tree Host is already running at ${url} - opening it.`);
       if (!NO_OPEN) openBrowser(url);
       setTimeout(() => process.exit(0), 500);
     } else {
@@ -887,64 +1064,33 @@ async function main() {
   });
   server.listen(PORT, HOST, () => {
     console.log('');
-    console.log(`  Honey Host by Honey Pixel Studios${TEAM ? ' - TEAM SERVER' : ' - local Minecraft test server manager'}`);
-    console.log(`  Dashboard on this PC: ${url}`);
-    if (CLOUD) {
-      console.log(`  Running in the cloud${CLOUD_URL ? ` at ${CLOUD_URL}` : ''}.`);
-      console.log('  Minecraft players can only join through playit.gg here (set PLAYIT_SECRET). See docs/cloud-hosting.');
+    console.log(`  Tree Host${HOSTED ? ` - ${PUBLIC_URL}` : TEAM ? ' - team mode' : ' - local mode'}`);
+    console.log(`  Listening on ${HOST}:${PORT}`);
+    if (HOSTED) {
+      console.log(`  Payments: ${billing.mode}${billing.mode === 'off' ? ' (set STRIPE_SECRET_KEY to sell plans)' : ''}. Emails: ${mail.enabled() ? 'on' : 'off (set RESEND_API_KEY)'}.`);
+      console.log(`  Sign-in: ${firebase.authEnabled() ? 'Firebase' : 'passwords'}. Database: ${firebase.dbEnabled() ? 'Firebase Realtime Database' : 'local files'}.`);
+      if (!manager.gameHost) console.log('  Set TREEHOST_GAME_HOST to the address players use (a domain or this server\'s public IP).');
     } else if (TEAM && HOST !== '127.0.0.1') {
       console.log('  Dashboard from other PCs on your network:');
       for (const u of lanUrls()) console.log(`    ${u}`);
     }
     console.log(`  Data folder: ${DATA}`);
     console.log('');
-    if (TEAM && auth.setupCode) {
-      banner(['FIRST-TIME SETUP', `Open the dashboard and enter this setup code: ${auth.setupCode}`, 'to create the first admin account.']);
+    if (TEAM && !auth.users.some((u) => u.role === 'admin')) {
+      banner(
+        auth.allowFirstAdmin
+          ? ['No admin yet: the first account you create becomes the admin (local test mode).']
+          : auth.adminEmails.size
+            ? ['No admin yet. Sign up on the website with one of these emails to become the admin:', [...auth.adminEmails].join(', '), firebase.authEnabled() ? 'Verify the email (check your inbox), then sign in again.' : '']
+            : ['No admin yet. Set TREEHOST_ADMIN_EMAILS=you@example.com in the settings and restart.'],
+      );
       console.log('');
     }
-    console.log('  Keep this window open while you use it. Press Ctrl+C to stop all servers and quit.');
+    if (!HOSTED) console.log('  Keep this window open while you use it. Press Ctrl+C to stop all servers and quit.');
     console.log('');
     if (!NO_OPEN) openBrowser(url);
-    if (TEAM && !CLOUD && keepAwake()) console.log('  This PC will not go to sleep while Honey Host runs (the screen can still turn off).');
-    if (USE_TUNNEL) startPublicLink();
-    if (process.env.PLAYIT_SECRET) startPlayitAgent(process.env.PLAYIT_SECRET.trim()).catch((e) => console.log(`  playit agent: ${e.message}`));
+    if (TEAM && !HOSTED && keepAwake()) console.log('  This PC will not go to sleep while Tree Host runs (the screen can still turn off).');
   });
-}
-
-/** Uses a permanent Tailscale Funnel link when available, otherwise a Cloudflare quick tunnel. Rechecks every 5 minutes. */
-async function startPublicLink() {
-  tunnel.on('url', (u) => {
-    if (u && !funnelUrl) {
-      console.log('');
-      banner([
-        'Your team can open the dashboard at:',
-        u,
-        'This address changes each time Honey Host restarts.',
-        'For a permanent free link, run Setup-Permanent-Link.bat.',
-      ]);
-      console.log('');
-    }
-  });
-  const check = async () => {
-    const found = await detectFunnel(PORT);
-    if (found && found !== funnelUrl) {
-      funnelUrl = found;
-      tunnel.stop();
-      console.log('');
-      banner(['Your team can open the dashboard at (permanent link):', found]);
-      console.log('');
-    } else if (!found && funnelUrl) {
-      funnelUrl = null;
-      console.log('  The Tailscale Funnel link is gone; switching back to a Cloudflare link.');
-      tunnel.start(PORT).catch((e) => console.error(`  Could not start the tunnel: ${e.message}`));
-    }
-  };
-  await check();
-  if (!funnelUrl) {
-    console.log('  Starting the public tunnel for your team...');
-    tunnel.start(PORT).catch((e) => console.error(`  Could not start the tunnel: ${e.message}`));
-  }
-  setInterval(() => check().catch(() => {}), 5 * 60 * 1000);
 }
 
 let shuttingDown = false;
@@ -952,8 +1098,8 @@ async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n${signal} received - stopping all servers...`);
-  tunnel.stop();
   await manager.shutdownAll();
+  await store.flushAll().catch(() => {});
   process.exit(0);
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.on(sig, () => shutdown(sig));

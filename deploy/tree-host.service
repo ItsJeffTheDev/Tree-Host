@@ -1,0 +1,27 @@
+[Unit]
+Description=Tree Host (Minecraft server hosting)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=treehost
+Group=treehost
+WorkingDirectory=/opt/tree-host
+EnvironmentFile=/etc/tree-host.env
+Environment=HOME=/var/lib/tree-host DOCKER_CONFIG=/var/lib/tree-host/.docker
+ExecStart=/usr/bin/node src/server.js --no-open
+Restart=always
+RestartSec=5
+# Give running Minecraft servers time to save their worlds when stopping or updating.
+TimeoutStopSec=90
+KillMode=mixed
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/tree-host /opt/tree-host
+
+[Install]
+WantedBy=multi-user.target

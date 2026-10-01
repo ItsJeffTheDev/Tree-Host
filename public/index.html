@@ -3,35 +3,139 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Honey Host</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 34'%3E%3Cpath d='M17 1.5l14 8v15l-14 8-14-8v-15z' fill='%23f5b50a'/%3E%3Cpath d='M17 9l7 4v8l-7 4-7-4v-8z' fill='%23b37d00'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css">
+  <title>Tree Host: Minecraft server hosting</title>
+  <meta name="description" content="Minecraft server hosting for every server type and version: Paper, Purpur, Fabric, Vanilla and more. One-click plugins, automatic backups and a live console. Ready in about a minute.">
+  <meta property="og:title" content="Tree Host: Minecraft server hosting">
+  <meta property="og:description" content="Your Minecraft server, growing in a minute. Every type and version, one-click plugins, automatic backups.">
+  <meta property="og:image" content="/media/tree-host-tour.jpg">
+  <link rel="icon" href="/brand/tree-host-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
 </head>
-<body>
-  <div id="offline" class="offline hidden">Lost connection to the manager. Is the Honey Host window still open? Reconnecting...</div>
-  <div class="app">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="logo"></div>
-        <div>
-          <div class="brand-name">Honey Host</div>
-          <div class="brand-sub">by Honey Pixel Studios</div>
+<body data-page="home">
+  <header id="site-header"></header>
+
+  <section class="hero">
+    <div class="hero-glow"></div>
+    <div class="leaves"></div>
+    <div class="wrap hero-grid">
+      <div>
+        <span class="eyebrow reveal">Minecraft server hosting</span>
+        <h1 class="reveal d1">Your <span class="rotate" data-words="Survival,Modded,SMP,Minigame,Creative">Survival</span> server,<br>growing in a minute.
+          <svg class="hero-tree" viewBox="0 0 64 64" aria-hidden="true">
+            <path class="trunk" d="M32 60 V30" stroke="#2c9a5c" stroke-width="6" stroke-linecap="round" fill="none"/>
+            <circle class="leaf l1" cx="32" cy="22" r="16" fill="#46c37b"/>
+            <circle class="leaf l2" cx="20" cy="30" r="11" fill="#5fd38f"/>
+            <circle class="leaf l3" cx="44" cy="30" r="11" fill="#7beaa6"/>
+          </svg>
+        </h1>
+        <p class="lead reveal d2">Paper, Purpur, Fabric, Vanilla and more, on any version. Install plugins in one click, keep automatic backups,
+          and run everything from one clean dashboard.</p>
+        <div class="hero-cta reveal d3">
+          <a href="/dashboard?signup" class="btn-cta" data-signed-in-href="/dashboard">Start your server</a>
+          <a href="#" class="btn-ghost" data-tour>▶ Watch the 1-minute tour</a>
+        </div>
+        <div class="hero-note reveal d4"><span id="hero-price">Monthly plans</span><span>Cancel any time</span><span>Ready in about a minute</span></div>
+      </div>
+      <div class="reveal d2">
+        <div class="browser video-wrap">
+          <div class="browser-bar"><span></span><span></span><span></span><div class="url">treehost.online/dashboard</div></div>
+          <video data-autoplay autoplay muted loop playsinline preload="metadata" poster="/media/tree-host-tour.jpg">
+            <source src="/media/tree-host-tour.mp4" type="video/mp4">
+            <source src="/media/tree-host-tour.webm" type="video/webm">
+          </video>
         </div>
       </div>
-      <div id="space-switch" class="space-switch hidden"></div>
-      <button id="btn-new" class="btn primary block">+ New server</button>
-      <nav id="server-list" class="server-list"></nav>
-      <a id="activity-link" class="help-link" href="#">📋 Activity</a>
-      <a href="help.html" target="_blank" class="help-link">📖 Help &amp; guides</a>
-      <div id="user-box" class="user-box hidden"></div>
-      <div id="sys-info" class="sys-info"></div>
-    </aside>
-    <main id="main" class="main"></main>
+    </div>
+  </section>
+
+  <div class="marquee" aria-label="Supported server types">
+    <div class="marquee-track">
+      <span class="chip"><i></i>Paper</span><span class="chip"><i></i>Purpur</span><span class="chip"><i></i>Fabric</span>
+      <span class="chip"><i></i>Vanilla</span><span class="chip"><i></i>Folia</span><span class="chip"><i></i>Spigot</span>
+      <span class="chip"><i></i>CraftBukkit</span><span class="chip"><i></i>Velocity</span><span class="chip"><i></i>Waterfall</span>
+      <span class="chip"><i></i>BungeeCord</span><span class="chip"><i></i>Snapshots</span><span class="chip"><i></i>1.8 to the newest</span>
+      <span class="chip"><i></i>Paper</span><span class="chip"><i></i>Purpur</span><span class="chip"><i></i>Fabric</span>
+      <span class="chip"><i></i>Vanilla</span><span class="chip"><i></i>Folia</span><span class="chip"><i></i>Spigot</span>
+      <span class="chip"><i></i>CraftBukkit</span><span class="chip"><i></i>Velocity</span><span class="chip"><i></i>Waterfall</span>
+      <span class="chip"><i></i>BungeeCord</span><span class="chip"><i></i>Snapshots</span><span class="chip"><i></i>1.8 to the newest</span>
+    </div>
   </div>
-  <div id="modal-root"></div>
-  <div id="toasts" class="toasts"></div>
-  <script src="team.js"></script>
-  <script src="extras.js"></script>
-  <script src="app.js"></script>
+
+  <section>
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">How it works</span><h2>From sign-up to playing in three steps</h2>
+        <p>No control panels to learn and no files to upload. Pick what you want and play.</p></div>
+      <div class="steps">
+        <div class="step reveal d1"><div class="step-num">1</div><h3>Pick a plan</h3><p>Choose how much memory your server gets. Pay monthly, cancel whenever you want.</p></div>
+        <div class="step reveal d2"><div class="step-num">2</div><h3>Choose your server</h3><p>Paper, Purpur, Fabric, Vanilla... and any version. Tree Host installs it and the right Java for you.</p></div>
+        <div class="step reveal d3"><div class="step-num">3</div><h3>Join and play</h3><p>Copy your address, paste it in Minecraft, and you're in. Share it with your friends.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:20px">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Features</span><h2>Everything your server needs</h2>
+        <p>The tools you actually use, built in and easy to find.</p></div>
+      <div class="grid">
+        <div class="card reveal d1"><div class="ico">🧩</div><h3>One-click plugins &amp; mods</h3><p>Search Modrinth right from the dashboard. Only plugins that work on your server's type and version are shown.</p></div>
+        <div class="card reveal d2"><div class="ico">💾</div><h3>Backups &amp; restore</h3><p>Back up with one click or automatically every 6 h, 12 h or day, and roll back whenever you need.</p></div>
+        <div class="card reveal d3"><div class="ico">🖥</div><h3>Live console</h3><p>Watch your server in real time, run commands, and OP yourself with one button.</p></div>
+        <div class="card reveal d1"><div class="ico">📁</div><h3>File manager</h3><p>Edit configs in the browser and change game settings without touching a file.</p></div>
+        <div class="card reveal d2"><div class="ico">♻️</div><h3>Back after a crash</h3><p>If a plugin crashes your server, it restarts by itself and shows you the error.</p></div>
+        <div class="card reveal d3"><div class="ico">🔒</div><h3>Your own resources</h3><p>Every server runs isolated with its own memory and CPU, so neighbours can't slow you down.</p></div>
+      </div>
+      <p style="text-align:center;margin-top:28px" class="reveal"><a href="/features" class="btn-ghost">See all features →</a></p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap split">
+      <div class="reveal">
+        <span class="eyebrow">Live console</span>
+        <h3>See exactly what your server is doing</h3>
+        <p>Every log line as it happens, with warnings and errors highlighted. Run any command, use quick buttons for the
+          usual ones, and get a clear message from Tree Host when something needs your attention.</p>
+        <ul><li>Command history with ↑ and ↓</li><li>Whitelist me and OP me buttons</li><li>Memory and disk usage at a glance</li></ul>
+      </div>
+      <div class="console-demo reveal d2" id="console-demo">
+        <div class="browser-bar"><span></span><span></span><span></span><div class="url">Steve's SMP · Console</div></div>
+        <div class="console-body"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Pricing</span><h2>Simple, honest pricing</h2>
+        <p>One plan = one server. Every feature is included in every plan.</p></div>
+      <div id="plans" class="plans"><div class="loading">Loading plans...</div></div>
+      <p style="text-align:center;margin-top:24px" class="reveal"><a href="/pricing">Compare plans and read the billing FAQ →</a></p>
+    </div>
+  </section>
+
+  <section style="padding-top:20px">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">FAQ</span><h2>Questions</h2></div>
+      <div class="faq">
+        <details class="reveal"><summary>How fast is my server ready?</summary><p>About a minute after you pay: pick the type and version, and Tree Host downloads and starts it for you.</p></details>
+        <details class="reveal"><summary>Which server types are supported?</summary><p>Paper, Purpur, Folia, Spigot, CraftBukkit, Fabric, Vanilla, and the Velocity, Waterfall and BungeeCord proxies, on any version they released. Forge and NeoForge are not supported yet.</p></details>
+        <details class="reveal"><summary>Can I install my own plugins and mods?</summary><p>Yes. Install from the built-in browser, drag and drop your own jars, or edit any file in the file manager.</p></details>
+        <details class="reveal"><summary>How do I cancel?</summary><p>In your dashboard: Billing → Payment method &amp; invoices. Your server stays until the end of the period you paid for.</p></details>
+      </div>
+      <p style="text-align:center;margin-top:20px" class="reveal"><a href="/support">More questions? Visit Support →</a></p>
+    </div>
+  </section>
+
+  <section class="cta-band">
+    <div class="wrap reveal">
+      <h2>Plant your server today 🌳</h2>
+      <p>It takes about a minute. Cancel whenever you want.</p>
+      <a href="/dashboard?signup" class="btn-cta" data-signed-in-href="/dashboard">Create your server</a>
+    </div>
+  </section>
+
+  <footer id="site-footer"></footer>
+  <script src="/site.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 {
-  "name": "honey-host",
+  "name": "tree-host",
   "version": "1.0.0",
-  "description": "Honey Host by Honey Pixel Studios: Minecraft test server manager for plugin developers (Paper, Purpur, Folia, Spigot, Vanilla, Fabric, Velocity, BungeeCord...)",
+  "description": "Tree Host: Minecraft test server manager for plugin developers (Paper, Purpur, Folia, Spigot, Vanilla, Fabric, Velocity, BungeeCord...)",
   "private": true,
   "main": "src/server.js",
   "scripts": {

@@ -1,0 +1,289 @@
+# Running Tree Host
+
+For the people who run Tree Host: renting the server, connecting **treehost.online**, payments, email, and day-to-day work.
+
+---
+
+## How it fits together
+
+```
+ Players ──── play.treehost.online:25600 ───┐
+                                            ▼
+ Customers ── https://treehost.online ──► Rented Linux server
+                                            ├─ Caddy (HTTPS certificate, forwards to Tree Host)
+                                            ├─ Tree Host (website, dashboard, billing)
+                                            └─ Docker: one isolated container per Minecraft server
+ Stripe ──── payments + webhook ────────────┘
+```
+
+Everything runs on **one rented Linux server**. Each Minecraft server gets its own port (25600, 25601, ...) on
+`play.treehost.online`.
+
+---
+
+## 1. Rent a server
+
+Pick a **dedicated server or a large VPS** with Ubuntu 22.04 or 24.04. Minecraft needs memory (RAM) and fast single-core
+CPU much more than anything else.
+
+| What to look for | Why |
+|---|---|
+| **32-64 GB RAM** | RAM is what you sell. 64 GB fits roughly 25 Sapling (2 GB) servers. |
+| **Fast CPU** (high clock speed, e.g. Ryzen) | Minecraft runs mostly on one core per server. |
+| **NVMe SSD**, 500 GB+ | Worlds, backups and fast chunk loading. |
+| **DDoS protection** | Public Minecraft servers get attacked. Many hosts include it. |
+| **Unmetered or large traffic** | Players use a steady stream of bandwidth. |
+
+Popular choices: Hetzner (dedicated "AX" servers), OVH (game servers come with DDoS protection), Contabo. Pick a location
+close to your players.
+
+> **Note:** a VPS works too, but "shared" vCPUs get slow under load. For a business, a dedicated server is worth it.
+
+When it's ready you get its **IP address** (e.g. `203.0.113.10`) and a root password or SSH key.
+
+### Free option: Oracle Cloud "Always Free"
+
+Oracle gives one free ARM server forever: up to **4 CPU cores, 24 GB of RAM**, 200 GB of disk and 10 TB of traffic a month.
+That's enough to start with about 8-10 small customer servers. Move to a paid server once customers pay for it.
+
+**1. Create the account**
+
+1. Sign up at [oracle.com/cloud/free](https://www.oracle.com/cloud/free/). It asks for a card to check you're a real person;
+   Always Free resources are not charged.
+2. **Home region:** choose carefully, it can't be changed. Pick one near your players. Less busy regions (not
+   Ashburn, Frankfurt or London) usually have free ARM servers available.
+
+**2. Create the server**
+
+1. **Menu → Compute → Instances → Create instance.**
+2. **Image:** click *Change image* → **Canonical Ubuntu 24.04**.
+3. **Shape:** click *Change shape* → **Ampere** → **VM.Standard.A1.Flex** → **4 OCPUs** and **24 GB memory**.
+4. **Networking:** keep *Create new virtual cloud network* and *public subnet*, and make sure **Assign a public IPv4 address** is on.
+5. **SSH keys:** *Generate a key pair for me* → **Download private key**. Keep this file safe: it's how you log in.
+6. **Boot volume:** tick *Specify a custom boot volume size* → **150 GB** (the free limit is 200 GB in total).
+7. Click **Create**. When it's *Running*, copy the **Public IP address**.
+
+> **Note:** "Out of capacity for shape VM.Standard.A1.Flex" is common. Try another *Availability domain* in the same
+> form, try again later (early morning often works), or start with 2 OCPUs and 12 GB and resize later.
+
+**3. Open the ports in Oracle's network**
+
+Oracle has a second firewall in front of the server. On the instance page click the **subnet** → **Default Security List**
+→ **Add Ingress Rules**, and add three rules, each with *Source CIDR* `0.0.0.0/0` and *IP Protocol* **TCP**:
+
+| Destination port range | For |
+|---|---|
+| `80` | the website (HTTPS certificate) |
+| `443` | the website |
+| `25600-25999` | customers' Minecraft servers |
+
+(The installer opens the same ports in the server's own firewall automatically.)
+
+**4. Log in**
+
+On Windows, in PowerShell (replace the file name and IP):
+
+```powershell
+ssh -i "$HOME\Downloads\ssh-key-2026-10-01.key" ubuntu@203.0.113.10
+```
+
+If it complains the key's permissions are too open, run this once and try again:
+`icacls "$HOME\Downloads\ssh-key-2026-10-01.key" /inheritance:r /grant:r "$($env:USERNAME):R"`
+
+Then continue with section 2 (DNS) and section 3 (install). The user on Oracle is `ubuntu`, so commands use `sudo`.
+
+> **Important:** Oracle may reclaim free servers that look idle (very low CPU, network and memory use for 7 days). Once
+> customers' servers run, that isn't a problem. To be safe from day one, upgrade the account to **Pay As You Go** (Billing →
+> Upgrade): Always Free resources stay free, and the idle rule no longer applies. Set a **budget alert** of $1
+> (Billing → Budgets) so you'd notice if anything ever costs money.
+
+When you outgrow it: rent a bigger server, run the installer there, copy `/var/lib/tree-host` over, and point the DNS at the new IP.
+Accounts and billing are already in Firebase.
+
+---
+
+## 2. Point treehost.online at the server
+
+Where you bought **treehost.online**, open its **DNS settings** and add these records (replace `203.0.113.10` with your
+server's IP):
+
+| Type | Name | Value | Why |
+|---|---|---|---|
+| **A** | `@` | `203.0.113.10` | the website: treehost.online |
+| **A** | `www` | `203.0.113.10` | www.treehost.online (redirects to treehost.online) |
+| **A** | `play` | `203.0.113.10` | the address players join: play.treehost.online |
+
+If the server also has an IPv6 address, add the same three as **AAAA** records.
+
+> **Important:** if your domain uses **Cloudflare**, set the `play` record to **DNS only** (grey cloud). Cloudflare's
+> proxy can't carry Minecraft traffic. The `@` and `www` records can also stay DNS only; Caddy handles HTTPS itself.
+
+DNS changes usually work within minutes, sometimes up to a few hours. Check with `ping treehost.online` (it should
+show your server's IP).
+
+---
+
+## 3. Install Tree Host
+
+1. Connect to the server (`ssh ubuntu@203.0.113.10` on Oracle, `ssh root@...` elsewhere).
+2. Get the code. The repo is private: when git asks, enter your GitHub username, and as the password a **personal access
+   token** (GitHub → Settings → Developer settings → Fine-grained tokens → read-only access to this repo):
+
+   ```bash
+   sudo git clone https://github.com/ItsJeffTheDev/Honey-Host.git /opt/tree-host
+   ```
+
+3. Run the installer. It installs Docker, Node.js, Caddy and a firewall, creates a `treehost` user, and starts
+   everything:
+
+   ```bash
+   sudo bash /opt/tree-host/deploy/install.sh
+   ```
+
+4. Before opening the site, put **your own email** in `/etc/tree-host.env`:
+
+   ```
+   TREEHOST_ADMIN_EMAILS=you@example.com
+   ```
+
+   and run `sudo systemctl restart tree-host`. Then sign up at **https://treehost.online/dashboard** with that email,
+   click the link in the verification email Firebase sends you, and sign in again: you're the admin. (Signing in with
+   Google using that email works straight away.) Everyone else who signs up is a normal customer. Want your own servers
+   too? Give yourself a free plan in **Admin → People → More → Give a free plan**.
+
+Your settings live in **`/etc/tree-host.env`**. After changing it: `sudo systemctl restart tree-host`.
+
+---
+
+## 4. Payments (Stripe)
+
+1. Create an account at [stripe.com](https://stripe.com) and fill in your business details.
+2. Stay in **Test mode** first. **Developers → API keys** → copy the **Secret key** (`sk_test_...`) into
+   `STRIPE_SECRET_KEY` in `/etc/tree-host.env`.
+3. **Developers → Webhooks → Add endpoint**:
+   - URL: `https://treehost.online/api/billing/webhook`
+   - Events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
+     `customer.subscription.deleted`, `invoice.paid`, `invoice.payment_failed`
+   - Copy the **Signing secret** (`whsec_...`) into `STRIPE_WEBHOOK_SECRET`.
+4. **Settings → Billing → Customer portal**: turn it on, allow **canceling subscriptions** and **updating payment methods**,
+   and set cancellations to happen **at the end of the billing period**. Save.
+5. `sudo systemctl restart tree-host`, then buy a plan on your own site with Stripe's test card `4242 4242 4242 4242`
+   (any future date, any CVC). The plan should turn **Active** and you can create a server.
+
+When everything works: switch Stripe to **Live mode**, repeat steps 2-4 with the live keys, and restart.
+
+> **Tip:** set your prices in **Admin → Plans**. Changes apply to new purchases; existing customers keep their price.
+
+---
+
+## 5. Firebase (sign-in and database)
+
+Tree Host uses your Firebase project **tree-host** for two things:
+
+- **Firebase Authentication:** customers sign in with email/password or Google. Firebase also sends the verification and
+  password-reset emails.
+- **Realtime Database:** stores accounts, plans, subscriptions and activity, so they survive even if the rented server dies.
+  (Worlds and server files stay on the server; back those up as in section 8.)
+
+**In the [Firebase console](https://console.firebase.google.com/project/tree-host):**
+
+1. **Authentication → Sign-in method:** turn on **Email/Password** and **Google**.
+2. **Authentication → Settings → Authorized domains:** add `treehost.online` (and `www.treehost.online`).
+3. **Realtime Database → Rules:** paste this and click **Publish**. Browsers never talk to the database directly; only the
+   Tree Host server does, with its own key, so everything else is locked:
+
+   ```json
+   { "rules": { ".read": false, ".write": false } }
+   ```
+
+4. **Project settings → Service accounts → Generate new private key.** This downloads a `.json` file.
+
+   > **Warning:** this file is a master key to your Firebase project. Never commit it, email it or post it anywhere.
+
+5. Upload it to the server and lock it down:
+
+   ```bash
+   scp tree-host-firebase-adminsdk-xxxx.json root@203.0.113.10:/etc/tree-host-firebase.json
+   ssh root@203.0.113.10 'chown root:treehost /etc/tree-host-firebase.json && chmod 640 /etc/tree-host-firebase.json'
+   ```
+
+6. `sudo systemctl restart tree-host`. The log (`journalctl -u tree-host -n 30`) should say
+   **Sign-in: Firebase. Database: Firebase Realtime Database.** Existing local data is uploaded automatically the first time.
+
+The public Firebase settings (API key, project ID...) are already in `/etc/tree-host.env`. They are meant to be public.
+
+> **Tip:** Firebase's free Spark plan covers sign-in and a small database comfortably. Under **Authentication → Templates**
+> you can change the sender name and text of the emails to "Tree Host".
+
+---
+
+## 6. Email for failed payments (optional)
+
+Password reset emails come from Firebase. Tree Host itself only emails customers when a payment fails. To turn that on:
+
+1. Create a free account at [resend.com](https://resend.com).
+2. **Domains → Add domain** → `treehost.online`. Resend shows a few DNS records (TXT and MX). Add them at your domain's DNS
+   settings exactly as shown, then click **Verify**.
+3. **API keys → Create** and put it in `RESEND_API_KEY`. Keep `MAIL_FROM=Tree Host <no-reply@treehost.online>`.
+4. Restart Tree Host.
+
+> **Tip:** for a support inbox like `support@treehost.online`, use your domain seller's email forwarding or a mail
+> service, and put the address in `TREEHOST_SUPPORT_EMAIL` so it appears on the website.
+
+---
+
+## 7. Before you open to the public
+
+- [ ] `https://treehost.online` loads with a padlock, and `play.treehost.online` points at the server.
+- [ ] Stripe is in **Live mode**, the webhook shows successful deliveries, `BILLING_DEMO=0`.
+- [ ] A real test purchase works, and a refund in Stripe looks right.
+- [ ] Sign-up, Google sign-in and **Forgot your password?** work on treehost.online.
+- [ ] Realtime Database rules are locked (step 5.3), and the log says **Database: Firebase Realtime Database**.
+- [ ] **Terms** and **Privacy** pages: fill in `TREEHOST_COMPANY`, `TREEHOST_SUPPORT_EMAIL` and `TREEHOST_JURISDICTION`,
+      and **have them checked by a lawyer** for your country. They are starting templates, not legal advice.
+- [ ] Plans and prices set (**Admin → Plans**), and **capacity** set so you never sell more memory than the machine has.
+- [ ] You can join a test server at `play.treehost.online:25600` from outside your home network.
+- [ ] Off-server backups are set up (section 9).
+
+---
+
+## 8. Day-to-day
+
+- **Admin → Billing**: monthly revenue, memory sold vs. capacity, every subscription. Unpaid plans keep running for 3
+  days, then stop; servers of ended plans are deleted after 14 days.
+- **Admin → People**: find customers, give free plans (giveaways, partners, your own servers), suspend abusers, reset passwords.
+- **🌳 All servers** (top of the sidebar, support and admins): every customer's server, to help with problems.
+- **Activity** and **Discord alerts** (Admin → Settings): new customers, payments, failed payments and crashes.
+- **Logs:** `journalctl -u tree-host -f`
+
+### Updating Tree Host
+
+Push the new code to GitHub, then on the server:
+
+```bash
+sudo bash /opt/tree-host/deploy/update.sh
+```
+
+Running servers are stopped cleanly and the ones set to **Start automatically** come back. Tell customers before big
+updates.
+
+---
+
+## 9. Backups of the whole machine
+
+Accounts, plans and subscriptions are safe in Firebase. Worlds and server files live in **`/var/lib/tree-host`**, and
+your settings in **`/etc/tree-host.env`** and **`/etc/tree-host-firebase.json`**.
+The Backups tab protects against mistakes, but not against the server dying. Copy those folders to another place every
+night, for example with your host's backup space (Hetzner Storage Box) and `restic` or `rsync`.
+
+---
+
+## 10. Security checklist
+
+- Use SSH keys and disable password login (`PasswordAuthentication no` in `/etc/ssh/sshd_config`).
+- Keep Ubuntu updated: `sudo apt update && sudo apt upgrade` (or turn on `unattended-upgrades`).
+- Every Minecraft server runs in its own Docker container: no access to the host, its own memory/CPU/process limits,
+  a read-only system, and only its own folder mounted. Don't turn isolation off on a public host.
+- Only give **Admin** to people you trust with money and every customer's data. Use **Support** for helpers.
+- Never share `/etc/tree-host.env` or `/etc/tree-host-firebase.json`: they hold your Stripe, email and Firebase keys.
+- Keep the Realtime Database rules locked (`.read`/`.write` false). Test-mode rules would let anyone read every account.

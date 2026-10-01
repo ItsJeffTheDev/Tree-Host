@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Honey Host Help</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 34 34'%3E%3Cpath d='M17 1.5l14 8v15l-14 8-14-8v-15z' fill='%23f5b50a'/%3E%3Cpath d='M17 9l7 4v8l-7 4-7-4v-8z' fill='%23b37d00'/%3E%3C/svg%3E">
+  <title>Tree Host Help</title>
+  <link rel="icon" href="brand/tree-host-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
   <style>
     body { overflow-y: auto; }
@@ -25,7 +25,7 @@
       color: var(--text); text-decoration: none; font-weight: 600; font-size: 14px;
     }
     .help nav a.doc:hover { background: var(--panel-2); }
-    .help nav a.doc.active { background: rgba(245,181,10,.1); color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+    .help nav a.doc.active { background: rgba(70,195,123,.1); color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
     .help nav a.doc .ico { width: 22px; text-align: center; }
     .help nav .back { margin-top: auto; }
 
@@ -36,7 +36,7 @@
     #results a:hover { background: var(--panel-2); }
     #results .r-doc { font-size: 11px; color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
     #results .r-text { color: var(--muted); display: block; margin-top: 2px; line-height: 1.4; }
-    #results mark { background: rgba(245,181,10,.3); color: var(--text); border-radius: 3px; padding: 0 2px; }
+    #results mark { background: rgba(70,195,123,.3); color: var(--text); border-radius: 3px; padding: 0 2px; }
     #results .none { color: var(--muted); font-size: 13px; padding: 6px 10px; }
 
     /* ---- article ---- */
@@ -70,8 +70,8 @@
     article ol > li { counter-increment: step; position: relative; padding-left: 40px; margin: 10px 0; }
     article ol > li::before {
       content: counter(step); position: absolute; left: 0; top: 1px; width: 26px; height: 26px; border-radius: 50%;
-      background: rgba(245,181,10,.15); color: var(--accent); font-weight: 700; font-size: 13px;
-      display: grid; place-items: center; border: 1px solid rgba(245,181,10,.35);
+      background: rgba(70,195,123,.15); color: var(--accent); font-weight: 700; font-size: 13px;
+      display: grid; place-items: center; border: 1px solid rgba(70,195,123,.35);
     }
     article ul { padding-left: 22px; }
     article ul > li { margin: 6px 0; }
@@ -98,7 +98,7 @@
     .callout.tip { background: rgba(52,199,123,.07); border-color: rgba(52,199,123,.3); }
     .callout.tip::before { content: "💡"; }
     .callout.tip .c-label { color: #6fe0a5; }
-    .callout.warn { background: rgba(245,181,10,.08); border-color: rgba(245,181,10,.4); }
+    .callout.warn { background: rgba(70,195,123,.08); border-color: rgba(70,195,123,.4); }
     .callout.warn::before { content: "⚠️"; }
     .callout.warn .c-label { color: var(--accent); }
 
@@ -137,7 +137,7 @@
 <body>
   <div class="help">
     <nav>
-      <div class="brand"><div class="logo"></div><div><div class="brand-name">Honey Host</div><div class="brand-sub">Help &amp; guides</div></div></div>
+      <div class="brand"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Help &amp; guides</div></div></div>
       <div class="search"><input type="text" id="q" placeholder="Search the guides…" autocomplete="off"></div>
       <div id="results"></div>
       <div id="nav-links"></div>

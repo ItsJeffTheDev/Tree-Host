@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Honey Host (local only)
+title Tree Host (local only)
 cd /d "%~dp0"
 
 rem For a developer's own PC: no logins, only reachable from this PC, separate data folder.
@@ -13,7 +13,7 @@ if not exist "%ProgramFiles%\nodejs\node.exe" goto node_fail
 set "PATH=%ProgramFiles%\nodejs;%PATH%"
 :node_ok
 
-set "MCPT_DATA=%~dp0local-data"
+set "TREEHOST_DATA=%~dp0local-data"
 node src\server.js %*
 if errorlevel 1 pause
 exit /b

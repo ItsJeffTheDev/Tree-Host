@@ -157,7 +157,7 @@ const providers = [
   paperMc('paper', 'Paper', {
     family: 'bukkit',
     kind: 'server',
-    description: 'The most popular plugin server. Best default for testing Bukkit/Paper plugins.',
+    description: 'The most popular choice: fast, stable, and runs Bukkit, Spigot and Paper plugins. Pick this if unsure.',
     java: (v) => java.javaForMinecraft(v),
   }),
   {
@@ -165,7 +165,7 @@ const providers = [
     label: 'Purpur',
     family: 'bukkit',
     kind: 'server',
-    description: 'Paper fork with many extra gameplay options.',
+    description: 'Paper with lots of extra gameplay options to tweak. Runs the same plugins.',
     hasBuilds: true,
     async versions() {
       const d = await fetchJson(PURPUR);
@@ -195,17 +195,17 @@ const providers = [
   paperMc('folia', 'Folia', {
     family: 'bukkit',
     kind: 'server',
-    description: 'Paper with regionised multithreading. Use it to test Folia support.',
+    description: 'For very busy servers: spreads the world over several CPU cores. Many plugins don\'t support it yet.',
     java: (v) => java.javaForMinecraft(v),
   }),
-  buildTools('spigot', 'Spigot', 'Compiled locally with BuildTools. The first build of each version takes several minutes.'),
-  buildTools('craftbukkit', 'CraftBukkit', 'Plain Bukkit implementation, compiled locally with BuildTools.'),
+  buildTools('spigot', 'Spigot', 'The classic plugin server. Only pick it if a plugin needs Spigot; the first start takes several minutes.'),
+  buildTools('craftbukkit', 'CraftBukkit', 'Plain Bukkit, for very old plugins. The first start takes several minutes.'),
   {
     id: 'vanilla',
     label: 'Vanilla',
     family: 'vanilla',
     kind: 'server',
-    description: 'The official Mojang server (no plugins). Includes snapshots.',
+    description: 'The official server from Mojang: the pure game, no plugins. Includes snapshots.',
     hasBuilds: false,
     async versions() {
       const m = await getMojangManifest();
@@ -231,7 +231,7 @@ const providers = [
     label: 'Fabric',
     family: 'fabric',
     kind: 'server',
-    description: 'Lightweight mod loader. Mods go in the mods/ folder.',
+    description: 'For Fabric mods and modpacks. Install mods from the Mods tab.',
     hasBuilds: true,
     buildLabel: 'Loader',
     async versions() {
@@ -259,13 +259,13 @@ const providers = [
   paperMc('velocity', 'Velocity', {
     family: 'velocity',
     kind: 'proxy',
-    description: 'Modern proxy. Test Velocity plugins or multi-server setups.',
+    description: 'A modern proxy that links several servers into one network.',
     java: (v, dir) => javaFromJar(dir, 21),
   }),
   paperMc('waterfall', 'Waterfall', {
     family: 'bungee',
     kind: 'proxy',
-    description: 'Paper\'s BungeeCord fork (end-of-life, kept for legacy testing).',
+    description: 'An older proxy that is no longer updated. Only pick it if a plugin needs it.',
     java: (v, dir) => javaFromJar(dir, 21),
   }),
   {
@@ -273,7 +273,7 @@ const providers = [
     label: 'BungeeCord',
     family: 'bungee',
     kind: 'proxy',
-    description: 'The original proxy from SpigotMC (latest build).',
+    description: 'The original proxy for linking servers into a network.',
     hasBuilds: false,
     async versions() {
       return [{ id: 'latest', pre: false }];

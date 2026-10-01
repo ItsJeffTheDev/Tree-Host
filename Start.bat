@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Honey Host
+title Tree Host (test site)
 cd /d "%~dp0"
 
 rem ============ Node.js (installed automatically if missing) ============
@@ -15,28 +15,16 @@ if not exist "%ProgramFiles%\nodejs\node.exe" goto node_fail
 set "PATH=%ProgramFiles%\nodejs;%PATH%"
 :node_ok
 
-rem ============ playit.gg (optional: public addresses for players) ============
-if exist "%ProgramFiles(x86)%\playit_gg\bin\playit.exe" goto playit_ok
-if exist "%ProgramFiles%\playit_gg\bin\playit.exe" goto playit_ok
-if exist "%~dp0data\.skip-playit" goto playit_ok
-echo.
-echo  playit.gg gives your servers free public addresses, so people outside
-echo  your home can join without port forwarding.
-choice /C YN /M " Install playit.gg now"
-if errorlevel 2 goto playit_skip
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\install-playit.ps1"
-goto playit_ok
-:playit_skip
-if not exist "%~dp0data" mkdir "%~dp0data"
-echo skipped> "%~dp0data\.skip-playit"
-echo  OK. You can install it later from https://playit.gg/download
-:playit_ok
-
-rem Java for each Minecraft version is downloaded automatically when a server starts.
-
-rem Logins required; reachable from this PC, your home network and a public link.
-set MCPT_TEAM=1
-set MCPT_TUNNEL=1
+rem Runs the whole Tree Host website on this PC for testing: sign-ups, plans (fake payments) and servers.
+rem It uses its own "test-site-data" folder. The real site runs on the rented Linux server (see README).
+set "TREEHOST_PUBLIC_URL=http://localhost:8766"
+set "TREEHOST_DATA=%~dp0test-site-data"
+set "TREEHOST_GAME_HOST=localhost"
+set "BILLING_DEMO=1"
+rem With Docker Desktop running, servers run isolated like on the real site.
+docker info >nul 2>nul
+if not errorlevel 1 set "TREEHOST_ISOLATION=docker"
+start "" "http://localhost:8766"
 node src\server.js %*
 if errorlevel 1 pause
 exit /b

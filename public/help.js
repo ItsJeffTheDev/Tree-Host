@@ -1,14 +1,14 @@
 'use strict';
-// Honey Host Help: renders the Markdown guides in public/docs with search, an "On this page" menu,
+// Tree Host Help: renders the Markdown guides in public/docs with search, an "On this page" menu,
 // callouts (> **Tip:** / **Note:** / **Important:** / **Warning:**), copyable code and previous/next links.
 
 const DOCS = [
   { id: 'getting-started', title: 'Getting started', icon: '👋', group: 'Start here' },
-  { id: 'servers', title: 'Servers and plugins', icon: '🧱', group: 'Using Honey Host' },
-  { id: 'roles', title: 'Roles & permissions', icon: '🔑', group: 'Using Honey Host' },
-  { id: 'admin-guide', title: 'Admin guide', icon: '🛠', group: 'For admins' },
-  { id: 'cloud-hosting', title: 'Hosting on Render', icon: '☁', group: 'For admins' },
+  { id: 'servers', title: 'Your server', icon: '🧱', group: 'Using Tree Host' },
+  { id: 'billing', title: 'Billing', icon: '💳', group: 'Using Tree Host' },
   { id: 'troubleshooting', title: 'Troubleshooting', icon: '🩹', group: 'Help' },
+  { id: 'roles', title: 'Roles & permissions', icon: '🔑', group: 'For admins' },
+  { id: 'hosting-guide', title: 'Running Tree Host', icon: '🛠', group: 'For admins' },
 ];
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -240,7 +240,7 @@ async function show() {
       });
     }),
   );
-  document.title = `${meta.title} · Honey Host Help`;
+  document.title = `${meta.title} · Tree Host Help`;
   renderToc();
   if (location.hash) {
     const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));

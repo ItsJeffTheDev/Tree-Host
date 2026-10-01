@@ -1,99 +1,79 @@
 # Getting started
 
-Honey Host is Honey Pixel Studios' Minecraft test server platform. You can create test servers of any type and
-version, deploy your plugin from your build, and test it with the rest of the team from anywhere.
-
-This guide gets you from "I have a link" to "I'm in the game" in about 10 minutes.
+Welcome to Tree Host! This guide takes you from a new account to playing on your own Minecraft server in a few minutes.
 
 ---
 
-## 1. Get an account
+## 1. Create your account
 
-Open the Honey Host dashboard:
+1. Go to [treehost.online](https://treehost.online) and click **Get started**.
+2. Pick a **username**, enter your **email** and a **password** (8+ characters).
+3. Tick that you agree to the Terms of Service and Privacy Policy, then click **Create account**.
 
-**<https://honey-host.tail6a10e2.ts.net>**
-
-It works from anywhere and never changes, so bookmark it. (On the host PC's own network, the admin can also give you a
-local link like `http://SPAREPC:8766`.)
-
-There are two ways in:
-
-**A. You got an invite link** (it contains `?invite=`)
-
-1. Open the invite link.
-2. Choose a **username** (3-32 characters) and a **password** (8+ characters).
-3. Enter your **Minecraft username** (your in-game name, exactly as it appears in Minecraft).
-4. Click **Create account**. You're in.
-
-**B. You only have the dashboard link**
-
-1. Open the link and click **Request access** under the sign-in button.
-2. Fill in username, password and your Minecraft username, then click **Request access**.
-3. You'll see **Waiting for approval**. Leave the page open: it opens the dashboard automatically as soon as an
-   admin approves you. (You can also close it and sign in later.)
-
-> **Note:** invite links work once and expire after 7 days. If yours doesn't work, ask for a new one.
+> **Tip:** use an email you check. Receipts, password resets and payment problems are sent there.
 
 ---
 
-## 2. Set your Minecraft name
+## 2. Pick a plan
 
-Honey Host adds everyone's Minecraft name to the **whitelist** of the servers they're allowed on. If you skipped it
-when signing up:
+Each plan is **one Minecraft server**, billed monthly. Plans differ in memory (RAM), CPU and disk space:
 
-1. Click **Account** at the bottom of the sidebar.
-2. Type your Minecraft username under **Minecraft name** and click **Save**.
+| More memory helps with... | |
+|---|---|
+| More players at the same time | about 1-5 players run fine on 2 GB, 5-20 on 4 GB |
+| Bigger modpacks and heavy plugins | Fabric modpacks usually want 4 GB or more |
+| Big worlds and long view distances | lower the view distance if the server feels slow |
 
-You're whitelisted the next time a server starts, or right away when someone clicks **Whitelist team** in a server's
-console.
+1. Choose a plan and click **Choose**.
+2. You're sent to our payment page (Stripe). Enter your card and confirm.
+3. You land back in your dashboard, ready to create the server.
 
----
-
-## 3. Team and Solo servers
-
-At the top of the sidebar there's a switch:
-
-| | Who sees it | Who can join | Use it for |
-|---|---|---|---|
-| **👥 Team** | everyone on the team | everyone on the team | shared test servers, playtests, testing each other's plugins |
-| **👤 Solo** | only you (and admins) | only you (you can whitelist others) | your own experiments, breaking things in peace |
-
-New servers are created in whichever space is selected. Everyone gets their own Solo space.
+> **Note:** you can buy more plans later for more servers. Every plan is separate and can be canceled on its own.
 
 ---
 
-## 4. Join a server in Minecraft
+## 3. Create your server
 
-Open a server in the sidebar. The box at the top right tells you how to join.
+1. Pick the **server software**:
 
-**Through the Gateway (most servers):**
+   | Type | Pick it for |
+   |---|---|
+   | **Paper** | The best choice for most servers: fast, and runs Bukkit/Spigot/Paper plugins. |
+   | **Purpur** | Paper plus lots of extra gameplay options. |
+   | **Fabric** | Fabric mods and modpacks. |
+   | **Vanilla** | The official server from Mojang, no plugins or mods. |
+   | **Folia** | Very large player counts (many plugins don't support it yet). |
+   | **Spigot / CraftBukkit** | Only if a plugin needs them. The first start takes 5-15 minutes. |
+   | **Velocity / Waterfall / BungeeCord** | Proxies that connect several servers. |
 
-The box says **Join through the Gateway**, with an address and a command.
-
-1. In Minecraft (Java Edition, your normal launcher and account): **Multiplayer → Add Server**.
-2. Paste the **Gateway address** (click it in Honey Host to copy it). You only need to add it once: it's the same
-   address for every server.
-3. Join. You land on the default server.
-4. Type the command shown under the address, e.g. `/server lobby-test`, to switch to the server you want.
-
-**With its own address:** if the box shows a **Join address** instead, just add that address in Minecraft and join.
-
-**On the same network as the host PC:** use the **Same home network** address shown in the box.
-
-
-> **Tip:** the server must be **running** (green dot in the sidebar). If it's stopped, click **▶ Start** and wait until it
-> says **Running**.
+2. Pick the **Minecraft version** (the newest is selected).
+3. Give the server a **name**, choose which **plan** it uses, and tick **I agree to the Minecraft EULA**.
+4. Click **Create server**. Tree Host downloads everything and starts it. The first start takes a minute or two.
 
 ---
 
-## 5. What next?
+## 4. Join your server
 
-- [Servers and plugins](servers.md): create a server, install plugins, and deploy straight from your build.
-- [Troubleshooting](troubleshooting.md): if something doesn't work.
-- Admins: see the [Admin guide](admin-guide.md).
+At the top of your server's page is the **Join address**, for example `play.treehost.online:25600`. Click it to copy.
 
-**House rules**
+1. Open Minecraft (Java Edition) → **Multiplayer** → **Add Server**.
+2. Paste the address into **Server Address** and click **Done**.
+3. Join!
 
-- Plugins run code on the host PC. Only deploy plugins you'd trust on your own computer.
-- Stop servers you're not using: the host PC's memory is shared by everyone.
-- Don't share the dashboard link or invite links outside the team.
+> **Tip:** the address belongs to your server for as long as you keep the plan. Share it with your friends.
+
+### Make yourself an operator
+
+1. Click **Account** (bottom left) and enter your **Minecraft name**.
+2. On your server's **Console** tab, click **OP me**. You now have operator (admin) rights in-game.
+
+---
+
+## 5. What's next
+
+- **Add plugins or mods:** the **Plugins** tab → **🔎 Browse plugins**. See [Your server](servers.md#add-plugins).
+- **Change game settings** (difficulty, game mode, whitelist, seed...): the **Settings** tab.
+- **Back up your world:** the **Backups** tab. Turn on automatic backups while you're there.
+- **Billing and canceling:** see [Billing](billing.md).
+
+Something not working? See [Troubleshooting](troubleshooting.md) or contact support.

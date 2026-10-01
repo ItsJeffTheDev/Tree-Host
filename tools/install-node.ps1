@@ -1,4 +1,4 @@
-# Installs the current Node.js LTS for Honey Host. Tries winget first, then the official installer.
+# Installs the current Node.js LTS for Tree Host. Tries winget first, then the official installer.
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $nodeExe = Join-Path $env:ProgramFiles 'nodejs\node.exe'

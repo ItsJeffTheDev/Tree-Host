@@ -5,3 +5,7 @@ local-data/
 node_modules/
 *.log
 BuildTools.log.txt
+test-site-data/
+# Firebase service account keys are secret
+*firebase-adminsdk*.json
+tree-host-firebase.json

@@ -89,61 +89,6 @@ function onActivity(e) {
   else if (!mine && ['deploy', 'claim'].includes(e.kind) && e.serverId === state.selected) toast(`${e.who} ${e.text}`);
 }
 
-// ---------- "I'm testing this" ----------
-
-function claimBanner(s) {
-  const cl = s.claim;
-  if (!cl) return '';
-  const mine = !isTeam() || cl.userId === state.me.user.id;
-  const left = Math.max(1, Math.round((cl.until - Date.now()) / 60000));
-  return `<div class="claim-banner ${mine ? 'mine' : ''}">
-    🙋 <b>${mine ? 'You are' : `${esc(cl.username)} is`}</b> testing on this server${cl.note ? `: <i>${esc(cl.note)}</i>` : ''}
-    <span class="muted small">· since ${timeAgo(cl.since)} · ends in ${left >= 60 ? `${Math.floor(left / 60)} h ${left % 60} min` : `${left} min`}</span>
-    ${mine || isAdmin() ? `<button class="btn sm" id="btn-unclaim">${mine ? 'Done testing' : 'End session'}</button>` : ''}
-  </div>`;
-}
-
-function claimButton(s) {
-  if (!isTeam() || s.claim || !can('control', s) || s.space === 'solo') return '';
-  return '<button class="btn" id="btn-claim" title="Tell the team you are using this server right now">🙋 I\'m testing this</button>';
-}
-
-function bindClaim(s, el) {
-  if ($('#btn-claim', el)) {
-    $('#btn-claim', el).addEventListener('click', () => {
-      const { root, close } = openModal(`
-        <h2>I'm testing this</h2>
-        <p class="hint" style="margin-top:-6px">Everyone sees that you're using <b>${esc(s.name)}</b>, and gets a warning before stopping or restarting it.</p>
-        <form id="claim-form" class="stack">
-          <label class="field">What are you testing? <span class="muted small" style="font-weight:400">(optional)</span>
-            <input type="text" id="claim-note" maxlength="120" placeholder="e.g. new shop GUI, please don't restart"></label>
-          <label class="field" style="max-width:220px">For
-            <select id="claim-min">
-              <option value="30">30 minutes</option><option value="60" selected>1 hour</option>
-              <option value="120">2 hours</option><option value="240">4 hours</option><option value="480">8 hours</option>
-            </select></label>
-          <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Let the team know</button></div>
-        </form>`);
-      $('#claim-note', root).focus();
-      $('#claim-form', root).addEventListener('submit', (e) => {
-        e.preventDefault();
-        attempt(async () => {
-          await api('POST', `/api/servers/${s.id}/claim`, { note: $('#claim-note', root).value, minutes: Number($('#claim-min', root).value) });
-          close();
-        });
-      });
-    });
-  }
-  if ($('#btn-unclaim', el)) $('#btn-unclaim', el).addEventListener('click', () => attempt(() => api('DELETE', `/api/servers/${s.id}/claim`)));
-}
-
-/** Asks before stopping/restarting a server someone else is testing on. */
-function confirmClaimed(s, act) {
-  const cl = s.claim;
-  if (!cl || !isTeam() || cl.userId === state.me.user.id || !['stop', 'restart', 'kill'].includes(act)) return true;
-  return confirm(`${cl.username} is testing on this server right now${cl.note ? ` ("${cl.note}")` : ''}.\n\n${act[0].toUpperCase() + act.slice(1)} it anyway?`);
-}
-
 // ---------- backups ----------
 
 async function renderBackups(body) {
@@ -169,7 +114,11 @@ async function renderBackups(body) {
             .map(([v, l]) => `<option value="${v}" ${s.autoBackup === v ? 'selected' : ''}>${l}</option>`)
             .join('')}
         </select>
-        <span class="muted small" style="font-weight:400">The newest 7 automatic backups are kept. Backups you make yourself are kept until you delete them.</span>
+        <span class="muted small" style="font-weight:400">${
+          s.space === 'customer'
+            ? 'The newest 3 automatic backups are kept, and up to 5 you make yourself.'
+            : 'The newest 7 automatic backups are kept. Backups you make yourself are kept until you delete them.'
+        }</span>
       </label>` : ''}
     </div>
     <div class="card">
@@ -321,7 +270,7 @@ async function renderNotifications(root) {
   const st = await api('GET', '/api/team/notifications');
   el.classList.remove('muted');
   el.innerHTML = `
-    <p class="hint" style="margin:0">Posts to a channel in your Discord server when something happens. Solo servers are never posted.
+    <p class="hint" style="margin:0">Posts to a private channel in your Discord when something happens, so admins notice new customers, payments and crashes.
       To get a link: Discord → channel settings (⚙) → Integrations → Webhooks → New Webhook → Copy Webhook URL.</p>
     <div class="row">
       <input type="password" id="dc-url" placeholder="${st.discordConnected ? 'Connected. Paste a new link to change it' : 'https://discord.com/api/webhooks/...'}" autocomplete="off">

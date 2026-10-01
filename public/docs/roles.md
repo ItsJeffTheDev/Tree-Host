@@ -1,15 +1,14 @@
 # Roles & permissions
 
-Everyone on Honey Host has one of three roles. An admin picks it when inviting or approving someone, and can change
-it at any time under **Team → Members**.
+Every Tree Host account has one of three roles.
 
-| Role | Who it's for | In one sentence |
+| Role | Who | In short |
 |---|---|---|
-| 🧪 **Tester** | QA, playtesters, friends helping test | Can play on and start/stop Team servers, but can't change anything. |
-| 🛠 **Developer** | Plugin developers | Can do everything needed to build and test plugins. |
-| 👑 **Admin** | Whoever runs Honey Host | Can do everything, including managing people and the host PC. |
+| **Customer** | Everyone who signs up on the website | Buys plans and fully manages **their own** servers. Can't see anyone else's. |
+| **Support** | Helpers you invite | Can see and help with every server, but can't delete servers or touch billing. |
+| **Admin** | You (the first account) and anyone you promote | Everything: plans and prices, billing, people, settings. |
 
-> **Tip:** When in doubt, invite people as **Developer**. Use **Tester** for people who only need to join and play.
+Support staff and admins can have their own servers too: give yourself a free plan in **Admin → People**.
 
 ---
 
@@ -17,74 +16,51 @@ it at any time under **Team → Members**.
 
 ### Servers
 
-| | Tester | Developer | Admin |
+| | Customer | Support | Admin |
 |---|:---:|:---:|:---:|
-| See Team servers and their console log | ✓ | ✓ | ✓ |
-| Join Team servers in Minecraft (whitelisted automatically) | ✓ | ✓ | ✓ |
-| Start, stop and restart Team servers | ✓ | ✓ | ✓ |
-| Mark a server with **I'm testing this** | ✓ | ✓ | ✓ |
-| End someone else's testing session | | | ✓ |
-| See backups, make a backup | ✓ | ✓ | ✓ |
-| Restore or delete backups | | only servers **they created** | ✓ |
-| See the Activity feed | ✓ | ✓ | ✓ |
-| Create Team servers | | ✓ | ✓ |
-| Have private **Solo** servers | | ✓ | ✓ |
-| Change settings, game settings and memory | | ✓ | ✓ |
-| Delete a Team server, reset its world, change its type or version | | only servers **they created** | ✓ |
-| See and stop other people's Solo servers | | | ✓ |
+| Create servers on their own plans | ✓ | ✓ | ✓ |
+| Start, stop, console, plugins, files and settings of **their own** servers | ✓ | ✓ | ✓ |
+| Delete their own server, reset its world, change its version | ✓ | ✓ | ✓ |
+| See and help with **everyone's** servers (console, files, plugins, settings) | | ✓ | ✓ |
+| Delete someone else's server, reset its world or change its version | | | ✓ |
+| See the Activity feed | own servers | ✓ | ✓ |
 
-### Plugins, console and files
+### People, plans and money
 
-| | Tester | Developer | Admin |
+| | Customer | Support | Admin |
 |---|:---:|:---:|:---:|
-| See which plugins are installed | ✓ | ✓ | ✓ |
-| Type console commands, use Whitelist/OP buttons | | ✓ | ✓ |
-| Upload, enable, disable and delete plugins | | ✓ | ✓ |
-| Browse and install plugins from Modrinth | | ✓ | ✓ |
-| Deploy from their build (API tokens) | | ✓ | ✓ |
-| Browse and edit server files | | ✓ | ✓ |
-
-### People and the host PC
-
-| | Tester | Developer | Admin |
-|---|:---:|:---:|:---:|
-| Invite people, approve or reject access requests | | | ✓ |
-| Change roles, remove people, turn access requests on or off | | | ✓ |
-| Connect playit.gg, set up and configure the Gateway | | | ✓ |
-| Set up Discord notifications | | | ✓ |
-| Custom Java paths and Custom JAR servers | | | ✓ |
-| 🎮 Play on host, 📁 open folders, auto-deploy from a folder on the host PC | | | ✓ |
+| Buy plans, manage their card, cancel | ✓ | ✓ | ✓ |
+| See all customers and their plans | | | ✓ |
+| Give free plans, cancel anyone's plan | | | ✓ |
+| Change prices and plans, set capacity | | | ✓ |
+| Change roles, suspend or delete accounts, set temporary passwords | | | ✓ |
+| Invite support staff, Discord alerts, open or close sign-ups | | | ✓ |
 
 ---
 
 ## Why these rules?
 
-**"Only servers they created."** Deleting a server, resetting its world or switching its version can wipe out
-work that other people rely on. So on **Team** servers, only the person who created the server (shown on the
-server's Settings tab) or an admin can do it. Everything else, such as restarting, deploying plugins or changing game
-settings, is open to every developer.
-
-**Testers can't run commands or edit files.** A console command like `op` or `stop` affects everyone on the server,
-and plugins and files can run code on the host PC. Testers get exactly what they need to play-test.
-
-**Host-PC features are admin-only.** Custom Java paths, custom jars and folder watching point at files and programs on
-the host PC itself, so they're limited to the people who run it.
-
-> **Important:** Anyone who can upload or deploy a plugin (developers and admins) can run code on the host PC,
-> because that's what plugins are. Only give those roles to people you trust.
+- **Customers are fully separated.** Each customer only sees their own servers, and each server runs in its own
+  isolated container, so one customer's plugins can't touch another customer's files.
+- **Support can help, but not destroy.** Helping often means reading a console or fixing a config, so support can do
+  that on any server. Deleting a world can't be undone, so only the owner or an admin can do it.
+- **Money is admin-only.** Prices, free plans and cancellations affect revenue and customers' bills.
 
 ---
 
 ## Changing someone's role
 
-1. Click **Team** (bottom left of the dashboard).
-2. Under **Members**, pick the new role in that person's dropdown. It applies immediately; they may need to refresh
-   the page.
+**Admin → People**, then use the role dropdown next to their name. Making someone Support or Admin asks you to confirm,
+because they can see every customer's server.
 
-You can't change your own role, and the last admin can't be demoted, so there's always someone who can manage the
-team.
+Add support staff with **Admin → People → Invite support staff**: it creates a one-time link valid for 7 days.
 
-## Removing someone
+---
 
-**Team → Members → Remove.** Their account, logins and API tokens stop working straight away. Servers they created
-stay; admins can delete them if needed.
+## Suspending or removing someone
+
+**Admin → People → More** next to their name:
+
+- **Suspend**: signs them out, stops their servers and blocks sign-in. Their data is kept. Use **Unsuspend** to undo.
+- **Temporary password**: for people locked out without email access. Send it privately.
+- **Delete account**: removes the account and its servers. Cancel any active plan first (Admin → Billing).

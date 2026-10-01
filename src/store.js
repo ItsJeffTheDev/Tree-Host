@@ -1,0 +1,97 @@
+'use strict';
+// Where Tree Host keeps its business data (accounts, plans, subscriptions, activity).
+// With Firebase set up, each collection lives in the Realtime Database (so it survives losing the machine) and a
+// local copy is kept in the data folder as a backup. Without Firebase, only the local JSON files are used.
+const fsp = require('fs').promises;
+const path = require('path');
+const { DATA } = require('./paths');
+const firebase = require('./firebase');
+
+const writers = new Map(); // name -> { pending, running }
+
+function localFile(name) {
+  return path.join(DATA, `${name}.json`);
+}
+
+async function readLocal(name) {
+  try {
+    return JSON.parse(await fsp.readFile(localFile(name), 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeLocal(name, data) {
+  await fsp.mkdir(DATA, { recursive: true });
+  const file = localFile(name);
+  await fsp.writeFile(file + '.tmp', JSON.stringify(data, null, 2), { mode: 0o600 });
+  await fsp.rename(file + '.tmp', file);
+}
+
+/**
+ * The Realtime Database can't store empty arrays/objects or undefined, and it rejects keys with . $ # [ ] /.
+ * Values go through JSON (drops undefined); callers normalize what they read back (missing arrays -> []).
+ */
+const clean = (data) => JSON.parse(JSON.stringify(data ?? null));
+
+/** Loads a collection. With Firebase: the database copy wins; a local-only copy is uploaded once (migration). */
+async function load(name) {
+  const local = await readLocal(name);
+  if (!firebase.dbEnabled()) return local;
+  const remote = await firebase.dbGet(name);
+  if (remote !== null && remote !== undefined) {
+    writeLocal(name, remote).catch(() => {});
+    return remote;
+  }
+  if (local !== undefined) {
+    console.log(`  Uploading ${name} to the Firebase Realtime Database...`);
+    await firebase.dbSet(name, clean(local));
+  }
+  return local;
+}
+
+/**
+ * Saves a collection. Writes happen in order and only the newest pending version is sent,
+ * so many quick saves become one database write.
+ */
+function save(name, data) {
+  const snapshot = clean(data);
+  let w = writers.get(name);
+  if (!w) writers.set(name, (w = { pending: null, running: null }));
+  w.pending = snapshot;
+  if (!w.running) w.running = flush(name, w);
+  return w.running;
+}
+
+async function flush(name, w) {
+  try {
+    while (w.pending !== null) {
+      const data = w.pending;
+      w.pending = null;
+      await writeLocal(name, data);
+      if (firebase.dbEnabled()) {
+        for (let attempt = 1; ; attempt++) {
+          try {
+            await firebase.dbSet(name, data);
+            break;
+          } catch (e) {
+            if (attempt >= 3 || w.pending !== null) {
+              console.error(`  Could not save ${name} to Firebase: ${e.message}${w.pending !== null ? ' (a newer version follows)' : ''}`);
+              break;
+            }
+            await new Promise((r) => setTimeout(r, attempt * 2000));
+          }
+        }
+      }
+    }
+  } finally {
+    w.running = null;
+  }
+}
+
+/** Waits for every pending write (used when Tree Host shuts down). */
+async function flushAll() {
+  await Promise.all([...writers.values()].map((w) => w.running).filter(Boolean));
+}
+
+module.exports = { load, save, flushAll };

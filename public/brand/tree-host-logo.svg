@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="leaf" gradientUnits="userSpaceOnUse" x1="0" y1="70" x2="0" y2="330">
+      <stop offset="0" stop-color="#7beaa6"/>
+      <stop offset="1" stop-color="#2c9a5c"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#18241d"/>
+      <stop offset="1" stop-color="#0b110d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- trunk -->
+  <rect x="236" y="250" width="40" height="178" rx="14" fill="#2c9a5c"/>
+  <rect x="176" y="414" width="160" height="22" rx="11" fill="#2c9a5c" opacity=".55"/>
+  <!-- canopy -->
+  <g fill="url(#leaf)">
+    <circle cx="256" cy="190" r="120"/>
+    <circle cx="164" cy="246" r="78"/>
+    <circle cx="348" cy="246" r="78"/>
+    <rect x="164" y="236" width="184" height="88" rx="40"/>
+  </g>
+  <!-- the T carved into the canopy -->
+  <g fill="#0f1712">
+    <rect x="182" y="168" width="148" height="38" rx="12"/>
+    <rect x="237" y="168" width="38" height="134" rx="12"/>
+  </g>
+</svg>

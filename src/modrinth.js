@@ -5,7 +5,7 @@ const path = require('path');
 const { download } = require('./util');
 
 const API = 'https://api.modrinth.com/v2';
-const UA = 'HoneyPixelStudios/HoneyHost/1.0 (Minecraft test server manager)';
+const UA = 'TreeHost/1.0 (Minecraft server hosting)';
 
 /** Which Modrinth loaders fit a server, most specific first. */
 function loadersFor(inst) {

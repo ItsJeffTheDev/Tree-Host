@@ -6,12 +6,13 @@ const crypto = require('crypto');
 const readline = require('readline');
 const { spawn } = require('child_process');
 const EventEmitter = require('events');
-const { SERVERS, CONFIG_FILE, DATA } = require('./paths');
+const { SERVERS, CONFIG_FILE, DATA, CACHE } = require('./paths');
 const { getProvider } = require('./providers');
 const java = require('./java');
 const os = require('os');
 const backups = require('./backups');
 const client = require('./client');
+const docker = require('./docker');
 const {
   exists,
   splitArgs,
@@ -25,6 +26,91 @@ const {
 
 const MAX_LOG_LINES = 5000;
 const STOP_TIMEOUT_MS = 60000;
+
+// ---------- Safe file access ----------
+// A server (and so a customer's plugin) can create symlinks in its own folder, e.g. server.properties -> /etc/passwd.
+// Tree Host itself must never follow those, or a customer could read or overwrite files outside their server.
+
+/** Throws if `full` is outside `root` or any part of the path below `root` is a symlink. */
+async function assertNoLinks(root, full) {
+  const rel = path.relative(root, full);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) throw Object.assign(new Error('Path is outside the server folder'), { status: 400 });
+  let cur = root;
+  for (const part of rel.split(path.sep).filter(Boolean)) {
+    cur = path.join(cur, part);
+    const st = await fsp.lstat(cur).catch(() => null);
+    if (!st) return;
+    if (st.isSymbolicLink()) throw Object.assign(new Error(`${path.relative(root, cur)} is a link, which Tree Host does not open for safety.`), { status: 400 });
+  }
+}
+
+/** Opens a file without following links and checks (on Linux, via /proc) that it really is inside root. */
+async function openInside(root, full, flags) {
+  await assertNoLinks(root, full);
+  const fh = await fsp.open(full, flags | (fs.constants.O_NOFOLLOW || 0), 0o644);
+  if (process.platform === 'linux') {
+    const real = await fsp.readlink(`/proc/self/fd/${fh.fd}`).catch(() => null);
+    const realRoot = await fsp.realpath(root);
+    if (!real || !(real === realRoot || real.startsWith(realRoot + path.sep))) {
+      await fh.close();
+      throw Object.assign(new Error('Path is outside the server folder'), { status: 400 });
+    }
+  }
+  return fh;
+}
+
+async function readInside(root, full) {
+  const fh = await openInside(root, full, fs.constants.O_RDONLY);
+  try {
+    return await fh.readFile();
+  } finally {
+    await fh.close();
+  }
+}
+
+async function writeInside(root, full, data) {
+  const fh = await openInside(root, full, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC);
+  try {
+    await fh.writeFile(data);
+  } finally {
+    await fh.close();
+  }
+}
+
+async function dirSize(dir) {
+  let total = 0;
+  let entries;
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) total += await dirSize(full);
+    else if (e.isFile()) total += (await fsp.lstat(full).catch(() => ({ size: 0 }))).size;
+  }
+  return total;
+}
+
+/** Deletes every symlink in a folder tree (servers have no reason to contain any). Returns how many. */
+async function removeSymlinks(dir) {
+  let removed = 0;
+  let entries;
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isSymbolicLink()) {
+      await fsp.unlink(full).catch(() => fsp.rmdir(full).catch(() => {}));
+      removed++;
+    } else if (e.isDirectory()) removed += await removeSymlinks(full);
+  }
+  return removed;
+}
 
 // ---------- Plugin helpers ----------
 
@@ -132,6 +218,15 @@ class Instance extends EventEmitter {
     this.clientsRunning = 0;
   }
 
+  /** Runs in a Docker container (always for customer servers on a production host). */
+  get isolated() {
+    return !!this.manager.docker;
+  }
+
+  get isCustomer() {
+    return this.cfg.space === 'customer';
+  }
+
   get provider() {
     return getProvider(this.cfg.type);
   }
@@ -178,6 +273,11 @@ class Instance extends EventEmitter {
       autoBackup: c.autoBackup || 'off',
       notes: c.notes || '',
       claim: this.activeClaim(),
+      isolated: this.isolated,
+      suspended: c.suspended || null,
+      subscriptionId: c.subscriptionId || null,
+      plan: this.manager.planInfo(this),
+      diskUsedMb: this.diskUsedMb || null,
       memUsedMb: this.proc ? this.memUsedMb || null : null,
       crashes: (this.crashTimes || []).length,
       gatewayDefault: c.gatewayDefault || null,
@@ -201,7 +301,6 @@ class Instance extends EventEmitter {
         missing: !!(this.watchState.get(w.id) || {}).missing,
       })),
       pluginDir: this.pluginDirName,
-      dir: this.dir,
       status: this.status,
       progress: this.progress,
       players: [...this.players],
@@ -234,7 +333,7 @@ class Instance extends EventEmitter {
   }
 
   sysLog(msg) {
-    this.appendLog(`[Honey Host] ${msg}`);
+    this.appendLog(`[Tree Host] ${msg}`);
     if (this.progress) this.progress = { ...this.progress, label: msg.slice(0, 140), done: 0, total: 0 };
   }
 
@@ -272,6 +371,7 @@ class Instance extends EventEmitter {
     this.emitStatus();
     try {
       await fsp.mkdir(this.dir, { recursive: true });
+      await this.clearLinks();
       this.sysLog(`Installing ${this.provider.label} ${c.version || ''}${c.build && c.build !== 'latest' ? ` build ${c.build}` : ''}...`);
       const result = await this.provider.install({
         version: c.version,
@@ -292,6 +392,7 @@ class Instance extends EventEmitter {
       };
       this.javaMajor = null;
       await this.writeInitialFiles();
+      await this.seedPaperclip().catch((e) => this.sysLog(`Could not pre-build the server (it will do it on first start): ${e.message}`));
       this.save();
       this.sysLog('Installation complete.');
     } catch (e) {
@@ -302,20 +403,38 @@ class Instance extends EventEmitter {
     }
   }
 
+  /**
+   * Paper, Purpur and Folia build ("patch") their real server jar on first start, which can take minutes.
+   * Tree Host does that once per version and build, from the official download only (never from a customer's
+   * folder), keeps the result, and copies it into every new server so their first start is quick.
+   */
+  async seedPaperclip() {
+    if (!['paper', 'purpur', 'folia'].includes(this.cfg.type) || !this.cfg.installed) return;
+    if (await exists(path.join(this.dir, 'versions'))) return;
+    const key = `${this.cfg.type}-${this.cfg.version}-${this.cfg.installed.resolvedBuild}`.replace(/[^\w.-]/g, '_');
+    const shared = path.join(CACHE, 'paperclip', key);
+    if (!(await exists(path.join(shared, 'versions')))) await this.manager.buildPaperclip(this, shared);
+    for (const sub of ['cache', 'libraries', 'versions']) {
+      if (await exists(path.join(shared, sub))) await fsp.cp(path.join(shared, sub), path.join(this.dir, sub), { recursive: true, force: false });
+    }
+  }
+
   async writeInitialFiles() {
     await fsp.mkdir(this.pluginDir, { recursive: true });
     if (this.kind === 'proxy') return;
     const propsFile = path.join(this.dir, 'server.properties');
+    await assertNoLinks(this.dir, propsFile);
     if (!(await exists(propsFile))) {
-      await fsp.writeFile(
+      await writeInside(
+        this.dir,
         propsFile,
-        updateProperties('#Minecraft server properties (created by Honey Host)\n', {
+        updateProperties('#Minecraft server properties (created by Tree Host)\n', {
           'server-port': this.cfg.port,
           'online-mode': this.cfg.onlineMode === false ? 'false' : 'true',
-          motd: `${this.cfg.name} - plugin test server`,
+          motd: `${this.cfg.name} - hosted by Tree Host`,
           'enable-command-block': 'true',
-          'spawn-protection': '0',
-          ...(this.manager.teamMode ? { 'white-list': 'true', 'enforce-whitelist': 'true' } : {}),
+          'spawn-protection': this.isCustomer ? '16' : '0',
+          ...(this.manager.teamMode && !this.isCustomer ? { 'white-list': 'true', 'enforce-whitelist': 'true' } : {}),
         }),
       );
     }
@@ -353,7 +472,7 @@ class Instance extends EventEmitter {
       }
       await fsp.writeFile(
         path.join(this.dir, 'eula.txt'),
-        '# Accepted via Honey Host (https://aka.ms/MinecraftEULA)\neula=true\n',
+        '# Accepted via Tree Host (https://aka.ms/MinecraftEULA)\neula=true\n',
       );
       const propsFile = path.join(this.dir, 'server.properties');
       const text = (await exists(propsFile)) ? await fsp.readFile(propsFile, 'utf8') : '';
@@ -446,7 +565,7 @@ class Instance extends EventEmitter {
    * Vanilla and Fabric servers stay standalone and are joined directly.
    */
   get canUseGateway() {
-    return this.kind !== 'proxy' && !this.cfg.gateway && this.provider.family === 'bukkit';
+    return this.kind !== 'proxy' && !this.cfg.gateway && this.provider.family === 'bukkit' && !this.isCustomer && !this.isolated;
   }
 
   /** Builds the Gateway's velocity.toml: every server, the join order, legacy forwarding, real-account checks. */
@@ -458,7 +577,7 @@ class Instance extends EventEmitter {
     text = replaceTomlSection(text, 'forced-hosts', '[forced-hosts]\n');
     return text
       .replace(/^player-info-forwarding-mode\s*=.*$/m, 'player-info-forwarding-mode = "LEGACY"')
-      .replace(/^motd\s*=.*$/m, 'motd = "<#f5b50a>Honey Host <gray>by Honey Pixel Studios"');
+      .replace(/^motd\s*=.*$/m, 'motd = "<#46c37b>Tree Host"');
   }
 
   /** Rewrites the Gateway's server list and reloads it live (no restart needed). */
@@ -513,8 +632,18 @@ class Instance extends EventEmitter {
 
   // ----- lifecycle -----
 
+  async clearLinks() {
+    const n = await removeSymlinks(this.dir);
+    if (n) this.sysLog(`Removed ${n} link(s) from the server folder (links are not allowed for security).`);
+  }
+
   async start() {
     if (this.proc || this.status !== 'stopped') return;
+    const blocked = this.manager.startBlock(this);
+    if (blocked) {
+      this.sysLog(`Could not start: ${blocked}`);
+      return;
+    }
     this.status = 'starting';
     this.progress = null;
     this.emitStatus();
@@ -523,6 +652,7 @@ class Instance extends EventEmitter {
       this.status = 'starting';
       this.progress = { label: 'Preparing Java...', done: 0, total: 0 };
       this.emitStatus();
+      await this.clearLinks();
       await this.prepareConfigFiles();
       await this.cleanupFailedSaves();
       if (!(await isPortFree(this.cfg.port))) {
@@ -537,16 +667,32 @@ class Instance extends EventEmitter {
             'It may run slowly or load the world very slowly. Stop other servers or lower this one\'s memory in Settings.',
         );
       }
-      const javaExe = await this.resolveJavaExe();
-      this.progress = null;
-      this.spawnServer(javaExe);
+      if (this.isolated) {
+        const major = /^\d+$/.test(String(this.cfg.java)) ? Number(this.cfg.java) : await this.provider.java(this.cfg.version, this.dir);
+        const { major: m, image } = docker.imageFor(major);
+        this.javaMajor = m;
+        this.progress = { label: `Preparing Java ${m}...`, done: 0, total: 0 };
+        this.emitStatus();
+        await docker.ensureImage(image, (msg) => this.sysLog(msg));
+        await docker.ensureNetwork();
+        const memLimitMb = Math.max(512, Number(this.cfg.memoryMb) || 2048) + this.manager.overheadMb;
+        const plan = this.manager.planInfo(this);
+        this.progress = null;
+        this.spawnServer('docker', docker.runArgs({ id: this.cfg.id, dir: this.dir, port: this.cfg.port, memLimitMb, cpus: plan ? plan.cpus : null, image }), 'java');
+      } else {
+        if (this.isCustomer && !this.manager.allowUnsafe) throw new Error('Customer servers only run isolated in Docker. Install Docker on the host (or set TREEHOST_ALLOW_UNSAFE=1 for local testing).');
+        const javaExe = await this.resolveJavaExe();
+        this.progress = null;
+        this.spawnServer(javaExe, [], null);
+      }
     } catch (e) {
       this.sysLog(`Could not start: ${e.message}`);
       this.setStatus('stopped');
     }
   }
 
-  spawnServer(javaExe) {
+  /** cmd: the program to run (java, or docker); pre: its arguments before the Java ones; javaInside: java's name in the container. */
+  spawnServer(cmd, pre, javaInside) {
     const c = this.cfg;
     const mem = Math.max(512, Number(c.memoryMb) || 2048);
     const args = [
@@ -567,8 +713,13 @@ class Instance extends EventEmitter {
     if (c.gateway && mem > 1024) {
       this.sysLog(`Note: the Gateway only needs about 512 MB of memory but is set to ${mem} MB. Lower it in Settings to leave more for your servers.`);
     }
-    this.sysLog(`Starting with Java ${this.javaMajor || '?'}: ${javaExe === 'java' ? 'java' : javaExe} ${args.join(' ')}`);
-    const proc = spawn(javaExe, args, { cwd: this.dir, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const full = javaInside ? [...pre, javaInside, ...args] : args;
+    this.sysLog(
+      javaInside
+        ? `Starting ${this.provider.label} ${c.version} with Java ${this.javaMajor} in its own container (${Number(c.memoryMb) >= 1024 ? `${+(Number(c.memoryMb) / 1024).toFixed(1)} GB` : `${Number(c.memoryMb)} MB`} of memory)...`
+        : `Starting with Java ${this.javaMajor || '?'}: ${cmd === 'java' ? 'java' : cmd} ${args.join(' ')}`,
+    );
+    const proc = spawn(cmd, full, { cwd: this.dir, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.proc = proc;
     this.startedAt = Date.now();
     this.players.clear();
@@ -581,7 +732,7 @@ class Instance extends EventEmitter {
     proc.stdin.on('error', () => {});
 
     proc.on('error', (e) => {
-      this.sysLog(`Failed to launch Java: ${e.message}`);
+      this.sysLog(`Failed to launch ${javaInside ? 'Docker' : 'Java'}: ${e.message}`);
       if (!proc.pid && this.proc === proc) {
         this.proc = null;
         this.startedAt = null;
@@ -607,8 +758,9 @@ class Instance extends EventEmitter {
       this.setStatus('stopped');
       if (crashed) {
         this.crashTimes = (this.crashTimes || []).filter((t) => Date.now() - t < 10 * 60 * 1000).concat(Date.now());
-        const lastLines = this.logs.slice(-40).map((l) => stripAnsi(l.t)).filter((t) => !t.startsWith('[Honey Host]') && /exception|error|caused by/i.test(t)).slice(-2);
-        this.logActivity('crash', 'Honey Host', `reports a crash (exit code ${code})${lastLines.length ? `: ${lastLines.join(' / ').slice(0, 300)}` : ''}`);
+        const lastLines = this.logs.slice(-40).map((l) => stripAnsi(l.t)).filter((t) => !t.startsWith('[Tree Host]') && /exception|error|caused by/i.test(t)).slice(-2);
+        if (javaInside && code === 137) this.sysLog(`The server ran out of memory (it may use at most ${Number(c.memoryMb)} MB). Use fewer or lighter plugins/mods, or a bigger plan.`);
+        this.logActivity('crash', 'Tree Host', `reports a crash (exit code ${code})${lastLines.length ? `: ${lastLines.join(' / ').slice(0, 300)}` : ''}`);
         if (c.autoRestart && !this.restartPending) {
           if (this.crashTimes.length > 3) {
             this.sysLog('Crashed more than 3 times in 10 minutes, so it won\'t be restarted automatically. Check the log above.');
@@ -636,12 +788,8 @@ class Instance extends EventEmitter {
     if (this.status === 'starting' && (/Done \([\d.,]+m?s\)!/.test(line) || /Listening on \//.test(line))) {
       this.setStatus('running');
       const addr = this.cfg.port === 25565 ? '127.0.0.1' : `127.0.0.1:${this.cfg.port}`;
-      this.sysLog(`Ready! In Minecraft go to Multiplayer → Add Server and use the address: ${this.cfg.publicAddress || addr}`);
-      if (this.manager.teamMode && this.kind !== 'proxy') this.teamAccess({ op: false, quiet: true });
-      const gw = this.manager.gateway();
-      if (this.manager.teamMode && this.manager.playit && this.manager.playit.configured && !this.cfg.publicAddress && (!gw || gw === this || !this.canUseGateway)) {
-        this.shareOnline().catch((e) => this.sysLog(`Could not get a public address from playit.gg: ${e.message}`));
-      }
+      this.sysLog(`Ready! In Minecraft go to Multiplayer → Add Server and use the address: ${this.cfg.publicAddress || this.cfg.autoAddress || addr}`);
+      if (this.manager.teamMode && this.kind !== 'proxy' && !this.isCustomer) this.teamAccess({ op: false, quiet: true });
     }
     let m = /: ([A-Za-z0-9_.]{1,16})(?: joined the game|\[[^\]]*\] logged in with entity id)/.exec(line);
     if (m) {
@@ -696,26 +844,6 @@ class Instance extends EventEmitter {
     });
   }
 
-  /** Creates (or reuses) this server's playit.gg tunnel and remembers its public address. */
-  async shareOnline() {
-    const playit = this.manager.playit;
-    if (!playit || !playit.configured) throw new Error('Connect playit.gg first (Team → Public game addresses).');
-    const { address: addr, proxyProtocol } = await playit.ensureTunnel(this.cfg.port, `Honey Host: ${this.cfg.name}`.slice(0, 60));
-    if (proxyProtocol) {
-      this.sysLog(
-        `WARNING: the playit.gg tunnel for port ${this.cfg.port} has Proxy Protocol "${proxyProtocol}" turned on, so players can't join. ` +
-          'Set it to none on playit.gg (your tunnel → Origin Config → Proxy Protocol).',
-      );
-    }
-    if (this.cfg.autoAddress !== addr) {
-      this.cfg.autoAddress = addr;
-      this.save();
-    }
-    this.sysLog(`Public join address (playit.gg): ${addr}`);
-    this.emitStatus();
-    return addr;
-  }
-
   /** Whitelists (and optionally ops) every team member's Minecraft name. */
   teamAccess({ op = false, quiet = false } = {}) {
     if (!this.proc) throw new Error('Start the server first.');
@@ -743,7 +871,10 @@ class Instance extends EventEmitter {
     this.restartPending = false;
     this.status = 'stopping';
     this.sysLog('Killing server process...');
-    if (process.platform === 'win32') {
+    if (this.isolated) {
+      docker.kill(this.cfg.id);
+      setTimeout(() => this.proc && this.proc.kill(), 5000);
+    } else if (process.platform === 'win32') {
       spawn('taskkill', ['/PID', String(this.proc.pid), '/T', '/F'], { windowsHide: true });
     } else {
       this.proc.kill('SIGKILL');
@@ -787,7 +918,7 @@ class Instance extends EventEmitter {
   }
 
   clientLog(msg) {
-    this.appendLog(`[Honey Host] ${msg}`);
+    this.appendLog(`[Tree Host] ${msg}`);
     if (this.client) {
       this.client = { ...this.client, label: msg.slice(0, 140), done: 0, total: 0 };
       this.emitStatus();
@@ -844,19 +975,19 @@ class Instance extends EventEmitter {
         await this.waitUntilRunning();
         const proc = client.launch(prep, { username, host: '127.0.0.1', port: this.cfg.port });
         this.clientsRunning++;
-        this.appendLog(`[Honey Host] Launched Minecraft ${version} (Java ${prep.major}) as ${username}, joining 127.0.0.1:${this.cfg.port}...`);
-        proc.on('error', (e) => this.appendLog(`[Honey Host] Minecraft client failed to start: ${e.message}`));
+        this.appendLog(`[Tree Host] Launched Minecraft ${version} (Java ${prep.major}) as ${username}, joining 127.0.0.1:${this.cfg.port}...`);
+        proc.on('error', (e) => this.appendLog(`[Tree Host] Minecraft client failed to start: ${e.message}`));
         proc.on('exit', (code) => {
           this.clientsRunning = Math.max(0, this.clientsRunning - 1);
-          if (code === 0) this.appendLog(`[Honey Host] Minecraft client (${username}) closed.`);
+          if (code === 0) this.appendLog(`[Tree Host] Minecraft client (${username}) closed.`);
           else {
-            this.appendLog(`[Honey Host] Minecraft client (${username}) crashed with exit code ${code}. Last output:`);
-            for (const l of proc.tail.slice(-15)) this.appendLog(`[Honey Host]   ${l}`);
+            this.appendLog(`[Tree Host] Minecraft client (${username}) crashed with exit code ${code}. Last output:`);
+            for (const l of proc.tail.slice(-15)) this.appendLog(`[Tree Host]   ${l}`);
           }
           this.emitStatus();
         });
       } catch (e) {
-        this.appendLog(`[Honey Host] Could not launch Minecraft: ${e.message}`);
+        this.appendLog(`[Tree Host] Could not launch Minecraft: ${e.message}`);
       } finally {
         this.client = null;
         this.emitStatus();
@@ -960,13 +1091,14 @@ class Instance extends EventEmitter {
   }
 
   async listPlugins() {
+    await assertNoLinks(this.dir, this.pluginDir);
     await fsp.mkdir(this.pluginDir, { recursive: true });
     const out = [];
     for (const file of await fsp.readdir(this.pluginDir)) {
       const lower = file.toLowerCase();
       if (!lower.endsWith('.jar') && !lower.endsWith('.jar.disabled')) continue;
       const full = path.join(this.pluginDir, file);
-      const st = await fsp.stat(full).catch(() => null);
+      const st = await fsp.lstat(full).catch(() => null);
       if (!st || !st.isFile()) continue;
       out.push({
         file,
@@ -988,8 +1120,9 @@ class Instance extends EventEmitter {
     const file = safeFileName(name);
     if (!file.toLowerCase().endsWith('.jar')) throw new Error('Only .jar files can be deployed');
     if (!this.proc && this.status !== 'stopped') throw new Error(`The server is busy (${this.status}). Try again in a moment.`);
+    await assertNoLinks(this.dir, path.join(this.pluginDir, file));
     await fsp.mkdir(this.pluginDir, { recursive: true });
-    const tmp = path.join(this.dir, `.deploy-${Date.now()}.jar`);
+    const tmp = path.join(this.dir, `.deploy-${crypto.randomBytes(8).toString('hex')}.jar`);
     await new Promise((resolve, reject) => {
       const out = fs.createWriteStream(tmp);
       stream.pipe(out);
@@ -1032,9 +1165,10 @@ class Instance extends EventEmitter {
   async savePluginUpload(name, stream) {
     const file = safeFileName(name);
     if (!file.toLowerCase().endsWith('.jar')) throw new Error('Only .jar files can be uploaded');
+    await assertNoLinks(this.dir, path.join(this.pluginDir, file));
     await fsp.mkdir(this.pluginDir, { recursive: true });
     const dest = path.join(this.pluginDir, file);
-    const tmp = dest + '.upload';
+    const tmp = path.join(this.dir, `.upload-${crypto.randomBytes(8).toString('hex')}`);
     await new Promise((resolve, reject) => {
       const out = fs.createWriteStream(tmp);
       stream.pipe(out);
@@ -1056,6 +1190,7 @@ class Instance extends EventEmitter {
   async togglePlugin(file) {
     file = safeFileName(file);
     const full = path.join(this.pluginDir, file);
+    await assertNoLinks(this.dir, full);
     const target = file.toLowerCase().endsWith('.disabled') ? full.slice(0, -'.disabled'.length) : full + '.disabled';
     await fsp.rename(full, target).catch((e) => {
       if (e.code === 'EBUSY' || e.code === 'EPERM') throw new Error('The plugin is in use. Stop the server first.');
@@ -1083,11 +1218,12 @@ class Instance extends EventEmitter {
   async listFiles(rel) {
     const dir = this.resolvePath(rel);
     await fsp.mkdir(this.dir, { recursive: true });
+    await assertNoLinks(this.dir, dir);
     const entries = await fsp.readdir(dir, { withFileTypes: true });
     const out = [];
     for (const e of entries) {
-      const st = await fsp.stat(path.join(dir, e.name)).catch(() => null);
-      if (!st) continue;
+      const st = await fsp.lstat(path.join(dir, e.name)).catch(() => null);
+      if (!st || st.isSymbolicLink()) continue;
       out.push({ name: e.name, dir: st.isDirectory(), size: st.size, mtime: st.mtimeMs });
     }
     return out.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
@@ -1095,29 +1231,37 @@ class Instance extends EventEmitter {
 
   async readFile(rel) {
     const file = this.resolvePath(rel);
-    const st = await fsp.stat(file);
+    await assertNoLinks(this.dir, file);
+    const st = await fsp.lstat(file);
     if (st.isDirectory()) throw new Error('That is a folder');
     if (st.size > 2 * 1024 * 1024) throw new Error('File is too large to edit here (over 2 MB)');
-    const buf = await fsp.readFile(file);
+    const buf = await readInside(this.dir, file);
     if (buf.includes(0)) throw new Error('Binary files cannot be edited here');
     return buf.toString('utf8');
   }
 
   async writeFile(rel, content) {
     const file = this.resolvePath(rel);
+    await assertNoLinks(this.dir, file);
     await fsp.mkdir(path.dirname(file), { recursive: true });
-    await fsp.writeFile(file, String(content));
+    await writeInside(this.dir, file, String(content));
   }
 
   async deleteFile(rel) {
     const file = this.resolvePath(rel);
     if (file === path.resolve(this.dir)) throw new Error('Cannot delete the server folder here');
+    await assertNoLinks(this.dir, path.dirname(file));
     await fsp.rm(file, { recursive: true });
   }
 
   async getProperties() {
     const f = path.join(this.dir, 'server.properties');
-    return (await exists(f)) ? parseProperties(await fsp.readFile(f, 'utf8')) : {};
+    if (!(await exists(f))) return {};
+    try {
+      return parseProperties((await readInside(this.dir, f)).toString('utf8'));
+    } catch {
+      return {};
+    }
   }
 
   async setProperties(updates) {
@@ -1127,15 +1271,20 @@ class Instance extends EventEmitter {
       if (!/^[\w.-]+$/.test(k)) continue;
       clean[k] = String(v).replace(/[\r\n]/g, ' ');
     }
+    if (this.isCustomer) {
+      // The port is assigned by Tree Host and published by the container.
+      delete clean['server-port'];
+      delete clean['server-ip'];
+    }
     if ('server-port' in clean) {
       const port = Number(clean['server-port']);
       if (port > 0 && port < 65536) this.cfg.port = port;
       this.save();
     }
     if ('online-mode' in clean) this.cfg.onlineMode = clean['online-mode'] !== 'false';
-    const text = (await exists(f)) ? await fsp.readFile(f, 'utf8') : '';
+    const text = (await exists(f)) ? (await readInside(this.dir, f)).toString('utf8') : '';
     await fsp.mkdir(this.dir, { recursive: true });
-    await fsp.writeFile(f, updateProperties(text, clean));
+    await writeInside(this.dir, f, updateProperties(text, clean));
   }
 
   async resetWorlds() {
@@ -1161,16 +1310,43 @@ class Manager extends EventEmitter {
     this.setMaxListeners(100);
     this.instances = new Map();
     this.teamMode = false;
-    this.playit = null;
     this.accessNames = () => [];
     this.ownerName = () => null;
     this.defaultOwner = () => null;
     this.teamMcNames = () => [];
     this.activity = null;
+    // Docker isolation: on by default on Linux when Docker is installed; TREEHOST_ISOLATION=docker|off overrides.
+    this.docker = false;
+    this.allowUnsafe = process.env.TREEHOST_ALLOW_UNSAFE === '1';
+    this.overheadMb = 384;
+    // Ports handed out to customer servers, e.g. TREEHOST_PORTS=25600-25999 (open these in the firewall).
+    const [lo, hi] = String(process.env.TREEHOST_PORTS || '25600-25999').split('-').map(Number);
+    this.customerPorts = { lo: lo || 25600, hi: hi || 25999 };
+    // The address players use for customer servers (a domain or the server's public IP).
+    this.gameHost = process.env.TREEHOST_GAME_HOST || '';
+    // Set by server.js (billing): plan limits for a server, and why it may not start.
+    this.planInfo = () => null;
+    this.startBlock = () => null;
+  }
+
+  async setupIsolation() {
+    const mode = process.env.TREEHOST_ISOLATION || (process.platform === 'linux' ? 'auto' : 'off');
+    if (mode === 'off') return;
+    if (await docker.available()) {
+      this.docker = true;
+      await docker.removeLeftovers((m) => console.log(`  ${m}`));
+      await docker.ensureNetwork();
+      console.log('  Isolation: every server runs in its own Docker container.');
+    } else if (mode === 'docker') {
+      console.log('  TREEHOST_ISOLATION=docker but Docker is not running. Customer servers will not start until it is.');
+    } else {
+      console.log('  Docker was not found: customer servers will not start. Install Docker (see the hosting guide).');
+    }
   }
 
   async init() {
     await fsp.mkdir(SERVERS, { recursive: true });
+    await this.setupIsolation();
     let list = [];
     if (await exists(CONFIG_FILE)) {
       try {
@@ -1193,11 +1369,14 @@ class Manager extends EventEmitter {
       }
       const inst = new Instance(this, cfg);
       this.instances.set(cfg.id, inst);
-      if (cfg.lastPid) await this.cleanupOrphan(inst, cfg.lastPid);
+      if (cfg.lastPid && !this.docker) await this.cleanupOrphan(inst, cfg.lastPid);
+      if (this.gameHost && !cfg.gateway) cfg.autoAddress = this.gameAddress(cfg.port);
     }
     await this.fixDuplicatePorts();
     this.memTimer = setInterval(() => this.pollMemory().catch(() => {}), 15000);
     this.backupTimer = setInterval(() => this.autoBackups().catch(() => {}), 10 * 60 * 1000);
+    this.diskTimer = setInterval(() => this.pollDisk().catch(() => {}), 30 * 60 * 1000);
+    setTimeout(() => this.pollDisk().catch(() => {}), 60000);
     // Bring servers back after a restart: the Gateway first, then servers marked "start automatically".
     const gw = this.gateway();
     if (gw && this.teamMode) setTimeout(() => gw.start(), 2000);
@@ -1352,6 +1531,32 @@ class Manager extends EventEmitter {
     return new Set([...this.instances.values()].filter((i) => i.cfg.id !== exceptId).map((i) => i.cfg.port));
   }
 
+  gameAddress(port) {
+    return this.gameHost ? (port === 25565 ? this.gameHost : `${this.gameHost}:${port}`) : '';
+  }
+
+  async nextCustomerPort() {
+    const used = this.usedPorts();
+    for (let p = this.customerPorts.lo; p <= this.customerPorts.hi; p++) {
+      if (!used.has(p) && (await isPortFree(p))) return p;
+    }
+    throw Object.assign(new Error('No free ports left on this host. Contact support.'), { status: 503 });
+  }
+
+  /** Disk use of customer servers; servers over their plan's disk limit can't start until cleaned up. */
+  async pollDisk() {
+    for (const inst of this.instances.values()) {
+      if (!inst.isCustomer) continue;
+      inst.diskUsedMb = Math.round((await dirSize(inst.dir)) / 1048576);
+      const plan = this.planInfo(inst);
+      if (plan && plan.diskGb && inst.diskUsedMb > plan.diskGb * 1024 * 1.1 && inst.proc) {
+        inst.sysLog(`This server uses ${(inst.diskUsedMb / 1024).toFixed(1)} GB, more than the ${plan.diskGb} GB in its plan. Stopping it. Delete old worlds, backups or logs in Files, then start it again.`);
+        inst.stop();
+      }
+      inst.emitStatus();
+    }
+  }
+
   async nextFreePort(kind) {
     const used = this.usedPorts();
     for (let p = kind === 'proxy' ? 25577 : 25565; p < 26000; p++) {
@@ -1370,7 +1575,7 @@ class Manager extends EventEmitter {
     if (!(mem >= 512 && mem <= 262144)) throw new Error('Memory must be at least 512 MB');
   }
 
-  async create(body, { space, owner, createdBy } = {}) {
+  async create(body, { space, owner, createdBy, extra } = {}) {
     const type = String(body.type || '');
     const provider = getProvider(type);
     const name = String(body.name || `${provider.label} ${body.version || ''}`).trim();
@@ -1396,9 +1601,12 @@ class Manager extends EventEmitter {
       ...(space ? { space, owner: owner || null } : {}),
       ...(createdBy ? { createdBy } : {}),
       ...(body.gateway ? { gateway: true } : {}),
+      ...(extra || {}),
     };
-    if (provider.kind === 'proxy' && !body.port) cfg.port = await this.nextFreePort('proxy');
+    if (space === 'customer') cfg.port = await this.nextCustomerPort();
+    if (provider.kind === 'proxy' && !body.port && space !== 'customer') cfg.port = await this.nextFreePort('proxy');
     this.validate(cfg);
+    if (this.gameHost) cfg.autoAddress = this.gameAddress(cfg.port);
     if (this.usedPorts().has(cfg.port)) throw new Error(`Port ${cfg.port} is already used by another server here`);
     const inst = new Instance(this, cfg);
     this.instances.set(id, inst);
@@ -1481,6 +1689,46 @@ class Manager extends EventEmitter {
     inst.emitStatus();
   }
 
+  // ----- Paper pre-build (shared per version) -----
+
+  buildPaperclip(inst, shared) {
+    this.paperclipJobs = this.paperclipJobs || new Map();
+    if (!this.paperclipJobs.has(shared)) {
+      const job = (async () => {
+        const tmp = `${shared}.tmp-${crypto.randomBytes(3).toString('hex')}`;
+        await fsp.mkdir(tmp, { recursive: true });
+        try {
+          await fsp.copyFile(path.join(inst.dir, 'server.jar'), path.join(tmp, 'server.jar'));
+          inst.sysLog(`Preparing ${inst.provider.label} ${inst.cfg.version} (one time for this version, it can take a few minutes)...`);
+          const major = await inst.provider.java(inst.cfg.version, inst.dir);
+          const javaArgs = ['-Dpaperclip.patchonly=true', '-jar', 'server.jar'];
+          if (this.docker) {
+            const { image } = docker.imageFor(major);
+            await docker.ensureImage(image, (m) => inst.sysLog(m));
+            await docker.ensureNetwork();
+            const args = docker.runArgs({ id: `prep-${crypto.randomBytes(3).toString('hex')}`, dir: tmp, port: 0, memLimitMb: 2048, cpus: null, image })
+              .filter((a, i, all) => !(a === '-p' || all[i - 1] === '-p'))
+              .filter((a) => a !== '-i');
+            await run('docker', [...args, 'java', ...javaArgs], { timeout: 20 * 60 * 1000 });
+          } else {
+            const exe = await java.resolveJava(major, { log: (m) => inst.sysLog(m) });
+            await run(exe, javaArgs, { cwd: tmp, timeout: 20 * 60 * 1000 });
+          }
+          if (!(await exists(path.join(tmp, 'versions')))) throw new Error('the server jar did not produce its files');
+          await fsp.rm(path.join(tmp, 'server.jar'), { force: true });
+          await fsp.rm(shared, { recursive: true, force: true });
+          await fsp.rename(tmp, shared);
+          inst.sysLog(`${inst.provider.label} ${inst.cfg.version} is prepared. New servers on this version start quickly.`);
+        } finally {
+          await fsp.rm(tmp, { recursive: true, force: true }).catch(() => {});
+          this.paperclipJobs.delete(shared);
+        }
+      })();
+      this.paperclipJobs.set(shared, job);
+    }
+    return this.paperclipJobs.get(shared);
+  }
+
   // ----- claims -----
 
   claim(id, user, { note, minutes }) {
@@ -1514,6 +1762,18 @@ class Manager extends EventEmitter {
     const running = [...this.instances.values()].filter((i) => i.proc && i.proc.pid);
     if (!running.length) return;
     const byPid = new Map();
+    if (this.docker) {
+      const byId = await docker.memoryByServer().catch(() => null);
+      if (!byId) return;
+      for (const i of running) {
+        const mb = byId.get(i.cfg.id);
+        if (mb && mb !== i.memUsedMb) {
+          i.memUsedMb = mb;
+          i.emitStatus();
+        }
+      }
+      return;
+    }
     try {
       if (process.platform === 'win32') {
         const { stdout } = await run('tasklist', ['/FO', 'CSV', '/NH', '/FI', 'IMAGENAME eq java.exe']);
@@ -1573,4 +1833,4 @@ class Manager extends EventEmitter {
   }
 }
 
-module.exports = { Manager };
+module.exports = { Manager, _safety: { assertNoLinks, removeSymlinks, readInside } };

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tree Host</title>
+  <link rel="icon" href="brand/tree-host-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="offline" class="offline hidden">Lost connection to the manager. Is the Tree Host window still open? Reconnecting...</div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <div class="brand-name">Tree Host</div>
+          <div class="brand-sub">Minecraft server hosting</div>
+        </div>
+      </div>
+      <div id="space-switch" class="space-switch hidden"></div>
+      <button id="btn-new" class="btn primary block">+ New server</button>
+      <nav id="server-list" class="server-list"></nav>
+      <a id="activity-link" class="help-link" href="#">📋 Activity</a>
+      <a href="help.html" target="_blank" class="help-link">📖 Help &amp; guides</a>
+      <div id="user-box" class="user-box hidden"></div>
+      <div id="sys-info" class="sys-info"></div>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toasts" class="toasts"></div>
+  <script src="team.js"></script>
+  <script src="extras.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

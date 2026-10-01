@@ -2,7 +2,7 @@
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const DATA = path.resolve(process.env.MCPT_DATA || path.join(ROOT, 'data'));
+const DATA = path.resolve(process.env.TREEHOST_DATA || process.env.MCPT_DATA || path.join(ROOT, 'data'));
 
 module.exports = {
   ROOT,

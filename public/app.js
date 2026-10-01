@@ -91,11 +91,11 @@ function currentSpace() {
   return isTeam() ? state.space : null;
 }
 
-/** Servers shown in the sidebar for the current space (solo = only your own, plus others' for admins). */
+/** Servers shown in the sidebar: customers see theirs; support and admins switch between their own and everyone's. */
 function spaceServers() {
   const all = [...state.servers.values()].sort((a, b) => a.createdAt - b.createdAt);
-  if (!isTeam()) return all;
-  return all.filter((s) => (state.space === 'solo' ? s.space === 'solo' : s.space !== 'solo'));
+  if (!isTeam() || isCustomer()) return all;
+  return state.space === 'all' ? all : all.filter((s) => s.owner === state.me.user.id);
 }
 
 function setSpace(space) {
@@ -104,7 +104,8 @@ function setSpace(space) {
   state.files.dirty = false;
   state.space = space;
   localStorage.setItem('hh.space', space);
-  const first = spaceServers().find((s) => state.space !== 'solo' || s.owner === state.me.user.id) || spaceServers()[0];
+  const first = spaceServers()[0];
+  renderSpaceSwitch();
   state.selected = first ? first.id : null;
   renderSpaceSwitch();
   renderSidebar();
@@ -118,19 +119,16 @@ function renderSpaceSwitch() {
     el.classList.add('hidden');
     return;
   }
-  if (isTester()) {
-    // Testers only use Team servers and can't create servers.
+  $('#btn-new').textContent = '+ New server';
+  if (isCustomer()) {
     el.classList.add('hidden');
-    $('#btn-new').classList.add('hidden');
-    state.space = 'team';
     return;
   }
   el.classList.remove('hidden');
   el.innerHTML = `
-    <button class="${state.space !== 'solo' ? 'active' : ''}" data-space="team" title="Servers shared with the whole team">👥 Team</button>
-    <button class="${state.space === 'solo' ? 'active' : ''}" data-space="solo" title="Your private servers">👤 Solo</button>`;
+    <button class="${state.space !== 'all' ? 'active' : ''}" data-space="mine" title="Servers on your own plans">👤 My servers</button>
+    <button class="${state.space === 'all' ? 'active' : ''}" data-space="all" title="Every customer's server (for support)">🌳 All servers</button>`;
   $$('[data-space]', el).forEach((b) => b.addEventListener('click', () => setSpace(b.dataset.space)));
-  $('#btn-new').textContent = state.space === 'solo' ? '+ New solo server' : '+ New team server';
 }
 
 function serverItem(s) {
@@ -138,21 +136,17 @@ function serverItem(s) {
       <button class="server-item ${s.id === state.selected ? 'active' : ''}" data-id="${esc(s.id)}">
         <span class="dot ${esc(s.status)}"></span>
         <div>
-          <div class="si-name">${esc(s.name)}${s.isGateway ? ' <span class="badge green">Gateway</span>' : ''}${s.claim ? ` <span title="${esc(s.claim.username)} is testing${s.claim.note ? `: ${esc(s.claim.note)}` : ''}">🙋</span>` : ''}</div>
-          <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)} · :${s.port}${s.players.length ? ` · ${s.players.length} online` : ''}</div>
+          <div class="si-name">${esc(s.name)}</div>
+          <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.players.length ? ` · ${s.players.length} online` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
         </div>
       </button>`;
 }
 
 function renderSidebar() {
   const list = spaceServers();
-  const mine = isTeam() && state.space === 'solo' ? list.filter((s) => s.owner === state.me.user.id) : list;
-  const others = isTeam() && state.space === 'solo' ? list.filter((s) => s.owner !== state.me.user.id) : [];
-  const empty = isTeam()
-    ? state.space === 'solo'
-      ? 'No solo servers yet. Solo servers are private to you.'
-      : 'No team servers yet.'
-    : 'No servers yet.';
+  const mine = list;
+  const others = [];
+  const empty = isTeam() && state.space === 'all' ? 'Nobody has a server yet.' : 'No servers yet.';
   $('#server-list').innerHTML =
     (mine.length ? mine.map(serverItem).join('') : `<div class="muted small" style="padding:8px">${empty}</div>`) +
     (others.length
@@ -164,7 +158,7 @@ function renderSidebar() {
 
 function renderSysInfo() {
   const s = state.system;
-  if (!s) return;
+  if (!s || s.customer) return;
   const javas = [...new Set([...(s.java.managed || []), ...(s.java.system ? [s.java.system] : [])])].sort((a, b) => a - b);
   const used = s.totalMemMb - s.freeMemMb;
   const pct = Math.round((used / s.totalMemMb) * 100);
@@ -196,6 +190,21 @@ function current() {
 function renderMain() {
   const s = current();
   const main = $('#main');
+  if (!s && isTeam() && state.space !== 'all') {
+    main.innerHTML = `
+      <div class="welcome">
+        <h1>Welcome to Tree Host, ${esc(state.me.user.username)}! 🌳</h1>
+        <p>Your Minecraft server is two steps away:</p>
+        <ol>
+          <li><b>Pick a plan</b>: how much memory your server gets. You can buy more plans later for more servers.</li>
+          <li><b>Create your server</b>: choose Paper, Purpur, Fabric, Vanilla... and any version. It's ready in about a minute.</li>
+        </ol>
+        <div class="row"><button class="btn primary" id="welcome-go">Get started</button>
+          <a class="btn" href="help.html" target="_blank">📖 Read the guide</a></div>
+      </div>`;
+    $('#welcome-go').addEventListener('click', openNewServer);
+    return;
+  }
   if (!s) {
     main.innerHTML = `
       <div class="welcome">
@@ -271,22 +280,24 @@ function renderHeader() {
     <div class="srv-top">
       <div class="srv-title">
         <h1>${esc(s.name)}
-          ${isTeam() ? (s.space === 'solo' ? `<span class="badge" title="Private server">👤 Solo${s.owner !== state.me.user.id ? ` · ${esc(s.ownerName || '?')}` : ''}</span>` : '<span class="badge blue" title="Shared with the team">👥 Team</span>') : ''}
+          ${isTeam() && s.owner !== state.me.user.id ? `<span class="badge blue" title="This server belongs to someone else">👤 ${esc(s.ownerName || 'customer')}</span>` : ''}
+          ${s.plan ? `<span class="badge green" title="Plan">${esc(s.plan.planName)}</span>` : ''}
           <span class="badge ${STATUS_BADGE[s.status]}">${STATUS_LABEL[s.status] || s.status}</span>
           ${s.needsInstall && s.status === 'stopped' && s.installedBuild ? '<span class="badge blue" title="Type/version changed. The new jar is downloaded on next start.">update on start</span>' : ''}
         </h1>
         ${
-          isTeam() && !s.isGateway && !s.gateway && s.kind !== 'proxy' && [...state.servers.values()].some((x) => x.isGateway)
-            ? `<div class="small muted" style="margin:-2px 0 6px">${esc(s.typeLabel)} servers can't go behind the Gateway, so this one is joined directly with its own address (right).</div>`
+          s.suspended
+            ? `<div class="suspended-box">⛔ ${s.suspended === 'canceled' ? 'The plan for this server has ended.' : 'The payment for this server failed.'}
+                 ${isCustomer() ? '<a href="#" id="hdr-billing">Open Billing</a> to fix it.' : ''}</div>`
             : ''
         }
-        ${s.isGateway ? '<div class="small muted" style="margin:-2px 0 6px">The front door for every server. Players join here and switch with <b>/server &lt;name&gt;</b>. Its server list is managed by Honey Host.</div>' : ''}
         <div class="meta">
           <span><b>${esc(s.typeLabel)}</b> ${esc(s.version)} ${buildText ? `<span class="muted">(${esc(buildText)})</span>` : ''}</span>
           <span title="Memory the server is using right now / the most it may use">RAM <b>${s.memUsedMb ? `${fmtMem(s.memUsedMb)} / ` : ''}${fmtMem(s.memoryMb)}</b></span>
           <span>Java <b>${s.javaMajor || 'auto'}</b></span>
           ${alive && s.startedAt ? `<span>Up <b id="uptime">${fmtUptime(Date.now() - s.startedAt)}</b></span>` : ''}
           ${s.autoRestart ? '<span title="Restarts by itself after a crash">♻ auto-restart</span>' : ''}
+          ${s.plan && s.diskUsedMb ? `<span title="Disk used / plan limit">Disk <b>${+(s.diskUsedMb / 1024).toFixed(1)} / ${s.plan.diskGb} GB</b></span>` : ''}
           ${s.kind !== 'proxy' && alive ? `<span title="${esc(s.players.join(', '))}">Players <b>${s.players.length}</b>${s.players.length ? `: ${esc(s.players.slice(0, 5).join(', '))}${s.players.length > 5 ? '…' : ''}` : ''}</span>` : ''}
         </div>
       </div>
@@ -307,15 +318,13 @@ function renderHeader() {
             ? `<div class="addr-label">Join address <span class="muted">(click to copy)</span></div>
                <div class="addr-main copy" data-copy="${esc(s.publicAddress)}">${esc(s.publicAddress)}</div>
                ${lanGameLine(s)}`
-            : isTeam() && !hostFeatures()
-              ? `<div class="addr-label">Join address</div><div class="addr-lan">No public address yet.</div>
-                 <button class="btn sm" id="btn-share" style="margin-top:4px">🌐 Get public address</button>`
+            : state.me?.hosted
+              ? `<div class="addr-label">Join address</div><div class="addr-lan">${isAdmin() ? 'Set TREEHOST_GAME_HOST on the server, or type an address in Settings.' : 'No address yet. Contact support.'}</div>`
               : `<div class="addr-label">Server address <span class="muted">(click to copy)</span></div>
                  <div class="addr-main copy" data-copy="${addr}">${addr}</div>
                  ${
                    isTeam()
-                     ? `<div class="addr-lan">${s.space === 'solo' ? 'Not reachable from the internet yet.' : "Team can't join from the internet yet."}</div>
-                        <button class="btn sm" id="btn-share" style="margin-top:4px">🌐 Get public address</button>${lanGameLine(s)}`
+                     ? lanGameLine(s)
                      : state.system?.lanIps?.length
                        ? `<div class="addr-lan">Other PCs on your network: <span class="copy" data-copy="${esc(state.system.lanIps[0])}:${s.port}">${esc(state.system.lanIps[0])}:${s.port}</span></div>`
                        : ''
@@ -331,45 +340,24 @@ function renderHeader() {
           : ''
       }
       <div class="actions">
-        ${claimButton(s)}
-        <button class="btn primary" data-act="start" ${alive || busy ? 'disabled' : ''}>▶ Start</button>
+        <button class="btn primary" data-act="start" ${alive || busy || s.suspended ? 'disabled' : ''}>▶ Start</button>
         <button class="btn" data-act="restart" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>⟳ Restart</button>
         <button class="btn" data-act="stop" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>■ Stop</button>
         <button class="btn danger" data-act="kill" ${!alive ? 'disabled' : ''} title="Force kill the Java process">Kill</button>
         ${hostFeatures() ? '<button class="btn" data-act="open-folder" title="Open the server folder">📁 Folder</button>' : ''}
       </div>
     </div>
-    ${claimBanner(s)}
     ${s.notes ? `<div class="srv-notes"><span class="muted small">📝 Notes</span> ${esc(s.notes)}</div>` : ''}
     ${progress}`;
   $$('[data-act]', el).forEach((b) =>
-    b.addEventListener('click', () => {
-      if (!confirmClaimed(current() || s, b.dataset.act)) return;
-      attempt(() => api('POST', `/api/servers/${s.id}/${b.dataset.act}`));
-    }),
+    b.addEventListener('click', () => attempt(() => api('POST', `/api/servers/${s.id}/${b.dataset.act}`))),
   );
-  bindClaim(s, el);
   if ($('#btn-play', el)) $('#btn-play', el).addEventListener('click', () => launchClient(s));
-  if ($('#btn-share', el)) {
-    $('#btn-share', el).addEventListener('click', (e) => {
-      e.target.disabled = true;
-      e.target.textContent = 'Asking playit.gg...';
-      api('POST', `/api/servers/${s.id}/share`)
-        .then((r) => toast(`Public address: ${r.address}`))
-        .catch((err) => {
-          toast(
-            /not connected/i.test(err.message)
-              ? isAdmin()
-                ? 'Connect playit.gg first: Team → Public game addresses → Connect.'
-                : 'An admin needs to connect playit.gg first.'
-              : err.message,
-            'error',
-          );
-          e.target.disabled = false;
-          e.target.textContent = '🌐 Get public address';
-        });
+  if ($('#hdr-billing', el))
+    $('#hdr-billing', el).addEventListener('click', (e) => {
+      e.preventDefault();
+      openBilling();
     });
-  }
   if ($('#play-name', el)) $('#play-name', el).addEventListener('click', () => {
     const n = prompt('Username to play as (3-16 letters, numbers or _).\nUse a different name to join with a second client.', playerName());
     if (n === null) return;
@@ -387,7 +375,7 @@ function renderHeader() {
 /** Game address for players on the host's home network (skips the internet round trip). */
 function lanGameLine(s) {
   const ip = state.system?.lanIps?.[0];
-  if (!ip) return '';
+  if (!ip || state.me?.hosted) return '';
   const a = s.port === 25565 ? ip : `${ip}:${s.port}`;
   return `<div class="addr-lan">Same home network: <span class="copy" data-copy="${esc(a)}">${esc(a)}</span></div>`;
 }
@@ -500,7 +488,7 @@ function renderAnsi(text, into) {
 }
 
 function lineClass(t) {
-  if (t.startsWith('[Honey Host]')) return 'l-sys';
+  if (t.startsWith('[Tree Host]')) return 'l-sys';
   if (t.startsWith('> ')) return 'l-cmd';
   if (/\b(ERROR|SEVERE|FATAL)\b|Exception|^\s+at /.test(t)) return 'l-error';
   if (/\bWARN(ING)?\b/.test(t)) return 'l-warn';
@@ -523,13 +511,7 @@ function quickCommands(s) {
   ];
   if (s.family === 'bukkit') cmds.push(['plugins', 'Plugins'], ['tps', 'TPS'], ['version', 'Version']);
   cmds.push(['save-all', 'Save']);
-  if (isTeam()) {
-    cmds.unshift(
-      ...(s.space === 'solo'
-        ? [['@team-whitelist', 'Whitelist me'], ['@team-op', 'OP me']]
-        : [['@team-whitelist', 'Whitelist team'], ['@team-op', 'OP team']]),
-    );
-  }
+  if (isTeam()) cmds.unshift(['@team-whitelist', 'Whitelist me'], ['@team-op', 'OP me']);
   return cmds;
 }
 
@@ -1019,20 +1001,25 @@ async function renderSettings(body) {
         <h3>General</h3>
         <div class="grid3">
           <label class="field">Name <input type="text" name="name" value="${esc(s.name)}"></label>
-          <label class="field">Memory
-            <select name="memoryMb">${memOptions.map((m) => `<option value="${m}" ${m === s.memoryMb ? 'selected' : ''}>${fmtMem(m)}</option>`).join('')}</select>
-          </label>
-          <label class="field">Port <input type="number" name="port" min="1" max="65535" value="${s.port}"></label>
+          ${
+            s.plan || s.space === 'customer'
+              ? `<label class="field">Memory <input type="text" value="${fmtMem(s.memoryMb)} (${esc(s.plan ? s.plan.planName : 'plan')})" disabled></label>
+                 <label class="field">Port <input type="text" value="${s.port}" disabled></label>`
+              : `<label class="field">Memory
+                   <select name="memoryMb">${memOptions.map((m) => `<option value="${m}" ${m === s.memoryMb ? 'selected' : ''}>${fmtMem(m)}</option>`).join('')}</select>
+                 </label>
+                 <label class="field">Port <input type="number" name="port" min="1" max="65535" value="${s.port}"></label>`
+          }
         </div>
         <label class="check"><input type="checkbox" name="autoStart" ${s.autoStart ? 'checked' : ''}>
-          <span>Start automatically when Honey Host starts <span class="muted">(so it comes back by itself after the host PC restarts)</span></span></label>
+          <span>Start automatically when Tree Host starts <span class="muted">(so it comes back by itself after the host PC restarts)</span></span></label>
         <label class="check"><input type="checkbox" name="autoRestart" ${s.autoRestart ? 'checked' : ''}>
           <span>Restart after a crash <span class="muted">(waits 5 seconds; gives up after 3 crashes in 10 minutes)</span></span></label>
         <label class="field">Notes <span class="muted small" style="font-weight:400">(shown to everyone at the top of this server, e.g. what it's for or test accounts)</span>
           <textarea name="notes" rows="2" maxlength="2000" placeholder="e.g. Used for testing the shop plugin. Don't reset the world.">${esc(s.notes || '')}</textarea>
         </label>
-        <label class="field">Public join address <span class="muted small" style="font-weight:400">(e.g. from playit.gg, shown to everyone as the address to join)</span>
-          <input type="text" name="publicAddress" value="${esc(s.manualAddress || '')}" placeholder="${s.autoAddress ? `Automatic: ${esc(s.autoAddress)} (leave empty to keep it)` : 'Automatic when playit.gg is connected, or type one, e.g. my-team.joinmc.link'}">
+        <label class="field ${s.space === 'customer' ? 'hidden' : ''}">Public join address <span class="muted small" style="font-weight:400">(shown to everyone as the address to join)</span>
+          <input type="text" name="publicAddress" value="${esc(s.manualAddress || '')}" placeholder="${s.autoAddress ? `Automatic: ${esc(s.autoAddress)} (leave empty to keep it)` : 'e.g. play.example.com:25565'}">
         </label>
         <label class="field ${hostFeatures() ? '' : 'hidden'}" style="max-width:420px">Minecraft version for the 🎮 Play button
           <input type="text" name="clientVersion" value="${s.clientVersion === 'auto' ? '' : esc(s.clientVersion)}" placeholder="Automatic (${s.kind === 'proxy' || s.type === 'custom' ? 'latest release' : 'same as the server'})">
@@ -1048,7 +1035,7 @@ async function renderSettings(body) {
         }
         <div class="grid3">
           <label class="field">Type
-            <select name="type">${state.types.filter((t) => hostFeatures() || t.id !== 'custom' || t.id === s.type).map((t) => `<option value="${t.id}" ${t.id === s.type ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select>
+            <select name="type">${state.types.filter((t) => (hostFeatures() && s.space !== 'customer') || t.id !== 'custom' || t.id === s.type).map((t) => `<option value="${t.id}" ${t.id === s.type ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}</select>
           </label>
           <label class="field">Version <select name="version" id="set-version"><option>${esc(s.version)}</option></select></label>
           <label class="field"><span id="set-build-label">${esc(type?.buildLabel || 'Build')}</span> <select name="build" id="set-build"><option value="${esc(s.build)}">${esc(s.build)}</option></select></label>
@@ -1147,8 +1134,7 @@ async function renderSettings(body) {
     const javaSel = f.javaSel.value;
     const patch = {
       name: f.name.value,
-      memoryMb: Number(f.memoryMb.value),
-      port: Number(f.port.value),
+      ...(f.memoryMb ? { memoryMb: Number(f.memoryMb.value), port: Number(f.port.value) } : {}),
       type: f.type.value,
       version: f.version.value,
       build: f.build.value || 'latest',
@@ -1157,7 +1143,7 @@ async function renderSettings(body) {
       jvmArgs: f.jvmArgs.value,
       serverArgs: f.serverArgs.value,
       clientVersion: f.clientVersion.value.trim() || 'auto',
-      publicAddress: f.publicAddress.value.trim(),
+      ...(s.space === 'customer' ? {} : { publicAddress: f.publicAddress.value.trim() }),
       autoStart: f.autoStart.checked,
       autoRestart: f.autoRestart.checked,
       notes: f.notes.value,
@@ -1268,6 +1254,22 @@ async function fillVersionSelect(sel, type, showPre, keep) {
   if (keep) sel.value = keep;
 }
 
+/** Selects the newest version that has a stable build (brand-new versions often only have beta builds). */
+async function preferStable(sel, type) {
+  if (!type.hasBuilds) return;
+  for (const opt of [...sel.options].slice(0, 6)) {
+    try {
+      const builds = await api('GET', `/api/types/${type.id}/versions/${encodeURIComponent(opt.value)}/builds`);
+      if (!builds.length || builds.some((b) => !b.channel || b.channel === 'STABLE')) {
+        sel.value = opt.value;
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+}
+
 async function fillBuildSelect(sel, type, version, keep) {
   if (!type.hasBuilds || !version) {
     sel.innerHTML = '<option value="latest">Latest</option>';
@@ -1299,17 +1301,26 @@ async function fillBuildSelect(sel, type, version, keep) {
 
 async function openNewServer() {
   const root = $('#modal-root');
+  // Customers: a server needs an unused plan. No plan yet -> show the plans.
+  let freePlans = [];
+  const forCustomer = isTeam();
+  if (forCustomer) {
+    const b = await api('GET', '/api/billing').catch((e) => (toast(e.message, 'error'), null));
+    if (!b) return;
+    freePlans = b.subscriptions.filter((x) => x.usable && !x.serverId);
+    if (!freePlans.length) return openPlans();
+  }
   const memOptions = [1024, 2048, 3072, 4096, 6144, 8192].filter((m) => !state.system || m <= state.system.totalMemMb * 0.75);
   if (!memOptions.length) memOptions.push(1024);
   const defaultMem = memOptions.includes(2048) ? 2048 : memOptions[memOptions.length - 1];
   root.innerHTML = `
     <div class="modal-bg" id="modal-bg">
       <form class="modal" id="new-form" autocomplete="off">
-        <h2>${isTeam() ? (state.space === 'solo' ? 'New solo server <span class="muted small" style="font-weight:400">(private to you)</span>' : 'New team server <span class="muted small" style="font-weight:400">(shared with everyone)</span>') : 'New test server'}</h2>
+        <h2>${forCustomer ? 'Create your server' : isTeam() ? (state.space === 'solo' ? 'New solo server <span class="muted small" style="font-weight:400">(private to you)</span>' : 'New team server <span class="muted small" style="font-weight:400">(shared with everyone)</span>') : 'New test server'}</h2>
         <div class="section-title">Server software</div>
         <div class="type-grid">
           ${state.types
-            .filter((t) => hostFeatures() || t.id !== 'custom')
+            .filter((t) => (hostFeatures() && !forCustomer) || t.id !== 'custom')
             .map(
               (t) => `
             <button type="button" class="type-card ${t.id === 'paper' ? 'active' : ''}" data-type="${t.id}">
@@ -1333,15 +1344,25 @@ async function openNewServer() {
             <input type="text" id="nv-custom" placeholder="C:\\Downloads\\pufferfish-1.21.jar">
           </label>
           <div class="section-title" style="margin-top:6px">Server</div>
-          <div class="grid3">
+          ${
+            forCustomer
+              ? `<div class="grid2">
+                  <label class="field">Name <input type="text" id="nv-name" maxlength="40"></label>
+                  <label class="field">Plan <select id="nv-plan">${freePlans
+                    .map((x) => `<option value="${esc(x.id)}">${esc(x.planName)}: ${fmtMem(x.ramMb)}, ${x.cpus} CPU, ${x.diskGb} GB disk</option>`)
+                    .join('')}</select></label>
+                </div>
+                <div class="hidden"><select id="nv-mem"><option value="0"></option></select><input type="number" id="nv-port"></div>`
+              : `<div class="grid3">
             <label class="field">Name <input type="text" id="nv-name"></label>
             <label class="field">Memory
               <select id="nv-mem">${memOptions.map((m) => `<option value="${m}" ${m === defaultMem ? 'selected' : ''}>${fmtMem(m)}</option>`).join('')}</select>
             </label>
             <label class="field">Port <input type="number" id="nv-port" min="1" max="65535"></label>
-          </div>
+          </div>`
+          }
           <label class="check" id="nv-online-wrap"><input type="checkbox" id="nv-online" checked>
-            <span>Online mode <span class="muted">(uncheck to join with any username, useful for testing with multiple clients)</span></span></label>
+            <span>Online mode <span class="muted">(only real Minecraft accounts can join; recommended)</span></span></label>
           <label class="check" id="nv-eula-wrap"><input type="checkbox" id="nv-eula">
             <span>I agree to the <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noopener">Minecraft EULA</a></span></label>
           <label class="check"><input type="checkbox" id="nv-start" checked> Start the server when it's installed</label>
@@ -1374,6 +1395,7 @@ async function openNewServer() {
   nameInput.addEventListener('input', () => (nameTouched = true));
 
   const setPort = async () => {
+    if (forCustomer) return;
     try {
       $('#nv-port').value = (await api('GET', `/api/next-port?kind=${type.kind}`)).port;
     } catch {
@@ -1395,6 +1417,7 @@ async function openNewServer() {
       return;
     }
     await fillVersionSelect(verSel, type.id, $('#nv-pre').checked);
+    await preferStable(verSel, type);
     autoName();
     await fillBuildSelect(buildSel, type, verSel.value, 'latest');
   };
@@ -1434,6 +1457,7 @@ async function openNewServer() {
       customJar: $('#nv-custom').value.trim(),
       startAfterInstall: $('#nv-start').checked,
       space: currentSpace() || undefined,
+      ...(forCustomer ? { subscriptionId: $('#nv-plan').value } : {}),
     };
     if (type.id === 'custom' && !body.customJar) return toast('Enter the path to your server jar', 'error');
     if (!body.version) return toast('Pick a version', 'error');
@@ -1566,11 +1590,12 @@ async function init() {
     showAuth();
     return;
   }
-  if (state.me.teamMode && state.me.user.role === 'pending') {
-    showPending();
+  const params = new URLSearchParams(location.search);
+  if (state.me.teamMode && params.has('reset')) {
+    showAuth('reset');
     return;
   }
-  state.space = localStorage.getItem('hh.space') === 'solo' ? 'solo' : 'team';
+  state.space = localStorage.getItem('hh.space') === 'all' ? 'all' : 'mine';
   renderSpaceSwitch();
   renderUserBox();
   $('#btn-new').addEventListener('click', openNewServer);
@@ -1588,6 +1613,14 @@ async function init() {
   }
   await refreshSystem();
   connectEvents();
+  // Back from Stripe Checkout, from a billing email, or right after signing up.
+  if (params.has('billing') || params.has('welcome')) history.replaceState(null, '', location.pathname);
+  if (params.get('billing') === 'success') {
+    toast('Thanks! Your plan is active. Now create your server.');
+    setTimeout(openNewServer, 600);
+  } else if (params.get('billing') === 'canceled') toast('Checkout canceled. No payment was taken.');
+  else if (params.has('billing')) openBilling();
+  else if (params.has('welcome')) setTimeout(openPlans, 400);
 }
 
 window.addEventListener('beforeunload', (e) => {

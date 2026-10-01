@@ -285,7 +285,7 @@ function launch(prep, { username, host, port, memoryMb = 2048 }) {
     user_properties: '{}',
     version_type: meta.type,
     natives_directory: prep.nativesDir,
-    launcher_name: 'HoneyHost',
+    launcher_name: 'TreeHost',
     launcher_version: '1.0',
     classpath: prep.classpath.join(CP_SEP),
     classpath_separator: CP_SEP,
