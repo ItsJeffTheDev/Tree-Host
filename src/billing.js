@@ -71,6 +71,22 @@ const STATUS = { active: 'active', trialing: 'active', past_due: 'past_due', unp
 /** The period end moved from the subscription to its items in newer Stripe API versions. */
 const periodEnd = (s) => (s.current_period_end || (s.items && s.items.data && s.items.data[0] && s.items.data[0].current_period_end) || 0) * 1000 || null;
 /** Same for an invoice's subscription. */
+// ----- free plans & promo codes -----
+const MONTH_MS = 30 * 86400000;
+/** Fields for a free subscription; months = 0 means it never runs out. */
+function freeFields(months) {
+  const m = Math.max(0, Math.round(Number(months) || 0));
+  const until = m ? Date.now() + m * MONTH_MS : null;
+  return { free: true, priceCents: 0, freeUntil: until, periodEnd: until };
+}
+const lengthText = (months) => (Number(months) > 0 ? ` for ${months} month${Number(months) === 1 ? '' : 's'}` : ' (no end date)');
+const cleanCode = (c) => String(c || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32);
+function randomCode() {
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I mix-ups
+  const part = () => Array.from(crypto.randomBytes(4), (b) => abc[b % abc.length]).join('');
+  return `TREE-${part()}-${part()}`;
+}
+
 const invoiceSub = (inv) => inv.subscription || (inv.parent && inv.parent.subscription_details && inv.parent.subscription_details.subscription) || null;
 
 class Billing {
@@ -78,7 +94,11 @@ class Billing {
     this.plans = DEFAULT_PLANS;
     this.subs = [];
     this.settings = { capacityMb: null };
-    this.hooks = { notify: () => {}, email: async () => {}, suspend: () => {}, unsuspend: () => {}, deleteServer: async () => {} };
+    this.promos = [];
+    this.hooks = {
+      notify: () => {}, email: async () => {}, suspend: () => {}, unsuspend: () => {}, deleteServer: async () => {},
+      userById: () => null,
+    };
   }
 
   get mode() {
@@ -91,6 +111,11 @@ class Billing {
     if (plans.length) this.plans = plans;
     this.settings = { ...this.settings, ...(d.settings || {}) };
     this.subs = Object.values((await store.load('subscriptions')) || {});
+    this.promos = Object.values((await store.load('promos')) || {});
+  }
+
+  savePromos() {
+    return store.save('promos', this.promos);
   }
 
   savePlans() {
@@ -198,6 +223,8 @@ class Billing {
       free: !!s.free,
       serverId: s.serverId || null,
       renewsAt: s.periodEnd || null,
+      freeUntil: s.freeUntil || null,
+      promoCode: s.promoCode || null,
       cancelAtPeriodEnd: !!s.cancelAtPeriodEnd,
       pastDueSince: s.pastDueSince || null,
       canceledAt: s.canceledAt || null,
@@ -283,14 +310,94 @@ class Billing {
     if (was === 'past_due' && s.serverId) this.hooks.unsuspend(s);
   }
 
-  /** Admins can give a plan for free (staff, partners, giveaways). */
-  async grant(user, planId, by) {
+  /**
+   * Admins can give a plan for free (staff, partners, creators, giveaways).
+   * months: how long it lasts (0 or empty = forever). When it runs out, the plan ends like a canceled one.
+   */
+  async grant(user, planId, by, { months = 0, note = '' } = {}) {
     const plan = this.plan(planId);
     if (!plan) throw httpError(404, 'Plan not found');
-    const s = this.newSub(user, plan, { free: true, priceCents: 0, grantedBy: by });
+    const s = this.newSub(user, plan, { ...freeFields(months), grantedBy: by, note: String(note || '').slice(0, 100) || undefined });
     s.status = 'active';
     await this.save();
-    this.hooks.notify('billing', s, `was given a free ${plan.name} plan by ${by}`);
+    this.hooks.notify('billing', s, `was given a free ${plan.name} plan by ${by}${lengthText(months)}`);
+    return s;
+  }
+
+  // ----- promo codes (free plans for creators, partners, giveaways) -----
+
+  promo(code) {
+    return this.promos.find((p) => p.code === cleanCode(code)) || null;
+  }
+
+  publicPromo(p) {
+    const plan = this.plan(p.planId);
+    return {
+      code: p.code,
+      planId: p.planId,
+      planName: plan ? plan.name : p.planId,
+      months: p.months,
+      maxUses: p.maxUses,
+      uses: p.uses.length,
+      redeemedBy: p.uses.map((u) => ({ userId: u.userId, at: u.at })),
+      note: p.note || '',
+      expiresAt: p.expiresAt || null,
+      active: p.active && !(p.expiresAt && Date.now() > p.expiresAt) && p.uses.length < p.maxUses,
+      disabled: !p.active,
+      createdBy: p.createdBy,
+      createdAt: p.createdAt,
+    };
+  }
+
+  /** Creates a code. Leave `code` empty to get a random one like TREE-7K2P-QX9M. */
+  async createPromo({ code, planId, months, maxUses, note, expiresAt }, by) {
+    const plan = this.plan(planId);
+    if (!plan) throw httpError(400, 'Pick a plan for this code.');
+    let c = cleanCode(code);
+    if (code && c.length < 4) throw httpError(400, 'Codes need at least 4 letters or numbers.');
+    if (!c) do c = randomCode(); while (this.promo(c));
+    if (this.promo(c)) throw httpError(400, `The code ${c} already exists.`);
+    const p = {
+      code: c,
+      planId: plan.id,
+      months: Math.max(0, Math.min(120, Math.round(Number(months) || 0))),
+      maxUses: Math.max(1, Math.min(10000, Math.round(Number(maxUses) || 1))),
+      note: String(note || '').slice(0, 100),
+      expiresAt: expiresAt ? Number(new Date(expiresAt)) || null : null,
+      active: true,
+      uses: [],
+      createdBy: by,
+      createdAt: Date.now(),
+    };
+    this.promos.push(p);
+    await this.savePromos();
+    return this.publicPromo(p);
+  }
+
+  async disablePromo(code) {
+    const p = this.promo(code);
+    if (!p) throw httpError(404, 'Code not found');
+    p.active = false;
+    await this.savePromos();
+    return this.publicPromo(p);
+  }
+
+  /** A customer enters a code in Billing and gets the free plan right away. */
+  async redeem(user, code) {
+    const p = this.promo(code);
+    const nope = "That code doesn't work. Check the spelling, or ask whoever gave it to you.";
+    if (!p || !p.active) throw httpError(404, nope);
+    if (p.expiresAt && Date.now() > p.expiresAt) throw httpError(410, 'That code has expired.');
+    if (p.uses.length >= p.maxUses) throw httpError(410, 'That code has already been used.');
+    if (p.uses.some((u) => u.userId === user.id)) throw httpError(400, 'You already used this code.');
+    const plan = this.plan(p.planId);
+    if (!plan) throw httpError(410, 'The plan for this code no longer exists. Please contact support.');
+    if (this.freeMb() < plan.ramMb + OVERHEAD_MB) throw httpError(409, `${plan.name} is full right now. Please try again soon or contact support.`, 'SOLD_OUT');
+    const s = this.newSub(user, plan, { ...freeFields(p.months), promoCode: p.code, note: p.note || undefined });
+    s.status = 'active';
+    p.uses.push({ userId: user.id, subId: s.id, at: Date.now() });
+    await Promise.all([this.save(), this.savePromos()]);
+    this.hooks.notify('billing', s, `redeemed code ${p.code}: free ${plan.name}${lengthText(p.months)}`);
     return s;
   }
 
@@ -408,6 +515,22 @@ class Billing {
 
   /** Runs every few minutes: suspends servers whose grace period ran out and deletes long-canceled ones. */
   async tick() {
+    // Free plans with an end date (creator codes, time-limited gifts) end like a canceled plan.
+    for (const s of this.subs) {
+      if (s.free && s.freeUntil && s.status === 'active' && Date.now() > s.freeUntil) {
+        this.markCanceled(s);
+        s.endedReason = 'free_period_over';
+        await this.save();
+        this.hooks.notify('billing', s, `free ${s.planName} plan ended`);
+        const user = this.hooks.userById(s.userId);
+        if (user && user.email) {
+          await this.hooks.email(user, 'Your free Tree Host plan has ended', [
+            `Hi ${user.username}, your free ${s.planName} plan has ended, so its server was stopped.`,
+            `To keep your server and worlds, buy a plan in Billing within ${DELETE_AFTER_DAYS} days. After that the server is deleted.`,
+          ]).catch(() => {});
+        }
+      }
+    }
     for (const s of this.subs) {
       if (!s.serverId) continue;
       if (!this.usable(s)) this.hooks.suspend(s, s.status === 'canceled' ? 'canceled' : 'unpaid');

@@ -600,14 +600,36 @@ async function openBilling() {
                     x.cancelAtPeriodEnd ? '<div class="small muted">Ends at the end of this period</div>' : ''
                   }</td>
                   <td>${x.serverName ? esc(x.serverName) : x.usable ? '<button class="btn sm primary" data-create>Create server</button>' : '<span class="muted">-</span>'}</td>
-                  <td class="small">${x.renewsAt && x.status !== 'canceled' && !x.free ? new Date(x.renewsAt).toLocaleDateString() : '<span class="muted">-</span>'}</td>
+                  <td class="small">${
+                    x.status === 'canceled'
+                      ? '<span class="muted">-</span>'
+                      : x.free
+                        ? x.freeUntil ? `Free until ${new Date(x.freeUntil).toLocaleDateString()}` : 'Free'
+                        : x.renewsAt ? new Date(x.renewsAt).toLocaleDateString() : '<span class="muted">-</span>'
+                  }</td>
                 </tr>`;
               })
               .join('')}</tbody></table>`
           : '<p class="muted" style="margin:0">No plans yet. Buy one to create your first server.</p>'
       }
       ${b.hasPortal ? '<p class="hint small" style="margin:8px 0 0">To cancel a plan or change your card, use <b>Payment method & invoices</b>.</p>' : ''}
-    </div>`;
+    </div>
+    <form class="card row" id="bill-code" style="margin-top:12px;align-items:center">
+      <span><b>Have a code?</b></span>
+      <input type="text" id="bill-code-in" placeholder="e.g. TREE-7K2P-QX9M" autocomplete="off" style="max-width:240px;text-transform:uppercase">
+      <button class="btn sm primary">Redeem</button>
+    </form>`;
+  $('#bill-code', root).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const code = $('#bill-code-in', root).value.trim();
+    if (!code) return;
+    attempt(async () => {
+      const s = await api('POST', '/api/billing/redeem', { code });
+      toast(`Code redeemed: free ${s.planName}${s.freeUntil ? ` until ${new Date(s.freeUntil).toLocaleDateString()}` : ''}`);
+      close();
+      openBilling();
+    });
+  });
   $('#bill-buy', root).addEventListener('click', () => {
     close();
     openPlans();
@@ -635,6 +657,7 @@ async function openTeam() {
       <button class="tab active" data-atab="people">People</button>
       <button class="tab" data-atab="billing">Billing</button>
       <button class="tab" data-atab="plans">Plans</button>
+      <button class="tab" data-atab="promos">Promo codes</button>
       <button class="tab" data-atab="settings">Settings</button>
     </div>
     <div id="admin-body" style="margin-top:14px"></div>
@@ -644,7 +667,7 @@ async function openTeam() {
     $$('[data-atab]', root).forEach((t) => t.classList.toggle('active', t.dataset.atab === tab));
     const body = $('#admin-body', root);
     body.innerHTML = '<div class="muted">Loading...</div>';
-    ({ people: adminPeople, billing: adminBilling, plans: adminPlans, settings: adminSettings })[tab](body).catch((e) => (body.textContent = e.message));
+    ({ people: adminPeople, billing: adminBilling, plans: adminPlans, promos: adminPromos, settings: adminSettings })[tab](body).catch((e) => (body.textContent = e.message));
   };
   $$('[data-atab]', root).forEach((t) => t.addEventListener('click', () => show(t.dataset.atab)));
   show('people');
@@ -706,9 +729,11 @@ async function adminPeople(body) {
         const names = plans.plans.map((p) => p.id).join(', ');
         const id = prompt(`Which plan? (${names})`, plans.plans[0]?.id || '');
         if (!id) return;
+        const months = prompt('For how many months? (0 = no end date)', '0');
+        if (months === null) return;
         attempt(async () => {
-          await api('POST', '/api/admin/subscriptions', { userId: b.dataset.grant, planId: id.trim() });
-          toast('Free plan given');
+          await api('POST', '/api/admin/subscriptions', { userId: b.dataset.grant, planId: id.trim(), months: Number(months) || 0 });
+          toast(Number(months) > 0 ? `Free plan given for ${Number(months)} month(s)` : 'Free plan given');
           reload();
         });
       }),
@@ -828,6 +853,66 @@ async function adminBilling(body) {
         await api('DELETE', `/api/admin/subscriptions/${b.dataset.cancel}`);
         toast('Canceled');
         adminBilling(body);
+      });
+    }),
+  );
+}
+
+// Promo codes: free plans for creators, partners and giveaways. Customers redeem them in Billing.
+async function adminPromos(body) {
+  const [codes, plans] = await Promise.all([api('GET', '/api/admin/promos'), api('GET', '/api/admin/billing')]);
+  const length = (m) => (m ? `${m} month${m === 1 ? '' : 's'}` : 'no end date');
+  body.innerHTML = `
+    <form class="card stack" id="promo-new">
+      <h3>New code</h3>
+      <p class="hint" style="margin:0">Give it to a creator, partner or giveaway winner. They redeem it under <b>Billing → Have a code?</b> and get the plan for free.</p>
+      <div class="row" style="flex-wrap:wrap;align-items:flex-end">
+        <label class="small">Code<br><input type="text" name="code" placeholder="blank = random" style="max-width:180px;text-transform:uppercase"></label>
+        <label class="small">Plan<br><select name="planId" style="width:auto">${plans.plans.filter((p) => p.active).map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label>
+        <label class="small">Months free<br><input type="number" name="months" value="3" min="0" max="120" style="width:80px" title="0 = no end date"></label>
+        <label class="small">Uses<br><input type="number" name="maxUses" value="1" min="1" style="width:70px"></label>
+        <label class="small">Redeem by (optional)<br><input type="date" name="expiresAt" style="width:auto"></label>
+        <label class="small" style="flex:1;min-width:160px">Note<br><input type="text" name="note" placeholder="e.g. Creator: Steve (YouTube)"></label>
+        <button class="btn primary">Create code</button>
+      </div>
+    </form>
+    <div class="card" style="margin-top:12px">
+      <h3 style="margin-bottom:8px">Codes</h3>
+      ${
+        codes.length
+          ? `<table><thead><tr><th>Code</th><th>Gives</th><th>Used</th><th>Note</th><th></th></tr></thead><tbody>${codes
+              .map(
+                (c) => `<tr>
+                  <td><code class="copy" data-copy="${esc(c.code)}" title="Click to copy">${esc(c.code)}</code>
+                    ${c.active ? '<span class="badge green">active</span>' : `<span class="badge">${c.disabled ? 'disabled' : 'used up / expired'}</span>`}</td>
+                  <td class="small">${esc(c.planName)} · ${length(c.months)}${c.expiresAt ? `<div class="muted">redeem by ${new Date(c.expiresAt).toLocaleDateString()}</div>` : ''}</td>
+                  <td class="small">${c.uses} / ${c.maxUses}${c.redeemedBy.length ? `<div class="muted">${c.redeemedBy.map((u) => esc(u.username)).join(', ')}</div>` : ''}</td>
+                  <td class="small">${esc(c.note) || '<span class="muted">-</span>'}</td>
+                  <td class="actions-cell">${c.disabled ? '' : `<button class="btn sm danger" data-pdis="${esc(c.code)}">Disable</button>`}</td>
+                </tr>`,
+              )
+              .join('')}</tbody></table>`
+          : '<p class="muted" style="margin:0">No codes yet.</p>'
+      }
+      <p class="hint small" style="margin:8px 0 0">When a free plan with an end date runs out, its server is stopped and the customer is emailed. They can buy a plan to keep it.</p>
+    </div>`;
+  $('#promo-new', body).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    attempt(async () => {
+      const c = await api('POST', '/api/admin/promos', f);
+      await navigator.clipboard.writeText(c.code).catch(() => {});
+      toast(`Code ${c.code} created and copied`);
+      adminPromos(body);
+    });
+  });
+  $$('[data-copy]', body).forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
+  $$('[data-pdis]', body).forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!confirm(`Disable ${b.dataset.pdis}? Nobody can redeem it anymore (plans already given keep working).`)) return;
+      attempt(async () => {
+        await api('DELETE', `/api/admin/promos/${encodeURIComponent(b.dataset.pdis)}`);
+        adminPromos(body);
       });
     }),
   );

@@ -25,6 +25,7 @@ const ROLES = [
   },
   // Every bot in the server gets this (setup assigns it), so bots are grouped together in the member list.
   { key: 'bots', name: 'Bots', color: 0x5865f2, hoist: true, permissions: [], bots: true },
+  { key: 'creator', name: '🎥 Creator', color: 0xff0033, hoist: true, permissions: [] },
   { key: 'supporter', name: 'Supporter 💚', color: 0x7beaa6, hoist: true, permissions: [] },
   { key: 'customer', name: 'Customer', color: 0x2ecc71, hoist: true, permissions: [] },
   { key: 'member', name: 'Member', color: 0x93a398, hoist: false, permissions: [] },

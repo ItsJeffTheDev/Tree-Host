@@ -34,6 +34,9 @@ const definitions = [
   cmd('supporter', 'Give someone the Supporter 💚 role (donors)', ADMIN)
     .addUserOption((o) => o.setName('user').setDescription('Who donated').setRequired(true))
     .addBooleanOption((o) => o.setName('thank').setDescription('Post a public thank-you in #general (default: yes)')),
+  cmd('creator', 'Give someone the 🎥 Creator role (YouTubers promoting Tree Host)', ADMIN)
+    .addUserOption((o) => o.setName('user').setDescription('The creator').setRequired(true))
+    .addBooleanOption((o) => o.setName('welcome').setDescription('Post a welcome in #general (default: yes)')),
   cmd('say', 'Make the bot post a message', ADMIN)
     .addStringOption((o) => o.setName('message').setDescription('Text (use \\n for a new line)').setRequired(true).setMaxLength(2000))
     .addChannelOption((o) => o.setName('channel').setDescription('Where (default: here)')
@@ -69,7 +72,7 @@ async function handle(i, ctx) {
       const admin = i.memberPermissions.has(ADMIN);
       const out = ['**Tree Host bot**', `Verify in <#${channel('welcome')}> · pings in <#${channel('roles')}> · help in <#${channel('getHelp')}>`];
       if (staff) out.push('', '**Staff**', '`/ticket add|remove|close` · `/customer` · `/purge` · `/slowmode`');
-      if (admin) out.push('', '**Admin**', '`/announce` · `/status` · `/goal` · `/supporter` · `/say` · `/youtube-check` · `/youtube-post` · `/setup`');
+      if (admin) out.push('', '**Admin**', '`/announce` · `/status` · `/goal` · `/supporter` · `/creator` · `/say` · `/youtube-check` · `/youtube-post` · `/setup`');
       return i.reply(ephemeral(out.join('\n')));
     }
 
@@ -138,6 +141,16 @@ async function handle(i, ctx) {
         if (general) await general.send({ content: `💚 Huge thanks to ${member} for supporting Tree Host!`, allowedMentions: { users: [member.id] } });
       }
       return i.reply(ephemeral(`${member} is now a <@&${role('supporter')}>.`));
+    }
+
+    case 'creator': {
+      const member = await i.guild.members.fetch(i.options.getUser('user').id);
+      await member.roles.add(role('creator'), `Creator role from ${i.user.tag}`);
+      if (i.options.getBoolean('welcome') ?? true) {
+        const general = await i.guild.channels.fetch(channel('general')).catch(() => null);
+        if (general) await general.send({ content: `🎥 Welcome ${member}, who's helping spread the word about Tree Host!`, allowedMentions: { users: [member.id] } });
+      }
+      return i.reply(ephemeral(`${member} is now a <@&${role('creator')}>. Their free server: create a promo code in the Tree Host admin panel (Admin → Promo codes).`));
     }
 
     case 'customer': {

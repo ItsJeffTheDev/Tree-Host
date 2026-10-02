@@ -99,6 +99,7 @@ billing.hooks.deleteServer = async (id) => {
   activity.log('billing', 'Tree Host', `deleted the server "${inst.cfg.name}" of ${manager.ownerName(inst.cfg.owner) || 'a customer'} (plan ended)`);
   await manager.remove(id);
 };
+billing.hooks.userById = (id) => auth.userById(id);
 billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || 'A customer', text);
 billing.hooks.email = (user, subject, paragraphs) =>
   mail.send(user.email, subject, paragraphs, PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null);
@@ -612,6 +613,23 @@ route('POST', '/api/billing/checkout', async (req) => {
   return billing.checkout(req.user, (await readJson(req)).planId, PUBLIC_URL || publicOrigin(req));
 });
 route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || publicOrigin(req)));
+// Promo codes: customers redeem them in Billing (free plans for creators, partners, giveaways).
+route('POST', '/api/billing/redeem', async (req) => {
+  if (!TEAM) throw httpError(400, 'Codes only exist on a hosted Tree Host.');
+  return billing.publicSub(await billing.redeem(req.user, (await readJson(req)).code));
+});
+route(
+  'GET',
+  '/api/admin/promos',
+  () => billing.promos.map((p) => {
+    const x = billing.publicPromo(p);
+    x.redeemedBy = x.redeemedBy.map((u) => ({ ...u, username: (auth.userById(u.userId) || {}).username || '(deleted)' }));
+    return x;
+  }).reverse(),
+  { admin: true },
+);
+route('POST', '/api/admin/promos', async (req) => billing.createPromo(await readJson(req), req.user.username), { admin: true });
+route('DELETE', '/api/admin/promos/:code', async (req, res, p) => billing.disablePromo(p.code), { admin: true });
 route(
   'POST',
   '/api/billing/webhook',
@@ -647,10 +665,10 @@ route(
   'POST',
   '/api/admin/subscriptions',
   async (req) => {
-    const { userId, planId } = await readJson(req);
+    const { userId, planId, months, note } = await readJson(req);
     const u = auth.userById(userId);
     if (!u) throw httpError(404, 'User not found');
-    return billing.publicSub(await billing.grant(u, planId, req.user.username));
+    return billing.publicSub(await billing.grant(u, planId, req.user.username, { months, note }));
   },
   { admin: true },
 );
