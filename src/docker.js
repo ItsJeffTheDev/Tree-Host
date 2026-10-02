@@ -23,7 +23,7 @@ let availability = null;
 async function available(fresh = false) {
   if (fresh && availability && !(await availability)) availability = null;
   if (!availability) {
-    availability = run('docker', ['version', '--format', '{{.Server.Version}}'])
+    availability = run('docker', ['version', '--format', '{{.Server.Version}}'], { timeout: 15000 })
       .then((r) => !!r.stdout.trim())
       .catch(() => false);
   }
@@ -46,9 +46,9 @@ async function ensureImage(image, log) {
 
 /** A private network where containers can reach the internet but not each other. */
 async function ensureNetwork() {
-  const has = await run('docker', ['network', 'inspect', NETWORK]).then(() => true, () => false);
+  const has = await run('docker', ['network', 'inspect', NETWORK], { timeout: 15000 }).then(() => true, () => false);
   if (has) return;
-  await run('docker', ['network', 'create', '--driver', 'bridge', '-o', 'com.docker.network.bridge.enable_icc=false', NETWORK]).catch(() => {});
+  await run('docker', ['network', 'create', '--driver', 'bridge', '-o', 'com.docker.network.bridge.enable_icc=false', NETWORK], { timeout: 15000 }).catch(() => {});
 }
 
 /**
@@ -94,17 +94,17 @@ function kill(id) {
 
 /** Stops containers left over from a previous run (e.g. after a crash of Tree Host itself). */
 async function removeLeftovers(log) {
-  const { stdout } = await run('docker', ['ps', '-aq', '--filter', 'label=treehost=1']).catch(() => ({ stdout: '' }));
+  const { stdout } = await run('docker', ['ps', '-aq', '--filter', 'label=treehost=1'], { timeout: 15000 }).catch(() => ({ stdout: '' }));
   const ids = stdout.split(/\s+/).filter(Boolean);
   if (!ids.length) return;
   log(`Stopping ${ids.length} server container(s) left over from the last run...`);
-  await run('docker', ['stop', '-t', '30', ...ids]).catch(() => {});
-  await run('docker', ['rm', '-f', ...ids]).catch(() => {});
+  await run('docker', ['stop', '-t', '30', ...ids], { timeout: 60000 }).catch(() => {});
+  await run('docker', ['rm', '-f', ...ids], { timeout: 30000 }).catch(() => {});
 }
 
 /** Memory in MB used by each running server container, keyed by server id. */
 async function memoryByServer() {
-  const { stdout } = await run('docker', ['stats', '--no-stream', '--format', '{{.Name}}|{{.MemUsage}}|{{.CPUPerc}}']);
+  const { stdout } = await run('docker', ['stats', '--no-stream', '--format', '{{.Name}}|{{.MemUsage}}|{{.CPUPerc}}'], { timeout: 20000 });
   const out = new Map();
   out.cpu = new Map(); // server id -> CPU % (100 = one full core)
   const units = { B: 1 / 1048576, KiB: 1 / 1024, KB: 1 / 1024, MiB: 1, MB: 1, GiB: 1024, GB: 1024 };

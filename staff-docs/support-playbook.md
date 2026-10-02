@@ -120,7 +120,7 @@ Always put the reason in the note: it goes in the audit log.
 
 ## 5. Rule breakers: taking action
 
-The rules are in the [Terms of Service](/terms) (section 3). Every warning, suspension, ban and deletion goes through
+The rules are in the [Terms of Service](/terms) (section 4). Every warning, suspension, ban and deletion goes through
 **🛡️ Take action**, so the customer always gets a reason and we always have a numbered report.
 
 **Where:** Staff Console → People → **More → Take action** (accounts), Staff Console → Servers → **🛡️ Action**, or
@@ -170,6 +170,47 @@ your name.
 
 ---
 
+## 5b. Copyright notices, child safety and police
+
+These are the only cases where speed and exact steps matter more than being friendly. Follow them word for word.
+
+### Copyright (DMCA) notices
+
+Notices arrive at dmca@ (the [Copyright page](/dmca) tells people what to send).
+
+1. **Check it's complete:** signature, the work, where it is on Tree Host, contact details, and both statements (good faith,
+   and accuracy under penalty of perjury). If something's missing, reply asking for it and do nothing else yet.
+2. **Find the server** from the address, listing or file name.
+3. **Take action → Suspend** the server (reason: *Copyright notice*, until lifted), or if only one file is affected, ask an
+   Admin to remove it. Paste the notice into the evidence. In the customer message, say what was reported and that they can
+   send a counter-notice to dmca@ (link the Copyright page).
+4. **Reply to the sender** that the material was disabled, with the action number.
+5. **Counter-notice?** If complete, forward it to the original sender. Wait 10 business days. If they don't tell us they've
+   gone to court, lift the action between 10 and 14 business days after the counter-notice arrived.
+6. **Repeat infringers:** 3 valid, uncountered notices on one account within 12 months → pass to an Admin to **ban** the
+   account (reason: *Repeat copyright infringement*). The Terms promise this, so we have to do it.
+
+### Child sexual abuse material (CSAM): never look, never share
+
+If a report or anything you see suggests CSAM on a server:
+
+1. **Don't open, download, copy, screenshot or forward the files**, not even to staff. Viewing or sharing it is a crime,
+   even "to check".
+2. **Take action → Suspend** the server and the account right away (reason: *Illegal content*, appeals off). Don't delete
+   anything: the law requires us to **preserve** it.
+3. **Tell the Owner immediately** (phone or DM, not the public staff channel), with the action number only.
+4. The Owner reports it to **NCMEC's CyberTipline** (report.cybertip.org) as U.S. law requires for providers, preserves the
+   data for at least one year, and does not tell the customer why beyond "illegal content".
+
+### Police and legal requests (subpoenas, court orders, emergency requests)
+
+1. **Don't reply, confirm or deny anything**, and don't tell the customer. Forward the request to the Owner.
+2. The Owner checks it's genuine (call back on the agency's published number, not one in the email), and that it's the right
+   kind of legal process for what's asked. Emergency requests (risk of death or serious injury) can be answered faster.
+3. Give only what the request covers, keep a copy of the request and what was given, and log it as a staff note.
+
+---
+
 ## 6. When to escalate
 
 | Problem | Pass it to |
@@ -177,7 +218,9 @@ your name.
 | Refunds, disputes, billing errors | Admin (billing@) |
 | Many servers down at once, the site is slow or down | Developer / Owner, right away (post in the staff channel) |
 | Security worries: hacked account, leaked data, someone probing the site | Owner, right away |
-| Legal requests, takedowns, police | Owner only. Don't reply yourself. |
+| Legal requests, police | Owner only. Don't reply yourself (see 5b). |
+| Copyright notices | Follow 5b; repeat infringers to an Admin |
+| Anything that might be CSAM | Owner, immediately. Don't open the files (see 5b). |
 | Creators and partners | promotion@ |
 
 ---

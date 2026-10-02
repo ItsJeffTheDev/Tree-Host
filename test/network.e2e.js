@@ -29,9 +29,9 @@ async function waitRunning(id) {
   return false;
 }
 (async () => {
-  await call('POST', '/api/auth/signup', { username: 'netowner', email: 'net@example.com', password: 'TreeHost-test-123', acceptTerms: true });
+  await call('POST', '/api/auth/signup', { username: 'netowner', email: 'net@example.com', password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
   await call('PATCH', '/api/auth/me', { mcName: 'NetOwner' });
-  await call('POST', '/api/billing/checkout', { planId: 'sapling' });
+  await call('POST', '/api/billing/checkout', { planId: 'sapling', consent: { renewal: true, adult: true, withdrawal: true } });
   const sub = (await call('GET', '/api/billing')).data.subscriptions[0];
   const lobby = (await call('POST', '/api/servers', { name: 'Lobby', type: 'paper', version: '1.21.1', eula: true, subscriptionId: sub.id })).data;
   const proxy = (await call('POST', '/api/servers', { name: 'My Network', type: 'velocity', version: (await call('GET', '/api/types/velocity/versions')).data[0].id || (await call('GET', '/api/types/velocity/versions')).data[0], eula: true, subscriptionId: sub.id })).data;

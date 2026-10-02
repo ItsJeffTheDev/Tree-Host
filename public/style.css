@@ -334,6 +334,9 @@ textarea { resize: vertical; }
 .plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 10px 0; }
 .plan-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
 .plan-card:hover { border-color: var(--accent-dim); }
+.checkout-summary { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.checkout-price { font-size: 26px; font-weight: 800; }
+.checkout-price span { font-size: 14px; font-weight: 500; color: var(--muted); }
 .plan-card.sold-out { opacity: .6; }
 .plan-name { font-weight: 700; font-size: 16px; color: var(--accent); }
 .plan-price { font-size: 26px; font-weight: 800; }

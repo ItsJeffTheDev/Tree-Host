@@ -17,10 +17,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = async (id) => (await cust('GET', `/api/servers/${id}/log`)).data.lines.map((l) => l.t);
 const check = (label, ok) => console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}`);
 (async () => {
-  await owner('POST', '/api/auth/signup', { username: 'boss', email: 'boss@example.com', password: 'TreeHost-test-123', acceptTerms: true });
+  await owner('POST', '/api/auth/signup', { username: 'boss', email: 'boss@example.com', password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
   await owner('PATCH', '/api/auth/me', { mcName: 'TreeHostJeb' });
-  await cust('POST', '/api/auth/signup', { username: 'player1', email: 'player1@example.com', password: 'TreeHost-test-123', acceptTerms: true });
-  await cust('POST', '/api/billing/checkout', { planId: 'sapling' });
+  await cust('POST', '/api/auth/signup', { username: 'player1', email: 'player1@example.com', password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
+  await cust('POST', '/api/billing/checkout', { planId: 'sapling', consent: { renewal: true, adult: true, withdrawal: true } });
   const sub = (await cust('GET', '/api/billing')).data.subscriptions[0];
   const s = (await cust('POST', '/api/servers', { name: 'Paper Test', type: 'paper', version: '1.21.1', eula: true, subscriptionId: sub.id })).data;
   const jar = path.join(DATA, 'servers', s.id, 'plugins', 'TreeHostStaff.jar');

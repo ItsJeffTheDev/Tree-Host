@@ -44,6 +44,7 @@ const EMAILS = {
   support: env('SUPPORT_EMAIL', 'support@treehost.online'),
   billing: env('BILLING_EMAIL', 'billing@treehost.online'),
   promo: env('PROMO_EMAIL', 'promotion@treehost.online'),
+  dmca: env('DMCA_EMAIL', 'dmca@treehost.online'),
 };
 // In personal mode everyone who can reach the dashboard is the PC's owner.
 const LOCAL_ADMIN = { id: 'local', username: 'you', role: 'owner', local: true };
@@ -100,8 +101,41 @@ manager.startBlock = (inst) => {
   if (sub.diskGb && inst.diskUsedMb && inst.diskUsedMb > sub.diskGb * 1024 * 1.1) {
     return `the server uses ${(inst.diskUsedMb / 1024).toFixed(1)} GB of disk, more than the ${sub.diskGb} GB in its plan. Delete old worlds or files first.`;
   }
-  return null;
+  return nodeFullFor(inst, sub);
 };
+
+// ----- running capacity -----
+// Each monthly plan reserves memory for one running server (bundles like Lifetime: all their slots), so those always
+// start. Extra servers on a monthly plan borrow memory nobody has bought, and can't start when the machine is full.
+const isUp = (i) => !!i.proc || ['starting', 'running', 'stopping'].includes(i.status);
+const memOf = (i) => ((manager.planInfo(i) || {}).ramMb || 0) + manager.overheadMb;
+/** Memory used by running servers beyond what their plans reserve. */
+function borrowedMb(except) {
+  const bySub = new Map();
+  for (const i of manager.instances.values()) {
+    if (i === except || !i.isCustomer || !i.cfg.subscriptionId || !isUp(i)) continue;
+    const list = bySub.get(i.cfg.subscriptionId) || [];
+    list.push(i);
+    bySub.set(i.cfg.subscriptionId, list);
+  }
+  let n = 0;
+  for (const [subId, list] of bySub) {
+    const sub = billing.sub(subId);
+    if (sub && sub.slots) continue;
+    for (const i of list.slice(1)) n += memOf(i);
+  }
+  return n;
+}
+billing.hooks.borrowedMb = () => borrowedMb(null);
+function nodeFullFor(inst, sub) {
+  if (sub.slots) return null;
+  const others = serversOnSub(sub).filter((i) => i !== inst && isUp(i));
+  if (!others.length) return null;
+  const free = billing.capacityMb() - billing.soldMb() - borrowedMb(inst);
+  if (memOf(inst) <= free) return null;
+  const names = others.map((i) => i.cfg.name).join(', ');
+  return `Tree Host's machine is full right now, so this extra server can't run at the same time as ${names}. Stop ${others.length === 1 ? 'that server' : 'one of them'} first (your plan always has room for one running server), or try again later.`;
+}
 // A plan can run any number of servers (bundles like Lifetime: up to their slots); each server points at its plan.
 const serversOnSub = (sub) => [...manager.instances.values()].filter((i) => i.cfg.subscriptionId === sub.id);
 billing.hooks.serversOf = (sub) => serversOnSub(sub).map((i) => ({ id: i.cfg.id, name: i.cfg.name, kind: i.provider.kind }));
@@ -195,6 +229,26 @@ const EMAIL = {
     { text: 'Open Billing', url: `${base}/dashboard?billing` },
     { heading: 'Your plan has ended', replyTo: EMAILS.billing },
   ],
+  // Sent the moment a cancellation goes through (auto-renewal laws ask for a confirmation).
+  canceled: (user, sub, base) => {
+    const later = sub.status !== 'canceled' && sub.periodEnd && sub.periodEnd > Date.now();
+    return [
+      `Cancellation confirmed: ${sub.planName}`,
+      [
+        `Hi **${user.username}**, your ${sub.planName} plan is canceled. **You will not be charged again** for it.`,
+        later
+          ? `It stays active until **${niceDate(sub.periodEnd)}**, the end of the month you paid for. After that its servers stop, and your worlds and files are kept for 14 days.`
+          : 'Its servers were stopped. Your worlds and files are kept for **14 days**: buy a plan in Billing before then to keep them.',
+      ],
+      { text: 'Open Billing', url: `${base}/dashboard?billing` },
+      {
+        heading: 'Cancellation confirmed',
+        details: [['Plan', sub.planName], ['Canceled on', niceDate(Date.now())], ...(later ? [['Active until', niceDate(sub.periodEnd)]] : [])],
+        after: ['Changed your mind? You can buy a plan again any time in **Billing**.'],
+        replyTo: EMAILS.billing,
+      },
+    ];
+  },
 };
 
 const sendEmail = (to, [subject, paragraphs, button, opts]) => mail.send(to, subject, paragraphs, button, opts);
@@ -310,6 +364,21 @@ function clientIp(req) {
     if (fwd) return fwd;
   }
   return req.socket.remoteAddress || 'unknown';
+}
+
+// Sanctions (OFAC): no sign-ups or purchases from comprehensively sanctioned countries. The country comes from Cloudflare's
+// CF-IPCountry header, so this works once the website is behind Cloudflare (TREEHOST_TRUST_CLOUDFLARE=1).
+// TREEHOST_CHECKOUT_BLOCKED_COUNTRIES can also hold back checkout elsewhere (e.g. EU/UK until VAT registration).
+const countryList = (v) => new Set(String(v || '').toUpperCase().split(',').map((c) => c.trim()).filter(Boolean));
+const BLOCKED_COUNTRIES = countryList(env('BLOCKED_COUNTRIES', 'CU,IR,KP,SY'));
+const CHECKOUT_BLOCKED_COUNTRIES = countryList(env('CHECKOUT_BLOCKED_COUNTRIES', ''));
+const countryOf = (req) => (TRUST_CLOUDFLARE && fromThisPc(req) ? String(req.headers['cf-ipcountry'] || '').toUpperCase() : '');
+function regionCheck(req, checkout = false) {
+  const c = countryOf(req);
+  if (c && BLOCKED_COUNTRIES.has(c)) throw httpError(451, 'Sorry, Tree Host is not available in your country or region.', 'REGION');
+  if (checkout && c && CHECKOUT_BLOCKED_COUNTRIES.has(c)) {
+    throw httpError(451, "Sorry, plans can't be bought from your country yet. Join our Discord to hear when they can.", 'REGION');
+  }
 }
 
 function lanUrls() {
@@ -596,7 +665,9 @@ route(
   '/api/auth/firebase',
   async (req, res) => {
     if (!TEAM) throw httpError(400, 'Accounts only exist on a hosted Tree Host.');
-    const r = await auth.firebaseLogin(await readJson(req), clientIp(req));
+    const body = await readJson(req);
+    if (body.username) regionCheck(req); // only when a new account is being made
+    const r = await auth.firebaseLogin(body, clientIp(req));
     if (!r.token) return r;
     if (r.created) {
       activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${r.user.role}`);
@@ -630,6 +701,7 @@ route(
   '/api/auth/accept-invite',
   async (req, res) => {
     passwordAuthOnly();
+    regionCheck(req);
     const body = await readJson(req);
     const token = await auth.acceptInvite(body, clientIp(req));
     activity.log('people', String(body.username || 'Someone'), 'joined the support staff with an invite link');
@@ -1273,6 +1345,10 @@ route(
     supportEmail: EMAILS.support,
     billingEmail: EMAILS.billing,
     promoEmail: EMAILS.promo,
+    dmcaEmail: EMAILS.dmca,
+    // The business's mailing address (the Terms and the DMCA agent need one) and the named copyright agent.
+    address: env('ADDRESS', ''),
+    dmcaAgent: env('DMCA_AGENT', ''),
     jurisdiction: env('JURISDICTION', ''),
     discord: env('DISCORD_INVITE', ''),
     location: env('LOCATION', ''),
@@ -1292,7 +1368,10 @@ route('GET', '/api/billing', (req) => ({
 route('POST', '/api/billing/checkout', async (req) => {
   if (!TEAM) throw httpError(400, 'Billing only exists on a hosted Tree Host.');
   if (req.user.role === 'customer' && !req.user.email) throw httpError(400, 'Add your email address in Account first.');
-  return billing.checkout(req.user, (await readJson(req)).planId, PUBLIC_URL || publicOrigin(req));
+  regionCheck(req, true);
+  const body = await readJson(req);
+  const consent = { ...(body.consent || {}), ip: clientIp(req), userAgent: req.headers['user-agent'] };
+  return billing.checkout(req.user, body.planId, PUBLIC_URL || publicOrigin(req), consent);
 });
 route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || publicOrigin(req)));
 // Promo codes: customers redeem them in Billing (free plans for creators, partners, giveaways).
@@ -1528,6 +1607,7 @@ const STAFF_DOCS = [
   { id: 'support-playbook', title: 'Support playbook', icon: 'lifebuoy', group: 'Support', perm: 'console.access' },
   { id: 'roles', title: 'Roles & permissions', icon: 'key', group: 'Support', perm: 'console.access' },
   { id: 'hosting-guide', title: 'Running Tree Host', icon: 'tools', group: 'Technical', perm: 'system.view' },
+  { id: 'legal', title: 'Legal: providers and DPA', icon: 'scroll', group: 'Business', perm: 'billing.view' },
 ];
 const staffDocsFor = (user) => STAFF_DOCS.filter((d) => can(user, d.perm)).map(({ perm, ...d }) => d);
 route('GET', '/api/staff/docs', (req) => ({ docs: staffDocsFor(req.user) }), { perm: 'console.access' });
@@ -2970,6 +3050,8 @@ const PAGES = {
   '/features': 'features.html',
   '/servers': 'servers.html',
   '/why': 'why.html',
+  '/dmca': 'dmca.html',
+  '/copyright': 'dmca.html',
   '/pricing': 'pricing.html',
   '/support': 'support.html',
   '/about': 'about.html',
@@ -2981,6 +3063,8 @@ async function serveStatic(req, res, pathname) {
   pathname = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname;
   // The homepage is the website; without hosting (local use) it is the dashboard.
   let rel = PAGES[pathname] || (pathname === '/' ? (HOSTED ? 'index.html' : 'dashboard.html') : decodeURIComponent(pathname.slice(1)));
+  // Clean URLs for every page: /why serves why.html even without a PAGES entry.
+  if (!path.extname(rel) && /^[a-z0-9-]+$/.test(rel) && (await require('./util').exists(path.join(PUBLIC, `${rel}.html`)))) rel += '.html';
   const file = path.resolve(PUBLIC, rel);
   if (!file.startsWith(PUBLIC + path.sep)) {
     res.writeHead(403).end();
@@ -3062,6 +3146,7 @@ function banner(lines) {
 }
 
 async function main() {
+  console.log('  Starting Tree Host...');
   if (TEAM) {
     await migrateTeamData();
     await auth.init();

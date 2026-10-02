@@ -14,8 +14,8 @@ const call = async (m, p, b) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const check = (l, ok, x = '') => console.log(`${ok ? 'PASS' : 'FAIL'}  ${l}${x ? `  (${x})` : ''}`);
 (async () => {
-  await call('POST', '/api/auth/signup', { username: 'packer', email: 'packer@example.com', password: 'TreeHost-test-123', acceptTerms: true });
-  await call('POST', '/api/billing/checkout', { planId: 'oak' });
+  await call('POST', '/api/auth/signup', { username: 'packer', email: 'packer@example.com', password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
+  await call('POST', '/api/billing/checkout', { planId: 'oak', consent: { renewal: true, adult: true, withdrawal: true } });
   const sub = (await call('GET', '/api/billing')).data.subscriptions[0];
   const hits = (await call('GET', '/api/modpacks/search?q=' + encodeURIComponent(process.argv[3] || ''))).data;
   check('modpack search works', Array.isArray(hits) && hits.length > 0, hits && hits.slice(0, 3).map((h) => h.title).join(', '));

@@ -40,8 +40,8 @@ function ping(port) {
 const flat = (c) => (typeof c === 'string' ? c : `${c.text || ''}${(c.extra || []).map(flat).join('')}`);
 const colors = (c, out = []) => { if (c && typeof c === 'object') { if (c.color) out.push(c.color); (c.extra || []).forEach((x) => colors(x, out)); } return out; };
 (async () => {
-  await call('POST', '/api/auth/signup', { username: 'motdowner', email: 'motd@example.com', password: 'TreeHost-test-123', acceptTerms: true });
-  await call('POST', '/api/billing/checkout', { planId: 'sapling' });
+  await call('POST', '/api/auth/signup', { username: 'motdowner', email: 'motd@example.com', password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
+  await call('POST', '/api/billing/checkout', { planId: 'sapling', consent: { renewal: true, adult: true, withdrawal: true } });
   const sub = (await call('GET', '/api/billing')).data.subscriptions[0];
   const s = (await call('POST', '/api/servers', { name: 'MOTD Test', type: 'paper', version: '1.21.1', eula: true, subscriptionId: sub.id })).data;
   check('too-long lines are refused', (await call('PUT', `/api/servers/${s.id}/motd`, { frames: ['x'.repeat(200)] })).status === 400);

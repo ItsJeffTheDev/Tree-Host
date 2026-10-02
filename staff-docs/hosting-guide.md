@@ -34,8 +34,10 @@ CPU much more than anything else.
 | **DDoS protection** | Public Minecraft servers get attacked. Many hosts include it. |
 | **Unmetered or large traffic** | Players use a steady stream of bandwidth. |
 
-Popular choices: Hetzner (dedicated "AX" servers), OVH (game servers come with DDoS protection), Contabo. Pick a location
-close to your players.
+**Our pick for launch (October 2026 plan):** OVH **RISE-S** (Ryzen 7 9700X, 64 GB, NVMe, game DDoS protection), about
+$77/month plus $77 setup. It fits about 25 Saplings, and about 17 paying Saplings cover its cost. If cash is short, start on
+a netcup **RS 4000 G12** (32 GB, about $33/month) and move up once it fills. Other good choices: Hetzner (dedicated "AX"
+servers), Contabo. Pick a location close to your players (we launch in the US and Canada first).
 
 > **Note:** a VPS works too, but "shared" vCPUs get slow under load. For a business, a dedicated server is worth it.
 
@@ -43,8 +45,9 @@ When it's ready you get its **IP address** (e.g. `203.0.113.10`) and a root pass
 
 ### Free option: Oracle Cloud "Always Free"
 
-Oracle gives one free ARM server forever: up to **4 CPU cores, 24 GB of RAM**, 200 GB of disk and 10 TB of traffic a month.
-That's enough to start with about 8-10 small customer servers. Move to a paid server once customers pay for it.
+Oracle gives one free ARM server forever: up to **2 CPU cores (OCPUs), 12 GB of RAM**, 200 GB of disk and 10 TB of traffic a
+month (Oracle halved the free ARM limit; it used to be 4 cores and 24 GB). That's enough for testing and about 3-4 small
+customer servers. Move to a paid server before you sell plans.
 
 **1. Create the account**
 
@@ -57,7 +60,7 @@ That's enough to start with about 8-10 small customer servers. Move to a paid se
 
 1. **Menu → Compute → Instances → Create instance.**
 2. **Image:** click *Change image* → **Canonical Ubuntu 24.04**.
-3. **Shape:** click *Change shape* → **Ampere** → **VM.Standard.A1.Flex** → **4 OCPUs** and **24 GB memory**.
+3. **Shape:** click *Change shape* → **Ampere** → **VM.Standard.A1.Flex** → **2 OCPUs** and **12 GB memory**.
 4. **Networking:** keep *Create new virtual cloud network* and *public subnet*, and make sure **Assign a public IPv4 address** is on.
 5. **SSH keys:** *Generate a key pair for me* → **Download private key**. Keep this file safe: it's how you log in.
 6. **Boot volume:** tick *Specify a custom boot volume size* → **150 GB** (the free limit is 200 GB in total).
@@ -268,9 +271,22 @@ These are the defaults, so they work without changing anything. Emails are sent 
 - [ ] A real test purchase works, and a refund in Stripe looks right.
 - [ ] Sign-up, Google sign-in and **Forgot your password?** work on treehost.online.
 - [ ] Realtime Database rules are locked (step 5.3), and the log says **Database: Firebase Realtime Database**.
-- [ ] **Terms** and **Privacy** pages: fill in `TREEHOST_COMPANY`, `TREEHOST_SUPPORT_EMAIL` and `TREEHOST_JURISDICTION`,
-      and **have them checked by a lawyer** for your country. They are starting templates, not legal advice.
-- [ ] Plans and prices set (**Staff Console → Plans**), and **capacity** set so you never sell more memory than the machine has.
+- [ ] **Terms**, **Privacy** and **Copyright (DMCA)** pages: set `TREEHOST_COMPANY` (the LLC's legal name),
+      `TREEHOST_JURISDICTION` (e.g. `the State of Texas, USA`), `TREEHOST_ADDRESS` (a mailing address; a registered-agent
+      or virtual mailbox address is fine), `TREEHOST_SUPPORT_EMAIL`, `TREEHOST_DMCA_EMAIL` and `TREEHOST_DMCA_AGENT` (the
+      agent's name), and **have them checked by a lawyer**. They are starting templates, not legal advice.
+- [ ] **Register the DMCA agent** with the U.S. Copyright Office (dmca.copyright.gov, $6, renew every 3 years) using the
+      same name, address and email as the /dmca page. Without it you don't get the DMCA safe harbor.
+- [ ] Set up `dmca@`, `support@` and `billing@` inboxes, and SPF, DKIM, **DMARC** and a **CAA** record (`0 issue "letsencrypt.org"`)
+      on treehost.online.
+- [ ] Plans and prices set (**Staff Console → Plans**). **Capacity** (Staff Console → Plans → Capacity) defaults to about 90%
+      of the RAM; keep it there or lower. Each monthly plan is guaranteed one running server; extra servers on the same plan
+      only start when there's unsold memory, and are refused (with a message) when the machine is full.
+- [ ] **Lifetime plans:** each holds 4 × 4 GB + 2 × 1 GB forever (about 20 GB), so only 2 are sold per machine by default
+      (same card). The Terms promise at least 5 years, with a pro-rata refund if Tree Host closes sooner.
+- [ ] Checkout shows the renewal terms, the 18+ / parent box and the EU/UK withdrawal waiver, and each subscription stores
+      what was agreed (time, IP, wording version). Do a test purchase and check it in the subscription's details.
+- [ ] Decide on the EU/UK: until you're registered for VAT (EU OSS / UK), either don't advertise there or turn on Stripe Tax.
 - [ ] You can join a test server at `play.treehost.online:25600` from outside your home network.
 - [ ] Off-server backups are set up (section 9).
 
@@ -284,6 +300,17 @@ These are the defaults, so they work without changing anything. Emails are sent 
 - **🌳 All servers** (top of the sidebar, support and admins): every customer's server, to help with problems.
 - **Activity** and **Discord alerts** (Staff Console → Settings): new customers, payments, failed payments and crashes.
 - **Logs:** `journalctl -u tree-host -f`
+
+### Monthly business check (first Monday of the month)
+
+| Look at | Where | Healthy |
+|---|---|---|
+| Paying customers and monthly revenue | Staff Console → Billing | Revenue above the machine's cost (about 17 Saplings on a RISE-S) |
+| Memory sold, and extra servers running | Staff Console → Plans → Capacity | Sold under 80%: order the next machine at 80% |
+| Failed payments and chargebacks | Billing, and the Stripe dashboard | Chargebacks under 0.5% of payments |
+| Crashes and support load | Activity, the support inbox | No server crashing every day; replies within 24 h (priority: 4 h) |
+| Cancellations and why | Billing, cancellation emails | Ask cancelled customers one question: why? |
+| Lifetime plans sold | Staff Console → Plans → Capacity | At or under the per-machine cap |
 
 ### Updating Tree Host
 
@@ -332,6 +359,9 @@ TREEHOST_BACKUP_RSYNC=u123456@u123456.your-storagebox.de:tree-host
   a read-only system, and only its own folder mounted. Don't turn isolation off on a public host.
 - Only give **Admin** to people you trust with money and every customer's data. Use **Support** for helpers.
 - Never share `/etc/tree-host.env` or `/etc/tree-host-firebase.json`: they hold your Stripe, email and Firebase keys.
+- Put the **website** (treehost.online) behind Cloudflare's proxy (orange cloud) once you launch, and then set
+  `TREEHOST_TRUST_CLOUDFLARE=1`. Keep `play.` and the game ports DNS-only (grey cloud): Cloudflare doesn't proxy Minecraft.
+  On OVH, also turn on the game firewall profile for the Minecraft ports.
 - Leave `TREEHOST_TRUST_CLOUDFLARE=0` unless the website really sits behind Cloudflare's orange-cloud proxy; otherwise
   visitors could fake their IP address to dodge sign-in limits.
 - Keep the Realtime Database rules locked (`.read`/`.write` false). Test-mode rules would let anyone read every account.

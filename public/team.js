@@ -129,6 +129,27 @@ async function checkEmailVerified() {
   });
 }
 
+/** Age gate: a neutral birth-year question (no hint about the minimum age). Under-13s are remembered on this device. */
+function birthYearField() {
+  const now = new Date().getFullYear();
+  const years = Array.from({ length: 100 }, (_, i) => now - i);
+  return `<label class="field">Year you were born <select name="birthYear" required><option value="">Choose...</option>${years.map((y) => `<option>${y}</option>`).join('')}</select></label>`;
+}
+const tooYoungKey = 'th_age_block';
+const ageBlocked = () => {
+  try {
+    return localStorage.getItem(tooYoungKey) === '1';
+  } catch {
+    return false;
+  }
+};
+function noteTooYoung(err) {
+  if (!/at least 13/.test((err && err.message) || '')) return;
+  try {
+    localStorage.setItem(tooYoungKey, '1');
+  } catch {}
+}
+
 /** Firebase sign-in screens: sign in, sign up, Google, forgot password and support-staff invites. */
 function showFirebaseAuth(forceMode) {
   const params = new URLSearchParams(location.search);
@@ -155,7 +176,7 @@ function showFirebaseAuth(forceMode) {
         ${!['forgot', 'profile'].includes(mode) ? `<label class="field">Password <input type="password" name="password" required minlength="${mode === 'login' ? 1 : 8}" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}"></label>` : ''}
         ${
           ['signup', 'profile'].includes(mode) && !invite
-            ? `<label class="check"><input type="checkbox" name="acceptTerms" required>
+            ? `${birthYearField()}<label class="check"><input type="checkbox" name="acceptTerms" required>
                  <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span></label>`
             : ''
         }
@@ -200,6 +221,7 @@ function showFirebaseAuth(forceMode) {
     return {
       username: f.username ? f.username.value.trim() : undefined,
       acceptTerms: f.acceptTerms ? f.acceptTerms.checked : undefined,
+      birthYear: f.birthYear ? Number(f.birthYear.value) : undefined,
       invite: invite || undefined,
     };
   };
@@ -227,6 +249,12 @@ function showFirebaseAuth(forceMode) {
         ok.textContent = 'If an account uses that email, a reset link is on its way. Check your inbox (and spam).';
         ok.classList.remove('hidden');
         return;
+      }
+      // The age gate runs before any account exists anywhere (Tree Host checks it again).
+      if (f.birthYear && (ageBlocked() || new Date().getFullYear() - Number(f.birthYear.value) <= 13)) {
+        noteTooYoung({ message: 'at least 13' });
+        if (mode === 'profile') await fb.signOut(fb.auth).catch(() => {});
+        return showError('Sorry, you need to be at least 13 to make a Tree Host account.');
       }
       if (mode === 'profile') return await finish(fb.auth.currentUser, extra());
       if (mode === 'login') {
@@ -348,7 +376,7 @@ function showAuth(forceMode) {
         }
         ${
           mode === 'signup'
-            ? `<label class="check"><input type="checkbox" name="acceptTerms" required>
+            ? `${birthYearField()}<label class="check"><input type="checkbox" name="acceptTerms" required>
                  <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span></label>`
             : ''
         }
@@ -381,6 +409,8 @@ function showAuth(forceMode) {
     for (const k of ['username', 'email', 'password', 'mcName']) if (f[k]) body[k] = f[k].value.trim();
     if (f.password) body.password = f.password.value;
     if (f.acceptTerms) body.acceptTerms = f.acceptTerms.checked;
+    if (f.birthYear) body.birthYear = Number(f.birthYear.value);
+    if (mode === 'signup' && ageBlocked()) return showError('Sorry, you need to be at least 13 to make a Tree Host account.');
     if (invite) body.invite = invite;
     if (reset) body.token = reset;
     const url = {
@@ -400,6 +430,7 @@ function showAuth(forceMode) {
       }
       location.href = mode === 'signup' ? '/dashboard?welcome' : '/dashboard';
     } catch (err) {
+      noteTooYoung(err);
       showError(err.message);
     }
   });
@@ -671,23 +702,59 @@ async function openPlans() {
   root.querySelector('.modal').classList.add('wide');
   $$('[data-buy]', root).forEach((b) =>
     b.addEventListener('click', () => {
-      b.disabled = true;
-      b.textContent = 'Opening checkout...';
-      api('POST', '/api/billing/checkout', { planId: b.dataset.buy })
-        .then((r) => {
-          if (r.demo) {
-            toast('Plan activated (demo). Now create your server!');
-            root.innerHTML = '';
-            openNewServer();
-          } else location.href = r.url;
-        })
-        .catch((err) => {
-          toast(err.message, 'error');
-          b.disabled = false;
-          b.textContent = 'Choose';
-        });
+      const plan = data.plans.find((p) => p.id === b.dataset.buy);
+      root.innerHTML = '';
+      confirmCheckout(plan, data.currency);
     }),
   );
+}
+
+/** The last step before paying: price, renewal terms and the boxes the law asks for. Agreeing is recorded by Tree Host. */
+function confirmCheckout(plan, currency) {
+  const price = money(plan.priceCents, currency);
+  const { root } = openModal(`
+    <h2>${plan.oneTime ? ic('infinity') : ''} ${esc(plan.name)}</h2>
+    <div class="checkout-summary">
+      <div class="checkout-price">${price}<span>${plan.oneTime ? ' once' : ' / month'}</span></div>
+      <p class="small" style="margin:6px 0 0">${
+        plan.oneTime
+          ? 'A single payment. It never renews and you are never charged again for this plan.'
+          : `<b>Renews automatically every month at ${price}</b> until you cancel. Cancel any time in <b>Billing</b> with one click; you keep the plan until the end of the month you paid for. No refunds for part of a month, except where the law gives you one.`
+      }</p>
+    </div>
+    <form id="co-form" class="stack" style="margin-top:12px">
+      ${
+        plan.oneTime
+          ? ''
+          : `<label class="check"><input type="checkbox" name="renewal" required> <span>I understand ${esc(plan.name)} renews automatically at ${price} per month until I cancel.</span></label>`
+      }
+      <label class="check"><input type="checkbox" name="adult" required> <span>I am 18 or older, or my parent or guardian agrees and is paying.</span></label>
+      <label class="check"><input type="checkbox" name="withdrawal" required> <span>Start my server right away. If I live in the EU or UK, I understand I lose my 14-day right to cancel once it starts.</span></label>
+      <p class="small muted" style="margin:0">By paying you agree to the <a href="/terms" target="_blank">Terms of Service</a>, including the <a href="/terms#refunds" target="_blank">refund policy</a>.</p>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Back</button><button class="btn primary" id="co-go">${plan.oneTime ? `Pay ${price}` : `Subscribe for ${price}/month`}</button></div>
+    </form>`);
+  const form = $('#co-form', root);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const go = $('#co-go', root);
+    const label = go.textContent;
+    go.disabled = true;
+    go.textContent = 'Opening checkout...';
+    const consent = { renewal: plan.oneTime ? false : form.renewal.checked, adult: form.adult.checked, withdrawal: form.withdrawal.checked };
+    api('POST', '/api/billing/checkout', { planId: plan.id, consent })
+      .then((r) => {
+        if (r.demo) {
+          toast('Plan activated (demo). Now create your server!');
+          root.innerHTML = '';
+          openNewServer();
+        } else location.href = r.url;
+      })
+      .catch((err) => {
+        toast(err.message, 'error');
+        go.disabled = false;
+        go.textContent = label;
+      });
+  });
 }
 
 /** Monthly plans take any number of servers; bundles (Lifetime) up to their slots. */
@@ -1191,9 +1258,13 @@ async function adminPlans(body) {
     <div class="card stack">
       <h3>Capacity</h3>
       <p class="hint" style="margin:0">The most memory Tree Host sells on this machine (each server also needs ~384 MB extra). When it's full, plans show as sold out.
-        Default: all memory except 2 GB (${+((d.totalMemMb - 2048) / 1024).toFixed(1)} GB of ${+(d.totalMemMb / 1024).toFixed(1)} GB).</p>
-      <div class="row"><input type="number" id="cap-gb" min="1" step="1" placeholder="Automatic" value="${d.capacitySetting ? +(d.capacitySetting / 1024).toFixed(1) : ''}" style="max-width:160px"><span class="muted">GB</span>
-        <button class="btn" id="cap-save">Save</button></div>
+        Default: about 90% of the RAM (${+(Math.floor(d.totalMemMb * 0.9) / 1024).toFixed(1)} GB of ${+(d.totalMemMb / 1024).toFixed(1)} GB).
+        Every monthly plan always has room for one running server; extra servers on the same plan only start while there's unsold memory, and are refused when the machine is full.</p>
+      <div class="row"><input type="number" id="cap-gb" min="1" step="1" placeholder="Automatic" value="${d.capacitySetting ? +(d.capacitySetting / 1024).toFixed(1) : ''}" style="max-width:160px"><span class="muted">GB</span></div>
+      <p class="small muted" style="margin:0">Sold: ${+(d.soldMb / 1024).toFixed(1)} GB · extra servers running now: ${+((d.borrowedMb || 0) / 1024).toFixed(1)} GB · free: ${+((d.capacityMb - d.soldMb - (d.borrowedMb || 0)) / 1024).toFixed(1)} GB of ${+(d.capacityMb / 1024).toFixed(1)} GB</p>
+      <label class="field">Lifetime plans sold on this machine (each holds its memory forever; 0 = no limit)
+        <div class="row"><input type="number" id="cap-life" min="0" max="100" step="1" placeholder="2" value="${d.lifetimeSetting ?? ''}" style="max-width:160px"><span class="muted">${d.lifetimeCount} sold</span></div></label>
+      <div class="row"><button class="btn" id="cap-save">Save</button></div>
     </div>`;
   const bindRm = () => $$('[data-rm]', body).forEach((b) => (b.onclick = () => b.closest('tr').remove()));
   bindRm();
@@ -1232,7 +1303,8 @@ async function adminPlans(body) {
   $('#cap-save', body).addEventListener('click', () =>
     attempt(async () => {
       const gb = Number($('#cap-gb', body).value);
-      await api('PUT', '/api/admin/billing-settings', { capacityMb: gb ? Math.round(gb * 1024) : null });
+      const life = $('#cap-life', body).value.trim();
+      await api('PUT', '/api/admin/billing-settings', { capacityMb: gb ? Math.round(gb * 1024) : null, lifetimePerNode: life === '' ? null : Number(life) });
       toast('Capacity saved');
     }),
   );

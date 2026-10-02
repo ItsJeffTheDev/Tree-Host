@@ -25,7 +25,7 @@ const DEFAULT_PLANS = [
 // A one-time purchase with a fixed number of servers and proxies (monthly plans have no server limit).
 const LIFETIME_PLAN = {
   id: 'lifetime', name: 'Lifetime', oneTime: true, ramMb: 4096, proxyRamMb: 1024, cpus: 2, diskGb: 30,
-  slots: { servers: 4, proxies: 2 }, prioritySupport: true, priceCents: 50000,
+  slots: { servers: 4, proxies: 2 }, prioritySupport: true, priceCents: 75000,
   description: 'Pay once, keep it forever: 4 servers of any type and version (4 GB each), 2 proxies and priority support.', active: true,
 };
 DEFAULT_PLANS.push(LIFETIME_PLAN);
@@ -43,6 +43,9 @@ const bundleFields = (p) => (p.oneTime || p.slots
       prioritySupport: !!p.prioritySupport,
     }
   : {});
+
+// The checkout wording customers agree to; bump it when that text changes (stored with each consent record).
+const CONSENT_VERSION = '2026-10';
 
 // ---------- Stripe (no npm package) ----------
 
@@ -143,6 +146,7 @@ class Billing {
       notify: () => {}, email: async () => {}, suspend: () => {}, unsuspend: () => {}, deleteServer: async () => {},
       userById: () => null,
       serversOf: () => [], // [{ id, name, kind }] of the servers using a subscription (set by server.js)
+      borrowedMb: () => 0, // memory used by running extra servers beyond what their plans reserve (set by server.js)
     };
   }
 
@@ -193,7 +197,7 @@ class Billing {
         .map((p) => ({
           id: p.id, name: p.name, ramMb: p.ramMb, cpus: p.cpus, diskGb: p.diskGb, priceCents: p.priceCents, description: p.description,
           ...bundleFields(p),
-          soldOut: free < reserveMb(p),
+          soldOut: free < reserveMb(p) || (!!p.oneTime && this.lifetimeFull()),
         })),
     };
   }
@@ -224,21 +228,36 @@ class Billing {
     return this.plans;
   }
 
-  /** Memory this machine can sell: the setting, or everything except 2 GB for the system and Tree Host. */
+  /** Memory this machine can sell: the setting, or about 90% of the RAM (the rest is for the system and Tree Host). */
   capacityMb() {
-    return this.settings.capacityMb || Math.max(0, Math.floor(os.totalmem() / 1048576) - 2048);
+    return this.settings.capacityMb || Math.max(0, Math.floor((os.totalmem() / 1048576) * 0.9));
+  }
+
+  /** How many Lifetime plans this machine sells (each holds its memory forever). null = the default of 2, 0 = no limit. */
+  lifetimePerNode() {
+    const n = this.settings.lifetimePerNode;
+    return n === null || n === undefined ? 2 : n;
+  }
+
+  lifetimeFull() {
+    const cap = this.lifetimePerNode();
+    return cap > 0 && this.subs.filter((s) => s.oneTime && ['active', 'past_due', 'pending'].includes(s.status)).length >= cap;
   }
 
   soldMb() {
     return this.subs.filter((s) => ['active', 'past_due', 'pending'].includes(s.status)).reduce((n, s) => n + reserveMb(s), 0);
   }
 
+  /** Unsold memory, minus what running extra servers borrow from it right now. */
   freeMb() {
-    return this.capacityMb() - this.soldMb();
+    return this.capacityMb() - this.soldMb() - this.hooks.borrowedMb();
   }
 
-  async setSettings({ capacityMb }) {
+  async setSettings({ capacityMb, lifetimePerNode }) {
     if (capacityMb !== undefined) this.settings.capacityMb = capacityMb ? Math.max(1024, Math.round(Number(capacityMb))) : null;
+    if (lifetimePerNode !== undefined) {
+      this.settings.lifetimePerNode = lifetimePerNode === null || lifetimePerNode === '' ? null : Math.max(0, Math.min(100, Math.round(Number(lifetimePerNode) || 0)));
+    }
     await this.savePlans();
     return this.adminSummary();
   }
@@ -330,14 +349,31 @@ class Billing {
   }
 
   /** Starts a purchase. Returns { url } to send the customer to (Stripe Checkout, or straight back in demo mode). */
-  async checkout(user, planId, origin) {
+  async checkout(user, planId, origin, consent) {
     const plan = this.plan(planId);
     if (!plan || !plan.active) throw httpError(404, 'That plan is not available.');
     if (this.freeMb() < reserveMb(plan)) throw httpError(409, `${plan.name} is sold out right now. Try a smaller plan or check back soon.`, 'SOLD_OUT');
+    if (plan.oneTime && this.lifetimeFull()) throw httpError(409, `Every ${plan.name} spot on this machine is taken. Join the Discord to hear when more open.`, 'SOLD_OUT');
     if (this.mode === 'off') throw httpError(400, 'Payments are not set up yet. Please check back soon.');
+    const c = consent || {};
+    if (!plan.oneTime && !c.renewal) throw httpError(400, 'Please confirm that the plan renews every month until you cancel.', 'CONSENT');
+    if (!c.adult) throw httpError(400, 'Please confirm you are 18 or older, or that a parent or guardian is paying.', 'CONSENT');
+    if (!c.withdrawal) throw httpError(400, 'Please confirm the server can start right away.', 'CONSENT');
     // Abandoned checkouts don't hold capacity forever.
     this.subs = this.subs.filter((s) => !(s.status === 'pending' && Date.now() - s.createdAt > 86400000));
     const s = this.newSub(user, plan);
+    // Proof of what the customer agreed to (auto-renewal laws ask for this; kept with the subscription).
+    s.consent = {
+      version: CONSENT_VERSION,
+      at: Date.now(),
+      ip: c.ip || null,
+      userAgent: String(c.userAgent || '').slice(0, 300) || null,
+      priceCents: plan.priceCents,
+      currency: CURRENCY,
+      renews: !plan.oneTime,
+      adult: true,
+      withdrawalWaived: true,
+    };
     if (this.mode === 'demo') {
       this.activate(s, plan.oneTime ? {} : { periodEnd: Date.now() + 30 * 86400000 });
       await this.save();
@@ -378,6 +414,7 @@ class Billing {
       customer: user.stripeCustomerId || undefined,
       customer_email: user.stripeCustomerId ? undefined : user.email || undefined,
       allow_promotion_codes: 'true',
+      custom_text: { submit: { message: `Renews automatically every month at the price above until you cancel. Cancel any time in Billing on Tree Host; you keep the plan until the end of the month you paid for.` } },
       metadata: { subId: s.id, userId: user.id },
       subscription_data: { metadata: { subId: s.id, userId: user.id, planId: plan.id } },
       line_items: [
@@ -508,7 +545,7 @@ class Billing {
     if (p.uses.some((u) => u.userId === user.id)) throw httpError(400, 'You already used this code.');
     const plan = this.plan(p.planId);
     if (!plan) throw httpError(410, 'The plan for this code no longer exists. Please contact support.');
-    if (this.freeMb() < plan.ramMb + OVERHEAD_MB) throw httpError(409, `${plan.name} is full right now. Please try again soon or contact support.`, 'SOLD_OUT');
+    if (this.freeMb() < reserveMb(plan) || (plan.oneTime && this.lifetimeFull())) throw httpError(409, `${plan.name} is full right now. Please try again soon or contact support.`, 'SOLD_OUT');
     const s = this.newSub(user, plan, { ...freeFields(promoDays(p)), promoCode: p.code, note: p.note || undefined });
     s.status = 'active';
     p.uses.push({ userId: user.id, subId: s.id, at: Date.now() });
@@ -525,6 +562,7 @@ class Billing {
     this.markCanceled(s);
     await this.save();
     this.hooks.notify('billing', s, `subscription was canceled by ${by}`);
+    if (this.hooks.sendEmail) this.hooks.sendEmail('canceled', this.hooks.userById(s.userId), s).catch(() => {});
     return s;
   }
 
@@ -595,11 +633,17 @@ class Billing {
         const s = this.findByStripe(o.id, o.metadata);
         if (!s) break;
         s.stripeSubscriptionId = o.id;
+        const wasCanceling = !!s.cancelAtPeriodEnd;
         s.cancelAtPeriodEnd = !!o.cancel_at_period_end;
         s.periodEnd = periodEnd(o) || s.periodEnd;
         const st = event.type === 'customer.subscription.deleted' ? 'canceled' : STATUS[o.status] || 'past_due';
         if (st === 'active') this.activate(s);
         else if (st === 'past_due') this.markPastDue(s, users);
+        // Canceled in the Stripe portal: still active until the end of the paid month. Confirm it by email.
+        if (s.cancelAtPeriodEnd && !wasCanceling && st !== 'canceled') {
+          this.hooks.notify('billing', s, `canceled the ${s.planName} plan (active until the end of the month)`);
+          if (this.hooks.sendEmail) this.hooks.sendEmail('canceled', users.userById(s.userId), s).catch(() => {});
+        }
         else if (st === 'canceled' && s.status !== 'canceled') {
           this.markCanceled(s);
           this.hooks.notify('billing', s, 'subscription ended');
@@ -692,6 +736,9 @@ class Billing {
       capacityMb: this.capacityMb(),
       capacitySetting: this.settings.capacityMb,
       soldMb: this.soldMb(),
+      borrowedMb: this.hooks.borrowedMb(),
+      lifetimePerNode: this.lifetimePerNode(),
+      lifetimeSetting: this.settings.lifetimePerNode ?? null,
       totalMemMb: Math.floor(os.totalmem() / 1048576),
       activeCount: active.length,
       pastDueCount: active.filter((s) => s.status === 'past_due').length,

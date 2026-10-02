@@ -180,15 +180,28 @@ class Auth {
     return this.settings;
   }
 
+  /** Age gate (COPPA): accounts are for people 13 and older, asked neutrally as a birth year. Returns the year. */
+  checkAge(body) {
+    const y = Math.round(Number(body.birthYear));
+    const now = new Date().getFullYear();
+    if (!(y >= 1900 && y <= now)) throw httpError(400, 'Choose the year you were born.');
+    // Only the year is known, so someone who turns 13 this year counts as 12 (never let an under-13 through).
+    if (now - y <= 13) throw httpError(403, 'Sorry, you need to be at least 13 to make a Tree Host account.', 'TOO_YOUNG');
+    return y;
+  }
+
   /** Public sign-up: creates a customer account right away. */
   async signup(body, ip) {
     if (!this.settings.allowSignup) throw httpError(403, 'Sign-ups are closed right now. Please try again later.');
     if (!body.acceptTerms) throw httpError(400, 'Please accept the Terms of Service and Privacy Policy.');
+    const birthYear = this.checkAge(body);
     this.checkRate([`signup:${ip}`]);
     this.recordFailure([`signup:${ip}`]);
     if (!cleanEmail(body.email)) throw httpError(400, 'Enter your email address');
     const first = !this.hasOwner();
     const user = await this.createUser(body, first && this.allowFirstAdmin ? 'owner' : 'customer');
+    user.birthYear = birthYear;
+    await this.save();
     return { user, token: await this.createSession(user) };
   }
 
@@ -473,6 +486,7 @@ class Auth {
     const suggested = (id.name || id.email.split('@')[0] || '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 32);
     if (!body.username) return { needsProfile: true, email: id.email, suggested };
     if (role === 'customer' && !body.acceptTerms) throw httpError(400, 'Please accept the Terms of Service and Privacy Policy.');
+    const birthYear = role === 'customer' ? this.checkAge(body) : undefined;
     validateUsername(body.username);
     if (this.users.some((u) => u.username.toLowerCase() === String(body.username).toLowerCase())) throw httpError(400, 'That username is taken');
     if (id.email && this.users.some((u) => u.email === id.email)) {
@@ -488,6 +502,7 @@ class Auth {
       emailVerified: !!(id.emailVerified || id.provider === 'google.com'),
       role,
       mcName,
+      birthYear,
       tokens: [],
       createdAt: Date.now(),
       lastLogin: Date.now(),

@@ -59,7 +59,7 @@ function expect(label, got, want) {
 }
 
 (async () => {
-  const signup = (u) => call(u, 'POST', '/api/auth/signup', { username: u, email: `${u}@example.com`, password: 'TreeHost-test-123', acceptTerms: true });
+  const signup = (u) => call(u, 'POST', '/api/auth/signup', { username: u, email: `${u}@example.com`, password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
   for (const u of ['owner1', 'admin1', 'dev1', 'support1', 'cust1', 'cust2']) await signup(u);
   const me = async (u) => (await call(u, 'GET', '/api/auth/me')).data.user;
   expect('first account is Owner', (await me('owner1')).role, 'owner');
@@ -144,7 +144,7 @@ function expect(label, got, want) {
   expect('PDF is a PDF', (await (await fetch(`${B}/api/admin/actions/${sus.data.id}/report.pdf`, { headers: { Cookie: jar.owner1 } })).text()).startsWith('%PDF-'), true);
 
   // a customer's server: who can see / operate / destroy it
-  await call('cust1', 'POST', '/api/billing/checkout', { planId: 'sapling' });
+  await call('cust1', 'POST', '/api/billing/checkout', { planId: 'sapling', consent: { renewal: true, adult: true, withdrawal: true } });
   const sub = (await call('cust1', 'GET', '/api/billing')).data.subscriptions[0];
   const created = await call('cust1', 'POST', '/api/servers', { name: 'Cust Server', type: 'vanilla', version: '1.21.1', eula: true, subscriptionId: sub.id });
   expect('customer creates a server', created.status, 200);
@@ -340,7 +340,7 @@ function expect(label, got, want) {
     }
     return { status: res.status, data: await res.json().catch(() => null) };
   };
-  for (const u of ['multi1', 'multi2', 'multi3']) await call(u, 'POST', '/api/auth/signup', { username: u, email: `${u}@example.com`, password: 'TreeHost-test-123', acceptTerms: true });
+  for (const u of ['multi1', 'multi2', 'multi3']) await call(u, 'POST', '/api/auth/signup', { username: u, email: `${u}@example.com`, password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
   await bcall('POST', '/api/auth/login', { username: 'multi1', password: 'TreeHost-test-123' });
   await bcall('POST', '/api/auth/login', { username: 'multi2', password: 'TreeHost-test-123' });
   const accts = (await bcall('GET', '/api/auth/accounts')).data.accounts;
@@ -374,10 +374,11 @@ function expect(label, got, want) {
   // lifetime plan: paid once, 4 servers + 2 proxies
   const plansNow = (await call('cust2', 'GET', '/api/plans')).data.plans;
   const lifePlan = plansNow.find((p) => p.oneTime);
-  expect("the lifetime plan is for sale", lifePlan && lifePlan.priceCents, 50000);
+  expect("the lifetime plan is for sale", lifePlan && lifePlan.priceCents, 75000);
   expect("...with 4 servers and 2 proxies", lifePlan && `${lifePlan.slots.servers}/${lifePlan.slots.proxies}`, "4/2");
-  await call('life1', 'POST', '/api/auth/signup', { username: 'life1', email: 'life1@example.com', password: 'TreeHost-test-123', acceptTerms: true });
-  expect('buying lifetime (demo)', (await call('life1', 'POST', '/api/billing/checkout', { planId: lifePlan.id })).status, 200);
+  await call('owner1', 'PUT', '/api/admin/billing-settings', { capacityMb: 256 * 1024 }); // this PC may be smaller than a node
+  await call('life1', 'POST', '/api/auth/signup', { username: 'life1', email: 'life1@example.com', password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
+  expect('buying lifetime (demo)', (await call('life1', 'POST', '/api/billing/checkout', { planId: lifePlan.id, consent: { renewal: true, adult: true, withdrawal: true } })).status, 200);
   const lsub = (await call('life1', 'GET', '/api/billing')).data.subscriptions.find((x) => x.oneTime);
   expect('lifetime plan is active and never renews', lsub && lsub.status === 'active' && !lsub.renewsAt, true);
   expect('account shows lifetime', (await call('life1', 'GET', '/api/auth/me')).data.user.lifetime, true);
@@ -390,6 +391,37 @@ function expect(label, got, want) {
   expect('a 5th server is refused', (await call('life1', 'POST', '/api/servers', { name: 'Life 5', type: 'vanilla', version: '1.21.1', eula: true, subscriptionId: lsub.id })).status, 400);
   expect('staff see the lifetime badge', (await call('owner1', 'GET', '/api/team/users')).data.find((x) => x.username === 'life1').lifetime, true);
   for (const id of made) await call('life1', 'DELETE', `/api/servers/${id}`);
+
+  // going-live plan: age gate, checkout consent, lifetime cap, running capacity
+  const yr = new Date().getFullYear();
+  expect('under-13 sign-up is refused', (await call('kid1', 'POST', '/api/auth/signup', { username: 'kid1', email: 'kid1@example.com', password: 'TreeHost-test-123', acceptTerms: true, birthYear: yr - 10 })).status, 403);
+  expect('sign-up without a birth year is refused', (await call('kid2', 'POST', '/api/auth/signup', { username: 'kid2', email: 'kid2@example.com', password: 'TreeHost-test-123', acceptTerms: true })).status, 400);
+  expect('checkout without the renewal box is refused', (await call('cust2', 'POST', '/api/billing/checkout', { planId: 'sapling', consent: { adult: true, withdrawal: true } })).status, 400);
+  expect('checkout without the 18+/parent box is refused', (await call('cust2', 'POST', '/api/billing/checkout', { planId: 'sapling', consent: { renewal: true, withdrawal: true } })).status, 400);
+  expect('checkout without the withdrawal box is refused', (await call('cust2', 'POST', '/api/billing/checkout', { planId: 'sapling', consent: { renewal: true, adult: true } })).status, 400);
+  await call('owner1', 'PUT', '/api/admin/billing-settings', { lifetimePerNode: 1 });
+  expect('lifetime shows sold out at the per-machine cap', (await call('cust2', 'GET', '/api/plans')).data.plans.find((p) => p.oneTime).soldOut, true);
+  expect('buying lifetime past the cap is refused', (await call('cust2', 'POST', '/api/billing/checkout', { planId: lifePlan.id, consent: { adult: true, withdrawal: true } })).status, 409);
+  await call('owner1', 'PUT', '/api/admin/billing-settings', { lifetimePerNode: null });
+  expect('default cap is 2 lifetime plans', (await call('owner1', 'GET', '/api/admin/billing')).data.lifetimePerNode, 2);
+  expect('a customer buys a monthly plan with every box ticked', (await call('cust2', 'POST', '/api/billing/checkout', { planId: 'sapling', consent: { renewal: true, adult: true, withdrawal: true } })).status, 200);
+  const tsub = (await call('cust2', 'GET', '/api/billing')).data.subscriptions.filter((x) => x.usable && !x.slots && !x.serverCount).pop();
+  const s1 = (await call('cust2', 'POST', '/api/servers', { name: 'Cap 1', type: 'vanilla', version: '1.21.1', eula: true, subscriptionId: tsub.id })).data;
+  const s2 = (await call('cust2', 'POST', '/api/servers', { name: 'Cap 2', type: 'vanilla', version: '1.21.1', eula: true, subscriptionId: tsub.id })).data;
+  for (let i = 0; i < 120; i++) {
+    const st = (await call('cust2', 'GET', '/api/servers')).data.filter((x) => x.id === s1.id || x.id === s2.id);
+    if (st.every((x) => x.status === 'stopped')) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  const sold = (await call('owner1', 'GET', '/api/admin/billing')).data.soldMb;
+  await call('owner1', 'PUT', '/api/admin/billing-settings', { capacityMb: sold + 600 });
+  const r1 = await call('cust2', 'POST', `/api/servers/${s1.id}/start`);
+  expect('first server on a plan always starts (its memory is reserved)', r1.status, 200);
+  const r2 = await call('cust2', 'POST', `/api/servers/${s2.id}/start`);
+  expect('an extra server is refused while the machine is full', r2.status !== 200 && /machine is full/.test(r2.data.error || ''), true);
+  await call('owner1', 'PUT', '/api/admin/billing-settings', { capacityMb: null });
+  await call('cust2', 'POST', `/api/servers/${s1.id}/kill`).catch(() => {});
+  await call('cust2', 'POST', `/api/servers/${s1.id}/stop`).catch(() => {});
 
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);

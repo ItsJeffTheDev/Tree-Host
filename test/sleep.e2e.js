@@ -19,9 +19,9 @@ const talk = (port, next, extra) => new Promise((res) => {
 });
 const status = (port) => talk(port, 1, pkt(0, Buffer.alloc(0)));
 (async () => {
-  await call('POST', '/api/auth/signup', { username: 'sleeper', email: 'sleeper@example.com', password: 'TreeHost-test-123', acceptTerms: true });
+  await call('POST', '/api/auth/signup', { username: 'sleeper', email: 'sleeper@example.com', password: 'TreeHost-test-123', acceptTerms: true, birthYear: 1995 });
   await call('POST', '/api/auth/login', { username: 'sleeper', password: 'TreeHost-test-123' });
-  if (!(await call('GET', '/api/billing')).data.subscriptions.length) await call('POST', '/api/billing/checkout', { planId: 'sapling' });
+  if (!(await call('GET', '/api/billing')).data.subscriptions.length) await call('POST', '/api/billing/checkout', { planId: 'sapling', consent: { renewal: true, adult: true, withdrawal: true } });
   const sub = (await call('GET', '/api/billing')).data.subscriptions[0];
   const s = (await call('POST', '/api/servers', { name: 'Sleepy SMP', type: 'paper', version: '1.21.1', eula: true, subscriptionId: sub.id })).data;
   await call('PUT', `/api/servers/${s.id}/sleep`, { enabled: true, minutes: 5 });

@@ -1613,13 +1613,14 @@ class Manager extends EventEmitter {
   async setupIsolation() {
     const mode = process.env.TREEHOST_ISOLATION || (process.platform === 'linux' ? 'auto' : 'off');
     if (mode === 'off') return;
+    console.log('  Checking Docker...');
     if (await docker.available()) {
       this.docker = true;
       await docker.removeLeftovers((m) => console.log(`  ${m}`));
       await docker.ensureNetwork();
       console.log('  Isolation: every server runs in its own Docker container.');
     } else if (this.allowUnsafe) {
-      console.log('  Docker is not running: test servers run directly on this PC until it is (checked again at every start).');
+      console.log('  Docker is not running or not answering: test servers run directly on this PC until it is (checked again at every start).');
     } else if (mode === 'docker') {
       console.log('  TREEHOST_ISOLATION=docker but Docker is not running. Customer servers will not start until it is.');
     } else {
