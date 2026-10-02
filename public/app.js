@@ -1022,6 +1022,7 @@ async function renderSettings(body) {
   const javaIsPath = s.java && !/^(auto|\d+)$/.test(s.java);
 
   body.innerHTML = `
+    ${networkCardHtml(s)}
     ${iconCardHtml(s)}
     ${domainCardHtml(s)}
     ${listingCardHtml(s)}
@@ -1229,9 +1230,59 @@ Cancel: keep the current version.`)) return;
   });
 
   bindIconCard(s);
+  bindNetworkCard(s);
   bindDomainCard(s);
   bindListingCard(s);
   if (s.kind !== 'proxy') loadProps(s);
+}
+
+// ---------- network (a proxy in front of the owner's servers) ----------
+
+function networkCardHtml(s) {
+  if (s.kind !== 'proxy' || !isTeam()) return '';
+  return `<div class="card stack" id="network-card">
+    <h3>Network <span class="muted small" style="font-weight:400">(which of your servers players reach through this proxy)</span></h3>
+    <div id="network-body" class="muted">Loading...</div>
+  </div>`;
+}
+
+async function bindNetworkCard(s) {
+  const body = $('#network-body');
+  if (!body) return;
+  const n = await api('GET', `/api/servers/${s.id}/network`).catch((e) => ({ error: e.message }));
+  if (n.error) return (body.textContent = n.error);
+  const edit = can('settings', s);
+  const nameOf = (id) => (n.names.find((x) => x.id === id) || {}).name;
+  if (!n.servers.length) {
+    body.innerHTML = 'You have no other servers yet. Create a Paper or Purpur server, then connect it here.';
+    return;
+  }
+  body.classList.remove('muted');
+  body.innerHTML = `
+    <p class="hint" style="margin:0 0 6px">Tick the servers to connect. Players join this proxy's address and start on the server you choose; they switch with <b>/server name</b>.
+      Tree Host sets up both sides (the proxy's server list, and each server's forwarding so player names, skins and UUIDs come through).</p>
+    <div class="stack" style="gap:6px">${n.servers
+      .map((x) => `<label class="net-row ${x.compatible && !x.inOtherNetwork ? '' : 'off'}">
+        <input type="checkbox" name="srv" value="${esc(x.id)}" ${x.selected ? 'checked' : ''} ${edit && x.compatible && !x.inOtherNetwork ? '' : 'disabled'}>
+        <span class="net-name"><b>${esc(x.name)}</b> <span class="muted small">${esc(x.type)} ${esc(x.version)}${x.selected && nameOf(x.id) ? ` · /server ${esc(nameOf(x.id))}` : ''}</span>
+          ${!x.compatible ? '<div class="small muted">Vanilla and Fabric servers can\'t go behind a proxy (use Paper or Purpur).</div>' : x.inOtherNetwork ? `<div class="small muted">Already in the network of "${esc(x.inOtherNetwork)}".</div>` : ''}</span>
+        <span class="net-start small"><input type="radio" name="start" value="${esc(x.id)}" ${n.default === x.id ? 'checked' : ''} ${edit && x.compatible && !x.inOtherNetwork ? '' : 'disabled'}> players start here</span>
+      </label>`)
+      .join('')}</div>
+    ${n.mode ? `<p class="small muted" style="margin:6px 0 0">Forwarding: <b>${n.mode === 'modern' ? 'Velocity modern (most secure)' : 'BungeeCord (legacy)'}</b>. Servers in the network only accept players coming through this proxy.</p>` : ''}
+    ${edit ? '<div class="row" style="margin-top:8px"><button class="btn primary" id="net-save" type="button">Save network</button></div>' : ''}`;
+  const save = $('#net-save');
+  if (!save) return;
+  save.addEventListener('click', () => attempt(async () => {
+    const servers = $$('[name=srv]:checked', body).map((c) => c.value);
+    const start = $('[name=start]:checked', body);
+    const r = await api('PUT', `/api/servers/${s.id}/network`, { servers, default: start && servers.includes(start.value) ? start.value : servers[0] });
+    if (r.restart.length && confirm(`Network saved. Restart these to apply it now?\n\n${r.restart.map((x) => `• ${x.name}`).join('\n')}`)) {
+      for (const x of r.restart) await api('POST', `/api/servers/${x.id}/restart`).catch((e) => toast(`${x.name}: ${e.message}`, 'error'));
+      toast('Restarting...');
+    } else toast(servers.length ? 'Network saved. It applies when the servers next start.' : 'Network cleared.');
+    bindNetworkCard(s);
+  }));
 }
 
 // ---------- custom address (the owner's own domain) ----------

@@ -62,6 +62,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             "advancedban:tempban", "deop", "minecraft:deop"));
 
     private volatile Map<String, String> staff = Collections.emptyMap(); // lower-case name -> role label
+    private volatile boolean proxyTrusted; // Tree Host put this server behind its owner's proxy, which checks accounts
     private File staffFile;
     private long lastModified = -2;
     private Timer timer;
@@ -98,11 +99,13 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         if (m == lastModified) return;
         lastModified = m;
         Map<String, String> next = new HashMap<>();
+        boolean trust = false;
         if (m >= 0) {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(staffFile), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) {
                     line = line.trim();
+                    if (line.equals("#trust=proxy")) trust = true;
                     if (line.isEmpty() || line.startsWith("#")) continue;
                     String[] parts = line.split("\\|", 2);
                     String name = parts[0].trim();
@@ -114,11 +117,12 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             }
         }
         staff = next;
+        proxyTrusted = trust;
     }
 
     /** Names are only trustworthy when Mojang checked them: online mode, or behind a BungeeCord/Velocity proxy. */
     private boolean trusted() {
-        if (getServer().getOnlineMode()) return true;
+        if (getServer().getOnlineMode() || proxyTrusted) return true;
         try {
             return getServer().spigot().getConfig().getBoolean("settings.bungeecord");
         } catch (Throwable t) {

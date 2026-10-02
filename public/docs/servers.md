@@ -130,6 +130,18 @@ Memory, CPU, disk and the port come from your plan and can't be changed in Setti
 
 ---
 
+## Proxy networks (Velocity, BungeeCord, Waterfall)
+
+A proxy lets players join one address and move between your servers with **/server name**.
+
+1. Create your servers (Paper or Purpur work best) and a proxy (Velocity recommended).
+2. Open the **proxy** → **Settings → Network**. Tick the servers to connect and pick where players start.
+3. Click **Save network** and let Tree Host restart them.
+
+Tree Host sets up both sides for you: the proxy's server list, and each server's forwarding, so player names, skins
+and UUIDs come through. Servers in a network only accept players coming through your proxy. Vanilla and Fabric
+servers can't go behind a proxy.
+
 ## Server icon
 
 Give your server its own picture in Minecraft's server list (**Multiplayer**):

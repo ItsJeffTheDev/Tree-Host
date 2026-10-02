@@ -189,6 +189,42 @@ function replaceTomlSection(text, name, block) {
   return lines.join('\n');
 }
 
+/** Replaces a top-level YAML block ("key:" and everything indented under it), or appends it. */
+function replaceYamlBlock(text, key, block) {
+  const lines = String(text || '').split(/\r?\n/);
+  const start = lines.findIndex((l) => new RegExp(`^${key}:\\s*(#.*)?$`).test(l));
+  const blockLines = block.replace(/\n+$/, '').split('\n');
+  if (start < 0) return `${String(text || '').replace(/\n*$/, text ? '\n' : '')}${blockLines.join('\n')}\n`;
+  let end = start + 1;
+  while (end < lines.length && (lines[end].trim() === '' || /^\s/.test(lines[end]) || lines[end].trim().startsWith('#'))) end++;
+  lines.splice(start, end - start, ...blockLines);
+  return lines.join('\n');
+}
+
+/** Replaces "  key:" (and what's indented under it) inside a top-level parent block, adding it if missing. */
+function replaceYamlChild(text, parent, key, block) {
+  const lines = String(text || '').split(/\r?\n/);
+  const p = lines.findIndex((l) => new RegExp(`^${parent}:\\s*(#.*)?$`).test(l));
+  const blockLines = block.replace(/\n+$/, '').split('\n');
+  if (p < 0) return `${String(text || '').replace(/\n*$/, text ? '\n' : '')}${parent}:\n${blockLines.join('\n')}\n`;
+  let i = p + 1;
+  while (i < lines.length && !(new RegExp(`^  ${key}:`).test(lines[i])) && (lines[i].trim() === '' || /^\s/.test(lines[i]))) i++;
+  if (i < lines.length && new RegExp(`^  ${key}:`).test(lines[i])) {
+    let end = i + 1;
+    while (end < lines.length && (/^ {3,}/.test(lines[end]) || lines[end].trim() === '')) end++;
+    lines.splice(i, end - i, ...blockLines);
+  } else {
+    lines.splice(p + 1, 0, ...blockLines);
+  }
+  return lines.join('\n');
+}
+
+function versionAtLeastMc(v, want) {
+  const a = String(v || '').split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < want.length; i++) if ((a[i] || 0) !== want[i]) return (a[i] || 0) > want[i];
+  return true;
+}
+
 function safeFileName(name) {
   const base = path.basename(String(name || ''));
   if (!base || base.startsWith('.') || /[<>:"|?*\x00-\x1f]/.test(base)) throw new Error('Invalid file name');
@@ -493,6 +529,7 @@ class Instance extends EventEmitter {
       const text = (await exists(propsFile)) ? await fsp.readFile(propsFile, 'utf8') : '';
       await fsp.writeFile(propsFile, updateProperties(text, { 'server-port': port }));
       await this.applyGatewayBackend();
+      await this.applyNetworkBackend();
       return;
     }
     // Proxies: keep the configured bind port in sync.
@@ -513,18 +550,30 @@ class Instance extends EventEmitter {
           .replace(/^bind\s*=.*$/m, `bind = "0.0.0.0:${port}"`)
           .replace(/^online-mode\s*=.*$/m, `online-mode = ${this.cfg.gateway || this.cfg.onlineMode !== false}`);
         if (this.cfg.gateway) text = this.gatewayToml(text);
+        else if (this.cfg.network) text = await this.networkToml(text);
         await fsp.writeFile(velocityToml, text);
       }
     } else {
       const cfgYml = path.join(this.dir, 'config.yml');
       if (await exists(cfgYml)) {
-        const text = await fsp.readFile(cfgYml, 'utf8');
-        await fsp.writeFile(
-          cfgYml,
-          text
-            .replace(/^(\s*host:\s*)[^\s#]+/m, `$10.0.0.0:${port}`)
-            .replace(/^online_mode:.*$/m, `online_mode: ${this.cfg.onlineMode !== false}`),
-        );
+        let text = await fsp.readFile(cfgYml, 'utf8');
+        text = text
+          .replace(/^(\s*host:\s*)[^\s#]+/m, `$10.0.0.0:${port}`)
+          .replace(/^online_mode:.*$/m, `online_mode: ${this.cfg.onlineMode !== false}`);
+        if (this.cfg.network) text = this.networkBungee(text);
+        await fsp.writeFile(cfgYml, text);
+      } else if (this.cfg.network) {
+        await fsp.writeFile(cfgYml, this.networkBungee([
+          'listeners:',
+          `- host: 0.0.0.0:${port}`,
+          '  motd: \'&aA Tree Host network\'',
+          '  max_players: 100',
+          '  force_default_server: true',
+          '  priorities: []',
+          `online_mode: ${this.cfg.onlineMode !== false}`,
+          'ip_forward: true',
+          '',
+        ].join('\n')));
       }
     }
   }
@@ -571,6 +620,86 @@ class Instance extends EventEmitter {
 
   logActivity(kind, who, text) {
     if (this.manager.activity) this.manager.activity.log(kind, who, text, this);
+  }
+
+  // ----- Network: a customer's proxy in front of their own servers -----
+
+  /** velocity.toml for a proxy's network: its servers, where players start, and player-info forwarding. */
+  async networkToml(text) {
+    const net = this.manager.networkOf ? this.manager.networkOf(this) : null;
+    if (!net) return text;
+    const servers = net.backends.map((b) => `"${b.name}" = "${b.address}"`).join('\n');
+    const order = net.backends.map((b) => `    "${b.name}"`).join(',\n');
+    text = replaceTomlSection(text, 'servers', `[servers]\n${servers ? `${servers}\n` : ''}try = [\n${order}\n]\n`);
+    text = replaceTomlSection(text, 'forced-hosts', '[forced-hosts]\n');
+    text = text.replace(/^player-info-forwarding-mode\s*=.*$/m, `player-info-forwarding-mode = "${net.mode}"`);
+    if (/^forwarding-secret-file\s*=/m.test(text)) {
+      text = text.replace(/^forwarding-secret-file\s*=.*$/m, 'forwarding-secret-file = "forwarding.secret"');
+      await fsp.writeFile(path.join(this.dir, 'forwarding.secret'), net.secret);
+    } else if (/^forwarding-secret\s*=/m.test(text)) {
+      text = text.replace(/^forwarding-secret\s*=.*$/m, `forwarding-secret = "${net.secret}"`);
+    } else {
+      await fsp.writeFile(path.join(this.dir, 'forwarding.secret'), net.secret);
+    }
+    return text;
+  }
+
+  /** BungeeCord / Waterfall config.yml for a proxy's network (legacy forwarding: ip_forward). */
+  networkBungee(text) {
+    const net = this.manager.networkOf ? this.manager.networkOf(this) : null;
+    if (!net) return text;
+    const servers = net.backends.length
+      ? net.backends.map((b) => `  ${b.name}:\n    motd: '${b.label.replace(/'/g, "''")}'\n    address: ${b.address}\n    restricted: false`).join('\n')
+      : '  {}';
+    text = replaceYamlBlock(text, 'servers', `servers:\n${servers}`);
+    text = /^ip_forward:/m.test(text) ? text.replace(/^ip_forward:.*$/m, 'ip_forward: true') : `${text.replace(/\n*$/, '\n')}ip_forward: true\n`;
+    // Where players start: the listener's priorities list.
+    const prio = net.backends.map((b) => `  - ${b.name}`).join('\n');
+    text = text.replace(/^(\s*)priorities:[^\n]*(\n\1\s*- [^\n]*)*/m, (m0, ind) => `${ind}priorities:${prio ? `\n${prio.replace(/^ {2}/gm, `${ind}  `)}` : ' []'}`);
+    return text;
+  }
+
+  /**
+   * A server in a proxy's network trusts the proxy: online-mode off (the proxy checks accounts) and the proxy's
+   * forwarding switched on (Paper: modern, with the shared secret; Spigot/CraftBukkit: BungeeCord legacy).
+   * Taken out of a network, it goes back to normal.
+   */
+  async applyNetworkBackend() {
+    if (this.kind === 'proxy' || this.provider.family !== 'bukkit') return;
+    const net = this.manager.networkFor ? this.manager.networkFor(this) : null;
+    if (!net && !this.cfg.networkApplied) return;
+    const propsFile = path.join(this.dir, 'server.properties');
+    const props = (await exists(propsFile)) ? await fsp.readFile(propsFile, 'utf8') : '';
+    await fsp.writeFile(propsFile, updateProperties(props, { 'online-mode': net ? 'false' : this.cfg.onlineMode === false ? 'false' : 'true' }));
+    const modern = !!net && net.mode === 'modern';
+    // Paper's own proxy settings (1.19+: config/paper-global.yml, older: paper.yml).
+    if (['paper', 'purpur', 'folia'].includes(this.cfg.type)) {
+      const velocity = `  velocity:\n    enabled: ${modern}\n    online-mode: true\n    secret: '${modern ? net.secret : ''}'`;
+      if (versionAtLeastMc(this.cfg.version, [1, 19])) {
+        const file = path.join(this.dir, 'config', 'paper-global.yml');
+        await fsp.mkdir(path.dirname(file), { recursive: true });
+        const text = (await exists(file)) ? await fsp.readFile(file, 'utf8') : '';
+        await fsp.writeFile(file, replaceYamlBlock(text, 'proxies', `proxies:\n  bungee-cord:\n    online-mode: true\n  proxy-protocol: false\n${velocity}`));
+      } else {
+        const file = path.join(this.dir, 'paper.yml');
+        const text = (await exists(file)) ? await fsp.readFile(file, 'utf8') : '';
+        await fsp.writeFile(file, replaceYamlChild(text, 'settings', 'velocity-support', `  velocity-support:\n    enabled: ${modern}\n    online-mode: true\n    secret: '${modern ? net.secret : ''}'`));
+      }
+    }
+    // BungeeCord-style (legacy) forwarding lives in spigot.yml.
+    const legacy = !!net && net.mode === 'legacy';
+    const spigotYml = path.join(this.dir, 'spigot.yml');
+    let t = (await exists(spigotYml)) ? await fsp.readFile(spigotYml, 'utf8') : '';
+    if (/^\s*bungeecord:/m.test(t)) t = t.replace(/^(\s*bungeecord:\s*)\S+/m, `$1${legacy}`);
+    else if (/^settings:\s*$/m.test(t)) t = t.replace(/^settings:\s*$/m, `settings:\n  bungeecord: ${legacy}`);
+    else if (legacy || t) t = `${t.replace(/\n*$/, t ? '\n' : '')}settings:\n  bungeecord: ${legacy}\n`;
+    if (t) await fsp.writeFile(spigotYml, t);
+    const key = net ? `${net.proxyId}:${net.mode}` : null;
+    if (key !== (this.cfg.networkApplied || null)) {
+      this.cfg.networkApplied = key;
+      this.save();
+      this.sysLog(net ? `This server is in the network of "${net.proxyName}": players join through the proxy (${net.proxyAddress || 'its address'}).` : 'This server left its proxy network: players join it directly again.');
+    }
   }
 
   // ----- Gateway (one Velocity proxy in front of every server) -----
@@ -780,14 +909,22 @@ class Instance extends EventEmitter {
       this.players.clear();
       c.lastPid = null;
       this.save();
-      const crashed = !expected && code !== 0;
-      if (!crashed) this.sysLog(`Server stopped${code != null ? ` (exit code ${code})` : ''}.`);
+      // Exit 143/130 (or SIGTERM/SIGINT/SIGHUP) means something outside Tree Host asked it to stop: the Tree Host window
+      // was closed, Docker restarted, or the PC is shutting down. That's a normal stop, not a crash.
+      const stoppedOutside = !expected && (code === 143 || code === 130 || ['SIGTERM', 'SIGINT', 'SIGHUP'].includes(signal));
+      const crashed = !expected && !stoppedOutside && code !== 0;
+      if (stoppedOutside) this.sysLog(`Server was stopped from outside Tree Host (${signal || `exit code ${code}`}): for example the Tree Host window was closed or Docker restarted. This is not a crash.`);
+      else if (!crashed) this.sysLog(`Server stopped${code != null ? ` (exit code ${code})` : ''}.`);
       else this.sysLog(`Server exited unexpectedly (${signal || `exit code ${code}`}). Check the log above for errors.`);
       this.memUsedMb = null;
       this.setStatus('stopped');
       if (crashed) {
         this.crashTimes = (this.crashTimes || []).filter((t) => Date.now() - t < 10 * 60 * 1000).concat(Date.now());
-        const lastLines = this.logs.slice(-40).map((l) => stripAnsi(l.t)).filter((t) => !t.startsWith('[Tree Host]') && /exception|error|caused by/i.test(t)).slice(-2);
+        // The likely cause: real error lines near the end, not stack frames or players failing to connect somewhere.
+        const lastLines = this.logs.slice(-40).map((l) => stripAnsi(l.t))
+          .filter((t) => !t.startsWith('[Tree Host]') && /exception|error|caused by/i.test(t))
+          .filter((t) => !/^\s*at |^\s*\.\.\. \d+ more|unable to connect|Connection refused|ConnectException|has disconnected|lost connection/i.test(t))
+          .slice(-2);
         if (javaInside && code === 137) this.sysLog(`The server ran out of memory (it may use at most ${Number(c.memoryMb)} MB). Use fewer or lighter plugins/mods, or a bigger plan.`);
         this.logActivity('crash', 'Tree Host', `reports a crash (exit code ${code})${lastLines.length ? `: ${lastLines.join(' / ').slice(0, 300)}` : ''}`);
         if (c.autoRestart && !this.restartPending) {
@@ -837,6 +974,13 @@ class Instance extends EventEmitter {
       const addr = this.cfg.port === 25565 ? '127.0.0.1' : `127.0.0.1:${this.cfg.port}`;
       this.sysLog(`Ready! In Minecraft go to Multiplayer → Add Server and use the address: ${this.cfg.publicAddress || this.cfg.autoAddress || addr}`);
       if (this.manager.teamMode && this.kind !== 'proxy' && !this.isCustomer) this.teamAccess({ op: false, quiet: true });
+    }
+    if (this.kind === 'proxy' && !this.networkHinted && /unable to connect to server|Unable to connect you to|Could not connect to a default or fallback server|Connection refused/i.test(line)) {
+      this.networkHinted = true;
+      setTimeout(() => (this.networkHinted = false), 300000);
+      this.sysLog(this.cfg.network
+        ? 'The proxy could not reach one of your servers. Make sure the servers in Settings → Network are running (and were restarted after joining the network).'
+        : 'This proxy has no servers to send players to yet. Open Settings → Network, tick your servers and choose where players start.');
     }
     if (!this.downgradeHinted && /No key dimensions in MapLike|saved with a newer version|newer version of Minecraft|Unsupported data version|outdated server/i.test(line) && this.status === 'starting') {
       this.downgradeHinted = true;

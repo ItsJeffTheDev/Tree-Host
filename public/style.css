@@ -462,3 +462,10 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .tag-pick input { margin: 0; accent-color: var(--accent); }
 
 .si-online { color: var(--accent); font-weight: 600; }
+
+/* ---------- proxy network ---------- */
+.net-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; cursor: pointer; }
+.net-row.off { opacity: .6; cursor: default; }
+.net-row:has(input[name=srv]:checked) { border-color: var(--accent); background: rgba(70,195,123,.07); }
+.net-name { flex: 1; min-width: 180px; }
+.net-start { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }

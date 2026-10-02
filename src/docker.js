@@ -62,6 +62,8 @@ function runArgs({ id, dir, port, memLimitMb, cpus, image }) {
     '--label', 'treehost=1',
     '--label', `treehost.server=${id}`,
     '--network', NETWORK,
+    // A proxy reaches its owner's servers through the ports they publish on this machine (servers can't reach each other directly).
+    '--add-host', 'host.docker.internal:host-gateway',
     '-p', `${port}:${port}/tcp`,
     '-m', `${memLimitMb}m`, '--memory-swap', `${memLimitMb}m`,
     '--pids-limit', '1024',

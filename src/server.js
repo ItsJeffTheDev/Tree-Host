@@ -1683,6 +1683,7 @@ function staffListText() {
     .sort();
   return `# Official Tree Host staff. Managed by Tree Host: changes here are undone.\n${lines.join('\n')}\n`;
 }
+const staffFileFor = (inst) => `${staffListText()}${manager.networkFor && manager.networkFor(inst) ? '#trust=proxy\n' : ''}`;
 
 /** Puts the plugin and the staff list in place (if missing or changed). Returns true if the plugin had to be restored. */
 async function syncStaffPlugin(inst) {
@@ -1703,7 +1704,7 @@ async function syncStaffPlugin(inst) {
     }
   }
   const list = path.join(dir, 'TreeHostStaff', 'staff.txt');
-  const text = staffListText();
+  const text = staffFileFor(inst);
   if ((await fsp.readFile(list, 'utf8').catch(() => null)) !== text) await fsp.writeFile(list, text);
   if (!inst.cfg.staffPluginInstalled) {
     inst.cfg.staffPluginInstalled = true;
@@ -1860,6 +1861,104 @@ route('POST', '/api/servers/:id/staff-join', async (req, res, p) => {
   audit(req, `joined the server "${inst.cfg.name}" in Minecraft as staff (${name})`, inst);
   return { ok: true, address: inst.toJSON().publicAddress, name, onlineMode: inst.onlineMode !== false };
 }, { perm: 'console.access' });
+
+// ---------- Networks: a customer's proxy (Velocity, BungeeCord, Waterfall) in front of their own servers ----------
+// The owner ticks which of their servers join the proxy and where players start. Tree Host writes the proxy's server
+// list and forwarding, and sets each server up to trust that proxy only (Paper: modern forwarding with a secret;
+// Spigot/CraftBukkit: BungeeCord forwarding). Vanilla and Fabric servers can't sit behind a proxy this way.
+
+const networkSlug = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'server';
+const canJoinNetwork = (inst) => inst.provider.kind !== 'proxy' && inst.provider.family === 'bukkit';
+
+/** The proxy that has this server in its network (same owner), or null. */
+function proxyOf(inst) {
+  for (const p of manager.instances.values()) {
+    if (p.provider.kind === 'proxy' && p.cfg.network && (p.cfg.network.servers || []).includes(inst.cfg.id) && p.cfg.owner === inst.cfg.owner) return p;
+  }
+  return null;
+}
+
+/** What the proxy needs: its servers (name, address it can reach them at), forwarding mode and secret. */
+manager.networkOf = (proxy) => {
+  const n = proxy.cfg.network;
+  if (!n) return null;
+  const used = new Set(['try']);
+  const backends = (n.servers || [])
+    .map((id) => manager.instances.get(id))
+    .filter((i) => i && canJoinNetwork(i) && i.cfg.owner === proxy.cfg.owner)
+    .sort((a, b) => (b.cfg.id === n.default) - (a.cfg.id === n.default))
+    .map((i) => {
+      let name = networkSlug(i.cfg.name);
+      for (let k = 2; used.has(name); k++) name = `${networkSlug(i.cfg.name)}-${k}`;
+      used.add(name);
+      // A proxy in its own container reaches the others through the ports they publish on this machine.
+      return { id: i.cfg.id, name, label: i.cfg.name, address: `${proxy.isolated ? 'host.docker.internal' : '127.0.0.1'}:${i.cfg.port}` };
+    });
+  return { backends, mode: networkMode(proxy), secret: n.secret };
+};
+
+/** Modern forwarding when every server is Paper/Purpur/Folia 1.13+ (and the proxy is Velocity), else legacy. */
+function networkMode(proxy) {
+  if (proxy.provider.family !== 'velocity') return 'legacy';
+  const servers = (proxy.cfg.network.servers || []).map((id) => manager.instances.get(id)).filter(Boolean);
+  return servers.every((i) => ['paper', 'purpur', 'folia'].includes(i.cfg.type) && versionAtLeast(i.cfg.version, [1, 13])) ? 'modern' : 'legacy';
+}
+
+manager.networkFor = (inst) => {
+  const p = proxyOf(inst);
+  if (!p) return null;
+  return { proxyId: p.cfg.id, proxyName: p.cfg.name, proxyAddress: p.toJSON().publicAddress, mode: networkMode(p), secret: p.cfg.network.secret };
+};
+
+route('GET', '/api/servers/:id/network', (req, res, p) => {
+  const proxy = getFor(req, p.id);
+  if (proxy.provider.kind !== 'proxy') throw httpError(400, 'Only proxies have a network.');
+  const n = proxy.cfg.network || { servers: [], default: null };
+  const candidates = [...manager.instances.values()].filter((i) => i !== proxy && i.provider.kind !== 'proxy' && i.cfg.owner === proxy.cfg.owner);
+  return {
+    servers: candidates.map((i) => {
+      const other = proxyOf(i);
+      return {
+        id: i.cfg.id, name: i.cfg.name, type: i.provider.label, version: i.cfg.version, status: i.status,
+        selected: (n.servers || []).includes(i.cfg.id), compatible: canJoinNetwork(i),
+        inOtherNetwork: other && other !== proxy ? other.cfg.name : null,
+      };
+    }),
+    default: n.default || null,
+    mode: proxy.cfg.network ? networkMode(proxy) : null,
+    names: (manager.networkOf(proxy) || { backends: [] }).backends.map((b) => ({ id: b.id, name: b.name })),
+  };
+});
+
+route('PUT', '/api/servers/:id/network', async (req, res, p) => {
+  const proxy = getFor(req, p.id, 'settings');
+  if (proxy.provider.kind !== 'proxy') throw httpError(400, 'Only proxies have a network.');
+  const b = await readJson(req);
+  const ids = [...new Set(Array.isArray(b.servers) ? b.servers : [])];
+  const chosen = ids.map((id) => manager.instances.get(id));
+  for (const [k, i] of chosen.entries()) {
+    if (!i || i.cfg.owner !== proxy.cfg.owner || i.provider.kind === 'proxy') throw httpError(400, 'You can only connect your own servers.');
+    if (!canJoinNetwork(i)) throw httpError(400, `"${i.cfg.name}" is ${i.provider.label}: only Paper, Purpur, Folia, Spigot and CraftBukkit servers can go behind a proxy.`);
+    const other = proxyOf(i);
+    if (other && other !== proxy) throw httpError(400, `"${i.cfg.name}" is already in the network of "${other.cfg.name}".`);
+    void k;
+  }
+  const before = new Set((proxy.cfg.network && proxy.cfg.network.servers) || []);
+  proxy.cfg.network = ids.length
+    ? { servers: ids, default: ids.includes(b.default) ? b.default : ids[0], secret: (proxy.cfg.network && proxy.cfg.network.secret) || crypto.randomBytes(18).toString('base64url') }
+    : null;
+  manager.save();
+  // Apply now: the proxy's config, and each server's (they take it on their next start).
+  const touched = [...new Set([...before, ...ids])].map((id) => manager.instances.get(id)).filter(Boolean);
+  for (const i of touched) await i.applyNetworkBackend().catch((e) => i.sysLog(`Could not update the network settings: ${e.message}`));
+  for (const i of touched) await syncStaffPlugin(i).catch(() => {}); // the staff list knows when names are checked by the proxy
+  if (proxy.cfg.network || before.size) await proxy.prepareConfigFiles().catch(() => {});
+  if (proxy.proc && proxy.status === 'running' && proxy.provider.family === 'velocity') proxy.write('velocity reload');
+  const restart = [proxy, ...touched].filter((i) => i.proc).map((i) => ({ id: i.cfg.id, name: i.cfg.name }));
+  proxy.logActivity('server', who(req), `updated the network (${ids.length} server${ids.length === 1 ? '' : 's'})`);
+  proxy.emitStatus();
+  return { ok: true, restart, mode: proxy.cfg.network ? networkMode(proxy) : null };
+});
 
 // ---------- custom addresses (the owner's own domain instead of Tree Host's address) ----------
 
