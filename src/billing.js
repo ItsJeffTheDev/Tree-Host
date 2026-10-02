@@ -44,6 +44,11 @@ const bundleFields = (p) => (p.oneTime || p.slots
     }
   : {});
 
+// An unfinished checkout holds its memory this long (Stripe's checkout page expires after 30 minutes to match).
+const PENDING_HOLD_MS = 35 * 60 * 1000;
+/** Plans that use memory on the machine: paid ones, and checkouts started in the last 35 minutes. */
+const holdsMemory = (s) => s.status === 'active' || s.status === 'past_due' || (s.status === 'pending' && Date.now() - s.createdAt < PENDING_HOLD_MS);
+
 // The checkout wording customers agree to; bump it when that text changes (stored with each consent record).
 const CONSENT_VERSION = '2026-10';
 
@@ -247,11 +252,11 @@ class Billing {
   lifetimeFull() {
     if (this.testSite && (this.settings.lifetimePerNode === null || this.settings.lifetimePerNode === undefined)) return false;
     const cap = this.lifetimePerNode();
-    return cap > 0 && this.subs.filter((s) => s.oneTime && ['active', 'past_due', 'pending'].includes(s.status)).length >= cap;
+    return cap > 0 && this.subs.filter((s) => s.oneTime && holdsMemory(s)).length >= cap;
   }
 
   soldMb() {
-    return this.subs.filter((s) => ['active', 'past_due', 'pending'].includes(s.status)).reduce((n, s) => n + reserveMb(s), 0);
+    return this.subs.filter(holdsMemory).reduce((n, s) => n + reserveMb(s), 0);
   }
 
   /** Unsold memory, minus what running extra servers borrow from it right now. */
@@ -277,6 +282,11 @@ class Billing {
 
   forUser(userId) {
     return this.subs.filter((s) => s.userId === userId && s.status !== 'pending').sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /** Checkouts this customer started but Tree Host hasn't seen paid yet. */
+  pendingFor(userId) {
+    return this.subs.filter((s) => s.userId === userId && s.status === 'pending');
   }
 
   /** A subscription can run its server while active, and for a few days after a failed payment. */
@@ -393,6 +403,7 @@ class Billing {
         success_url: `${origin}/dashboard?billing=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${origin}/dashboard?billing=canceled`,
         client_reference_id: s.id,
+        expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
         customer: user.stripeCustomerId || undefined,
         customer_email: user.stripeCustomerId ? undefined : user.email || undefined,
         customer_creation: user.stripeCustomerId ? undefined : 'always',
@@ -418,6 +429,7 @@ class Billing {
       success_url: `${origin}/dashboard?billing=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/dashboard?billing=canceled`,
       client_reference_id: s.id,
+      expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
       customer: user.stripeCustomerId || undefined,
       customer_email: user.stripeCustomerId ? undefined : user.email || undefined,
       allow_promotion_codes: 'true',

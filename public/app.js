@@ -1233,7 +1233,10 @@ Cancel: keep the current version.`)) return;
     if (prompt(`Type the server name to delete it permanently:\n${s.name}`) !== s.name) return;
     attempt(async () => {
       await api('DELETE', `/api/servers/${s.id}`);
-      toast('Server deleted');
+      // The plan is separate from the server: it stays (and keeps billing) until it's canceled in Billing.
+      toast(s.plan && !s.plan.lifetime
+        ? `Server deleted. Your ${s.plan.planName} plan is still yours: make a new server on it, or cancel it in Billing to stop paying.`
+        : 'Server deleted');
     });
   });
 

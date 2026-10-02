@@ -1360,8 +1360,8 @@ route(
 );
 route('GET', '/api/billing', async (req) => {
   // Paid in Stripe but the webhook hasn't arrived (always the case on a localhost test site): check with Stripe.
-  for (const x of billing.forUser(req.user.id)) {
-    if (x.status === 'pending' && x.checkoutSession && ['test', 'live'].includes(billing.mode)) await billing.confirmCheckout(req.user, x.checkoutSession, auth).catch(() => {});
+  for (const x of billing.pendingFor(req.user.id)) {
+    if (x.checkoutSession && ['test', 'live'].includes(billing.mode)) await billing.confirmCheckout(req.user, x.checkoutSession, auth).catch(() => {});
   }
   return billingView(req);
 });
