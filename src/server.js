@@ -1445,6 +1445,7 @@ route(
   () => ({
     ...billing.adminSummary(),
     plans: billing.plans,
+    competitors: billing.competitors(),
     subscriptions: billing.subs
       .filter((x) => x.status !== 'pending')
       .map((x) => ({
@@ -1817,6 +1818,13 @@ route('GET', '/api/admin/donations', () => ({
 route('PUT', '/api/admin/donation-goal', async (req) => {
   const r = await billing.setDonationGoal(await readJson(req));
   audit(req, 'updated the launch fund goal');
+  return r;
+}, { perm: 'billing.manage' });
+// "Compare your plan" (Why page): Tree Host's plans next to other hosts' prices for the same memory.
+route('GET', '/api/compare', () => ({ ...billing.publicPlans(), competitors: billing.competitors() }), { public: true });
+route('PUT', '/api/admin/competitors', async (req) => {
+  const r = await billing.setCompetitors(await readJson(req));
+  audit(req, 'updated the price comparison');
   return r;
 }, { perm: 'billing.manage' });
 route('PUT', '/api/admin/costs', async (req) => {

@@ -53,6 +53,16 @@ const DEFAULT_COSTS = [
   { id: 'dmca', name: 'DMCA agent registration', detail: 'U.S. Copyright Office, renewed every 3 years', cents: 600, period: 'once', status: 'unpaid' },
 ];
 
+// Other hosts' regular monthly prices (no first-month discounts), by memory in MB, checked on the date below.
+// Sources: each host's own pricing page (Apex's blocks automated checks, so its prices come from 2026 reviews).
+const DEFAULT_COMPETITORS_CHECKED = '2026-10-02';
+const DEFAULT_COMPETITORS = [
+  { name: 'Shockbyte', url: 'https://shockbyte.com/games/minecraft-server-hosting', note: '', flatCents: 0, prices: { 2048: 799, 4096: 1599, 8192: 3199 } },
+  { name: 'Apex Hosting', url: 'https://apexminecrafthosting.com/pricing/', note: '', flatCents: 0, prices: { 2048: 799, 4096: 1499, 8192: 2799 } },
+  { name: 'Sparked Host', url: 'https://sparkedhost.com/minecraft-server-hosting', note: '', flatCents: 0, prices: { 1024: 259, 2048: 518, 4096: 1036, 8192: 2072 } },
+  { name: 'Realms (Java)', url: 'https://www.minecraft.net/en-us/realms', note: 'Up to 10 players, vanilla only', flatCents: 799, prices: {} },
+];
+
 // An unfinished checkout holds its memory this long (Stripe's checkout page expires after 30 minutes to match).
 const PENDING_HOLD_MS = 35 * 60 * 1000;
 /** Plans that use memory on the machine: paid ones, and checkouts started in the last 35 minutes. */
@@ -690,6 +700,36 @@ class Billing {
         .slice(0, 24)
         .map((d) => ({ name: d.name || 'Someone kind', message: d.hidden ? '' : d.message || '', at: d.paidAt })),
     };
+  }
+
+  /** Other hosts' regular monthly prices for the "compare your plan" chart. Staff keep them current in the Staff Console. */
+  competitors() {
+    return this.settings.competitors || { checkedAt: DEFAULT_COMPETITORS_CHECKED, hosts: DEFAULT_COMPETITORS };
+  }
+
+  async setCompetitors({ hosts, checkedAt }) {
+    if (!Array.isArray(hosts)) throw httpError(400, 'Send a list of hosts.');
+    const clean = (v, n) => String(v || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, n);
+    const list = hosts.slice(0, 12).map((h) => {
+      const prices = {};
+      for (const [mb, cents] of Object.entries(h.prices || {})) {
+        const m = Math.round(Number(mb));
+        const c = Math.round(Number(cents));
+        if (m >= 512 && m <= 65536 && c > 0) prices[m] = c;
+      }
+      const host = {
+        name: clean(h.name, 40),
+        url: /^https:\/\/[^\s"'<>]+$/.test(String(h.url || '')) ? String(h.url).slice(0, 300) : '',
+        note: clean(h.note, 120),
+        flatCents: h.flatCents ? Math.max(0, Math.round(Number(h.flatCents))) : 0,
+        prices,
+      };
+      if (!host.name) throw httpError(400, 'Every host needs a name.');
+      return host;
+    });
+    this.settings.competitors = { checkedAt: /^\d{4}-\d{2}-\d{2}$/.test(String(checkedAt || '')) ? checkedAt : new Date().toISOString().slice(0, 10), hosts: list };
+    await this.savePlans();
+    return this.settings.competitors;
   }
 
   /** The costs of running Tree Host, shown as a receipt on the donate page. Staff edit them in the Staff Console. */

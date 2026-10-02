@@ -464,6 +464,15 @@ function expect(label, got, want) {
   const costs = (await call('anon', 'GET', '/api/donations')).data.costs;
   expect('costs are saved, cleaned and dated', `${costs.items.length}|${costs.items[0].detail.includes('<')}|${costs.items[1].status}|${!!costs.updatedAt}`, '2|false|unpaid|true');
 
+  // compare your plan (Why page)
+  const cmp = (await call('anon', 'GET', '/api/compare')).data;
+  expect('comparison has plans and other hosts', cmp.plans.length > 0 && cmp.competitors.hosts.length > 0, true);
+  expect('every monthly plan size has prices to compare', cmp.plans.filter((p) => !p.oneTime).every((p) => cmp.competitors.hosts.some((h) => h.prices[p.ramMb])), true);
+  expect('support cannot edit the comparison', (await call('support1', 'PUT', '/api/admin/competitors', { hosts: [] })).status, 403);
+  await call('owner1', 'PUT', '/api/admin/competitors', { checkedAt: '2026-11-01', hosts: [{ name: 'Test Host', url: 'javascript:alert(1)', prices: { 4096: 1234, 99: 5 } }] });
+  const cmp2 = (await call('anon', 'GET', '/api/compare')).data.competitors;
+  expect('comparison saved, unsafe link and bad sizes dropped', `${cmp2.checkedAt}|${cmp2.hosts[0].url}|${JSON.stringify(cmp2.hosts[0].prices)}`, '2026-11-01||{"4096":1234}');
+
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);
   console.log('\nAudit log (newest first):');

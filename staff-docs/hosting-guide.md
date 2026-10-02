@@ -306,6 +306,9 @@ These are the defaults, so they work without changing anything. Emails are sent 
   The same card holds the **costs receipt** shown on /donate: every bill (name, what it's for, amount, monthly / yearly /
   one-time, paid or not). Keep it true and current: when you pay a bill, mark it **Paid**; when a price changes, change
   it. Donations count toward unpaid one-time costs first, then months of running costs, after Stripe's fee.
+- **Price comparison** (Staff Console → Plans → Price comparison): the "compare your plan" chart on the Why page. Every
+  month or two, check each host's **regular** monthly price (not the first-month discount) for the same memory as your
+  plans, update it, and set **Checked on**: the page shows that date. Never guess a price; remove a host you can't check.
 - **Team page** (/team): every Owner, Admin and Developer appears automatically. Each sets a title and a short bio in
   **Account → Team page** (or hides themselves); the picture is their Minecraft head, from the Minecraft name in Account.
 

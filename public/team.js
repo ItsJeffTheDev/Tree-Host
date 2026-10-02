@@ -1351,6 +1351,16 @@ async function adminPromos(body) {
 
 async function adminPlans(body) {
   const d = await api('GET', '/api/admin/billing');
+  // Memory sizes to price: every plan's size (servers), so each plan can be compared like for like.
+  const cmpSizes = [...new Set(d.plans.filter((p) => p.active !== false).map((p) => p.ramMb))].sort((a, b) => a - b);
+  const dollars = (c) => (c ? +(c / 100).toFixed(2) : '');
+  const cmpRow = (h = { prices: {} }) => `<tr class="cmp-edit-row">
+    <td><input type="text" data-k="name" maxlength="40" value="${esc(h.name || '')}" placeholder="Host name" style="min-width:120px"></td>
+    <td><input type="text" inputmode="url" data-k="url" maxlength="300" value="${esc(h.url || '')}" placeholder="https://..." style="min-width:200px"></td>
+    ${cmpSizes.map((mb) => `<td><input type="number" data-mb="${mb}" min="0" step="0.01" value="${dollars((h.prices || {})[mb])}" style="width:80px"></td>`).join('')}
+    <td><input type="number" data-k="flat" min="0" step="0.01" value="${dollars(h.flatCents)}" style="width:80px"></td>
+    <td><input type="text" data-k="note" maxlength="120" value="${esc(h.note || '')}" placeholder="e.g. Up to 10 players" style="min-width:150px"></td>
+    <td><button type="button" class="btn sm danger" data-cmprm>Remove</button></td></tr>`;
   const row = (p = {}) => `<tr class="plan-row">
     <td><input type="text" data-k="name" value="${esc(p.name || '')}" placeholder="Name">${
       p.oneTime
@@ -1392,6 +1402,15 @@ async function adminPlans(body) {
       <label class="field">Lifetime plans sold on this machine (each holds its memory forever; 0 = no limit)
         <div class="row"><input type="number" id="cap-life" min="0" max="100" step="1" placeholder="2" value="${d.lifetimeSetting ?? ''}" style="max-width:160px"><span class="muted">${d.lifetimeCount} sold</span></div></label>
       <div class="row"><button class="btn" id="cap-save">Save</button></div>
+    </div>
+    <div class="card stack" id="cmp-card">
+      <h3>Price comparison <span class="muted small" style="font-weight:400">(Why page → How we compare)</span></h3>
+      <p class="hint" style="margin:0">Other hosts' <b>regular</b> monthly prices for the same memory as your plans (leave first-month discounts out).
+        A host with a flat price (like Realms) uses <b>Flat price</b> instead. Check them every month or two, then update the date: the page shows it.</p>
+      <div class="row"><label class="small">Checked on<br><input type="date" id="cmp-date" value="${esc(d.competitors.checkedAt || '')}"></label></div>
+      <div style="overflow-x:auto"><table class="plans-edit"><thead><tr><th>Host</th><th>Pricing page (https)</th>${cmpSizes.map((mb) => `<th>${+(mb / 1024).toFixed(1)} GB ($)</th>`).join('')}<th>Flat price ($)</th><th>Note</th><th></th></tr></thead>
+        <tbody id="cmp-rows">${d.competitors.hosts.map(cmpRow).join('')}</tbody></table></div>
+      <div class="row"><button class="btn sm" id="cmp-add">+ Add host</button><button class="btn primary" id="cmp-save">Save comparison</button></div>
     </div>`;
   const bindRm = () => $$('[data-rm]', body).forEach((b) => (b.onclick = () => b.closest('tr').remove()));
   bindRm();
@@ -1425,6 +1444,30 @@ async function adminPlans(body) {
       await api('PUT', '/api/admin/plans', { plans });
       toast('Plans saved');
       adminPlans(body);
+    }),
+  );
+  const bindCmpRm = () => $$('[data-cmprm]', body).forEach((b) => (b.onclick = () => b.closest('tr').remove()));
+  bindCmpRm();
+  $('#cmp-add', body).addEventListener('click', () => {
+    $('#cmp-rows', body).insertAdjacentHTML('beforeend', cmpRow());
+    bindCmpRm();
+  });
+  $('#cmp-save', body).addEventListener('click', () =>
+    attempt(async () => {
+      const hosts = $$('#cmp-rows tr', body).map((tr) => {
+        const prices = {};
+        // Sizes no plan uses any more are kept as they were.
+        const before = (d.competitors.hosts.find((h) => h.name === $('[data-k=name]', tr).value.trim()) || {}).prices || {};
+        Object.assign(prices, before);
+        $$('[data-mb]', tr).forEach((i) => {
+          const c = Math.round(Number(i.value) * 100);
+          if (c > 0) prices[i.dataset.mb] = c;
+          else delete prices[i.dataset.mb];
+        });
+        return { name: $('[data-k=name]', tr).value.trim(), url: $('[data-k=url]', tr).value.trim(), note: $('[data-k=note]', tr).value.trim(), flatCents: Math.round(Number($('[data-k=flat]', tr).value) * 100), prices };
+      });
+      await api('PUT', '/api/admin/competitors', { hosts, checkedAt: $('#cmp-date', body).value });
+      toast('Comparison saved');
     }),
   );
   $('#cap-save', body).addEventListener('click', () =>
