@@ -203,6 +203,14 @@ class Instance extends EventEmitter {
     this.manager = manager;
     this.cfg = cfg;
     this.dir = path.join(SERVERS, cfg.id);
+    // Servers from before icon uploads: notice an icon that is already there (e.g. uploaded in Files).
+    if (cfg.iconAt === undefined) {
+      try {
+        cfg.iconAt = Math.round(fs.statSync(path.join(this.dir, 'server-icon.png')).mtimeMs);
+      } catch {
+        cfg.iconAt = null;
+      }
+    }
     this.status = 'stopped';
     this.progress = null;
     this.proc = null;
@@ -276,6 +284,7 @@ class Instance extends EventEmitter {
       isolated: this.isolated,
       suspended: c.suspended || null,
       moderation: c.moderation || null,
+      icon: c.iconAt || null,
       subscriptionId: c.subscriptionId || null,
       plan: this.manager.planInfo(this),
       diskUsedMb: this.diskUsedMb || null,

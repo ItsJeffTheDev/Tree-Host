@@ -124,6 +124,19 @@ Memory, CPU, disk and the port come from your plan and can't be changed in Setti
 
 ---
 
+## Server icon
+
+Give your server its own picture in Minecraft's server list (**Multiplayer**):
+
+1. Open your server → **Settings → Server icon** → **Upload icon**.
+2. Pick any picture (PNG, JPEG, WebP or GIF). We crop it to a square and make it 64×64 pixels, the size Minecraft needs.
+   The preview shows how it will look.
+3. **Restart** the server. Players see the new icon the next time they refresh their server list.
+
+> **Tip:** simple, bold pictures look best at 64×64. Pixel art stays crisp.
+
+To go back to the default, click **Remove** and restart.
+
 ## Limits of your plan
 
 - **Memory:** the server can use up to the plan's memory. If it needs more, it stops with *"ran out of memory"* in the

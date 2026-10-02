@@ -20,6 +20,38 @@ async function call(who, method, path, body) {
   return { status: res.status, data };
 }
 
+/** A plain w x h PNG (for the server icon tests). */
+function makePng(w, h) {
+  const zlib = require('zlib');
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 255] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]);
+    const c = Buffer.alloc(4);
+    c.writeUInt32BE(crc(td));
+    return Buffer.concat([len, td, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const raw = Buffer.alloc((w * 3 + 1) * h, 0x55);
+  for (let y = 0; y < h; y++) raw[y * (w * 3 + 1)] = 0;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+const putIcon = (who, sid, body) => fetch(`${B}/api/servers/${sid}/icon`, { method: 'PUT', headers: { Origin: B, Cookie: jar[who] || '' }, body }).then(async (r) => (r.status >= 500 || process.env.DEBUG_ICON ? console.log('   icon said:', r.status, await r.text()) : null, r.status));
+
 function expect(label, got, want) {
   const ok = Array.isArray(want) ? want.includes(got) : got === want;
   if (ok) passes++; else fails++;
@@ -131,6 +163,15 @@ function expect(label, got, want) {
     await call('owner1', 'PUT', '/api/admin/roles/staff', { permissions: staffPerms });
     expect('developer can kill it (servers.operate)', (await call('dev1', 'POST', `/api/servers/${sid}/kill`)).status, 200);
     for (let i = 0; i < 20 && (await call('dev1', 'GET', `/api/servers/${sid}`)).data.status !== 'stopped'; i++) await new Promise((r) => setTimeout(r, 500));
+    // server icon
+    expect('customer uploads a 64x64 icon', await putIcon('cust1', sid, makePng(64, 64)), 200);
+    expect('the server knows it has an icon', !!(await call('cust1', 'GET', `/api/servers/${sid}`)).data.icon, true);
+    expect('wrong size is refused', await putIcon('cust1', sid, makePng(32, 32)), 400);
+    expect('non-PNG is refused', await putIcon('cust1', sid, Buffer.from('not a picture at all, sorry')), 400);
+    expect("another customer can't change it", await putIcon('cust2', sid, makePng(64, 64)), 404);
+    expect('support can see the icon', (await fetch(`${B}/api/servers/${sid}/icon`, { headers: { Cookie: jar.support1 } })).status, 200);
+    expect('customer removes the icon', (await call('cust1', 'DELETE', `/api/servers/${sid}/icon`)).status, 200);
+    expect('...and it is gone', (await fetch(`${B}/api/servers/${sid}/icon`, { headers: { Cookie: jar.cust1 } })).status, 404);
     expect("staff can't delete a customer's server without a reason", (await call('dev1', 'DELETE', `/api/servers/${sid}`)).status, 400);
     const susSrv = await act('support1', { target: 'server', serverId: sid, type: 'suspend', days: 3 });
     expect('support suspends the server', susSrv.status, 200);
@@ -168,6 +209,12 @@ function expect(label, got, want) {
   expect('older "months" still work (3 = 90 days)', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', months: 3 })).data.days, 90);
   expect('a year', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', days: 365 })).data.length, '1 year');
   expect('silly values are capped (10 years max)', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', days: 99999 })).data.days, 3650);
+
+  // emails
+  expect('email links fall back without branded emails', (await call('cust1', 'POST', '/api/auth/email-link', { type: 'reset', email: 'cust1@example.com' })).data.fallback, true);
+  await matrix('GET email settings', 'GET', '/api/admin/emails', undefined, [200, 200, 403, 403, 403]);
+  expect('email preview renders', /<h1[^>]*>Welcome, Steve/.test(await (await fetch(`${B}/api/admin/emails/preview/welcome`, { headers: { Cookie: jar.owner1 } })).text()), true);
+  expect('test email needs email set up', (await call('owner1', 'POST', '/api/admin/emails/test', {})).status, 400);
 
   // staff docs: never public files, only staff, and the technical guide only with system info access
   for (const f of ['hosting-guide', 'roles', 'support-playbook']) expect(`/docs/${f}.md is not public`, (await call('cust1', 'GET', `/docs/${f}.md`)).status, 404);

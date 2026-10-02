@@ -421,3 +421,16 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .chip { border: 1px solid var(--border); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .chip:hover { border-color: var(--accent); }
 .chip.on { border-color: var(--accent); background: rgba(70,195,123,.14); color: #8fe6b6; }
+
+/* ---------- server icon ---------- */
+.icon-row { align-items: center; gap: 18px; flex-wrap: wrap; }
+.mc-entry { display: flex; align-items: center; gap: 10px; width: min(100%, 420px); padding: 6px 10px 6px 6px; background: #000; border: 2px solid #3a3a3a; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; }
+.mc-icon { width: 64px; height: 64px; flex: 0 0 64px; image-rendering: pixelated; display: block; }
+.mc-icon-empty { display: grid; place-items: center; background: #6b6b6b; color: #cfcfcf; font-size: 28px; font-weight: 700; }
+.mc-text { flex: 1; min-width: 0; }
+.mc-name { color: #fff; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-motd { color: #aaa; font-size: 13px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-ping { color: #3fd13f; font-size: 10px; letter-spacing: -1px; align-self: flex-start; margin-top: 4px; }
+.si-icon { position: relative; width: 26px; height: 26px; flex: 0 0 26px; }
+.si-icon img { width: 26px; height: 26px; border-radius: 5px; image-rendering: pixelated; display: block; }
+.si-icon .dot { position: absolute; right: -3px; bottom: -3px; box-shadow: 0 0 0 2px var(--panel); }

@@ -138,7 +138,7 @@ function renderSpaceSwitch() {
 function serverItem(s) {
   return `
       <button class="server-item ${s.id === state.selected ? 'active' : ''}" data-id="${esc(s.id)}">
-        <span class="dot ${esc(s.status)}"></span>
+        ${s.icon ? `<span class="si-icon"><img src="${iconUrl(s)}" alt=""><span class="dot ${esc(s.status)}"></span></span>` : `<span class="dot ${esc(s.status)}"></span>`}
         <div>
           <div class="si-name">${esc(s.name)}</div>
           <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.players.length ? ` · ${s.players.length} online` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
@@ -1007,6 +1007,7 @@ async function renderSettings(body) {
   const javaIsPath = s.java && !/^(auto|\d+)$/.test(s.java);
 
   body.innerHTML = `
+    ${iconCardHtml(s)}
     <form id="settings-form">
       <div class="card stack">
         <h3>General</h3>
@@ -1198,7 +1199,89 @@ async function renderSettings(body) {
     });
   });
 
+  bindIconCard(s);
   if (s.kind !== 'proxy') loadProps(s);
+}
+
+// ---------- server icon (server-icon.png, shown in Minecraft's server list) ----------
+
+const iconUrl = (s) => `/api/servers/${encodeURIComponent(s.id)}/icon?v=${s.icon}`;
+
+function iconCardHtml(s) {
+  const edit = can('settings', s);
+  return `<div class="card stack" id="icon-card">
+    <h3>Server icon <span class="muted small" style="font-weight:400">(next to your server in Minecraft's server list)</span></h3>
+    <div class="row icon-row">
+      <div class="mc-entry" title="How it looks in Minecraft → Multiplayer">
+        ${s.icon ? `<img class="mc-icon" src="${iconUrl(s)}" alt="Server icon">` : '<div class="mc-icon mc-icon-empty">?</div>'}
+        <div class="mc-text">
+          <div class="mc-name">${esc(s.name)}</div>
+          <div class="mc-motd">${esc(s.typeLabel)} ${esc(s.version)} on Tree Host</div>
+        </div>
+        <div class="mc-ping">▮▮▮▮▮</div>
+      </div>
+      ${edit ? `<div class="stack" style="gap:8px">
+        <div class="row" style="flex-wrap:wrap">
+          <label class="btn primary">${s.icon ? 'Change icon' : 'Upload icon'}<input type="file" id="icon-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
+          ${s.icon ? '<button class="btn" id="icon-remove" type="button">Remove</button>' : ''}
+        </div>
+        <span class="muted small">Any picture works: we crop it to a square and make it 64×64 pixels, like Minecraft needs. It shows after the server restarts.</span>
+      </div>` : ''}
+    </div>
+  </div>`;
+}
+
+/** Crops a picture to the middle square and scales it to 64x64 (Minecraft's size) as a PNG. */
+function makeServerIcon(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const side = Math.min(img.width, img.height);
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d');
+      g.imageSmoothingEnabled = side > 64; // keep pixel art crisp
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 64, 64);
+      URL.revokeObjectURL(url);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not make the icon.'))), 'image/png');
+    };
+    img.onerror = () => reject(new Error("That file isn't a picture we can read. Try a PNG or JPEG."));
+    img.src = url;
+  });
+}
+
+function bindIconCard(s) {
+  const afterChange = async (r, msg) => {
+    toast(msg);
+    const fresh = { ...s, icon: r.icon || null };
+    const card = $('#icon-card');
+    if (card) {
+      card.outerHTML = iconCardHtml(fresh);
+      bindIconCard(fresh);
+    }
+    if (r.restartNeeded && confirm(`${msg}
+
+Restart the server now so players see it?`)) {
+      await api('POST', `/api/servers/${s.id}/restart`).catch((e) => toast(e.message, 'error'));
+    }
+  };
+  const file = $('#icon-file');
+  if (file) file.addEventListener('change', () => {
+    const f = file.files[0];
+    if (!f) return;
+    attempt(async () => {
+      if (f.size > 15 * 1024 * 1024) throw new Error('That picture is too big (15 MB at most).');
+      const r = await api('PUT', `/api/servers/${s.id}/icon`, await makeServerIcon(f));
+      await afterChange(r, 'Server icon saved');
+    });
+  });
+  const rm = $('#icon-remove');
+  if (rm) rm.addEventListener('click', () => {
+    if (!confirm('Remove the server icon?')) return;
+    attempt(async () => afterChange(await api('DELETE', `/api/servers/${s.id}/icon`), 'Server icon removed'));
+  });
 }
 
 async function loadProps(s) {

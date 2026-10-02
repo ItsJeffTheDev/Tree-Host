@@ -118,8 +118,71 @@ billing.hooks.deleteServer = async (id) => {
 billing.hooks.userById = (id) => auth.userById(id);
 billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || 'A customer', text);
 billing.hooks.email = (user, subject, paragraphs) =>
-  mail.send(user.email, subject, [...paragraphs, `Questions about billing? Just reply to this email or write to ${EMAILS.billing}.`],
-    PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null, { replyTo: EMAILS.billing });
+  mail.send(user.email, subject, paragraphs, PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null, { replyTo: EMAILS.billing });
+billing.hooks.sendEmail = (kind, user, sub) => (user && user.email ? sendEmail(user.email, EMAIL[kind](user, sub, siteUrl())) : Promise.resolve(false));
+
+// ---------- emails (the layout is in mail.js) ----------
+
+const siteUrl = (req) => PUBLIC_URL || (req ? publicOrigin(req) : 'https://treehost.online');
+const niceDate = (t) => new Date(t).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+/** Each email as [subject, paragraphs, button, options] (see mail.send). Used for sending and for the previews. */
+const EMAIL = {
+  welcome: (user, base, verifyLink) => [
+    'Welcome to Tree Host!',
+    [
+      `Hi **${user.username}**, thanks for joining Tree Host. Your account is ready.`,
+      verifyLink ? 'First, please confirm your email address. It keeps your account safe and lets us reach you about your servers.' : "Here's how to get your Minecraft server running:",
+    ],
+    verifyLink ? { text: 'Confirm my email', url: verifyLink } : { text: 'Open my dashboard', url: `${base}/dashboard` },
+    {
+      heading: `Welcome, ${user.username}! 🌳`,
+      preheader: 'Your Tree Host account is ready. Here is how to start your server.',
+      details: [['1. Pick a plan', 'Sapling, Oak or Redwood, in Billing'], ['2. Create your server', 'Any type and version, ready in about a minute'], ['3. Join it', 'Copy the address into Minecraft → Multiplayer']],
+      after: [`Guides for everything are at ${base}/help.html. Happy building!`],
+    },
+  ],
+  verify: (username, link) => [
+    'Confirm your email for Tree Host',
+    [`Hi${username ? ` **${username}**` : ''}, please confirm this is your email address by pressing the button below.`],
+    { text: 'Confirm my email', url: link },
+    { heading: 'Confirm your email', preheader: 'One click to confirm your email address.', after: ["If you didn't create a Tree Host account, you can ignore this email."] },
+  ],
+  reset: (username, link) => [
+    'Reset your Tree Host password',
+    [`Hi${username ? ` **${username}**` : ''}, someone (hopefully you) asked to reset the password for your Tree Host account.`, 'Press the button to choose a new one. The link works for one hour and only once.'],
+    { text: 'Choose a new password', url: link },
+    {
+      heading: 'Reset your password',
+      preheader: 'Choose a new password for your Tree Host account.',
+      after: ["Didn't ask for this? You can ignore this email: your password stays the same. Tree Host staff will **never** ask you for your password."],
+    },
+  ],
+  planActive: (user, sub, base) => [
+    `Your ${sub.planName} plan is active`,
+    [`Thanks, **${user.username}**! Your ${sub.free ? 'free ' : ''}${sub.planName} plan is ready.`, 'Create your server from the dashboard: pick any server type and version and it is running in about a minute.'],
+    { text: 'Create my server', url: `${base}/dashboard` },
+    {
+      heading: 'Your plan is ready 🎉',
+      details: [
+        ['Plan', sub.planName],
+        ['Memory', `${+(sub.ramMb / 1024).toFixed(1)} GB RAM`],
+        ['CPU and disk', `${sub.cpus} core${sub.cpus === 1 ? '' : 's'} · ${sub.diskGb} GB NVMe`],
+        ...(sub.periodEnd ? [['Renews', niceDate(sub.periodEnd)]] : sub.freeUntil ? [['Free until', niceDate(sub.freeUntil)]] : []),
+      ],
+      after: ['You can change your card, see invoices or cancel any time in **Billing**.'],
+      replyTo: EMAILS.billing,
+    },
+  ],
+  planEnded: (user, sub, base) => [
+    `Your ${sub.planName} plan has ended`,
+    [`Hi **${user.username}**, your ${sub.planName} plan has ended, so its server was stopped.`, 'Your worlds and files are kept for **14 days**. Buy a plan in Billing before then to keep them.'],
+    { text: 'Open Billing', url: `${base}/dashboard?billing` },
+    { heading: 'Your plan has ended', replyTo: EMAILS.billing },
+  ],
+};
+
+const sendEmail = (to, [subject, paragraphs, button, opts]) => mail.send(to, subject, paragraphs, button, opts);
 
 // ---------- tiny router ----------
 
@@ -156,6 +219,18 @@ async function readRaw(req, limit) {
     chunks.push(c);
   }
   return Buffer.concat(chunks).toString('utf8');
+}
+
+/** The request body as bytes (uploads of pictures and other binary files). */
+async function readBytes(req, limit) {
+  let size = 0;
+  const chunks = [];
+  for await (const c of req) {
+    size += c.length;
+    if (size > limit) throw httpError(413, 'That file is too big.');
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks);
 }
 
 /**
@@ -408,6 +483,7 @@ route(
       hosted: HOSTED,
       allowSignup: TEAM && auth.settings.allowSignup,
       mailEnabled: mail.enabled(),
+      customEmails: TEAM && mail.enabled() && firebase.linksEnabled(),
       firebase: TEAM ? firebase.publicConfig() : null,
       billingMode: billing.mode,
       isolated: manager.docker,
@@ -425,7 +501,10 @@ route(
     if (!TEAM) throw httpError(400, 'Accounts only exist on a hosted Tree Host.');
     const r = await auth.firebaseLogin(await readJson(req), clientIp(req));
     if (!r.token) return r;
-    if (r.created) activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${r.user.role}`);
+    if (r.created) {
+      activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${r.user.role}`);
+      if (r.user.email && mail.enabled()) welcomeEmail(req, r.user).catch((e) => console.error(`[mail] welcome email failed: ${e.message}`));
+    }
     sendJson(res, 200, { ok: true, created: !!r.created }, { 'Set-Cookie': sessionCookie(req, r.token) });
     return HANDLED;
   },
@@ -471,6 +550,7 @@ route(
     const body = await readJson(req);
     const { user, token } = await auth.signup(body, clientIp(req));
     activity.log('people', user.username, 'signed up');
+    if (user.email && mail.enabled()) welcomeEmail(req, user).catch((e) => console.error(`[mail] welcome email failed: ${e.message}`));
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
     return HANDLED;
   },
@@ -486,10 +566,7 @@ route(
     if (!mail.enabled()) throw httpError(400, 'Password reset emails are not set up yet. Please contact support.');
     const r = await auth.createReset(email, clientIp(req));
     if (r) {
-      await mail.send(r.user.email, 'Reset your Tree Host password', [
-        `Hi ${r.user.username}, someone (hopefully you) asked to reset your Tree Host password.`,
-        'The link works for one hour. If you did not ask for this, ignore this email.',
-      ], { text: 'Choose a new password', url: `${PUBLIC_URL || publicOrigin(req)}/dashboard?reset=${r.token}` });
+      await sendEmail(r.user.email, EMAIL.reset(r.user.username, `${siteUrl(req)}/dashboard?reset=${r.token}`));
     }
     // Same answer either way, so nobody can find out which emails have accounts.
     return { ok: true };
@@ -1060,9 +1137,12 @@ route('POST', '/api/admin/promos', async (req) => {
   // Optionally email the code straight to them.
   if (target && body.email && target.email && mail.enabled()) {
     await mail.send(target.email, 'A free Tree Host server for you', [
-      `Hi ${target.username}, you've been given a free ${c.planName} plan on Tree Host${c.days ? ` for ${c.length}` : ' for life'}!`,
-      `Your code is ${c.code}. It only works for your account: open Billing, choose "Have a code?", and paste it.`,
-    ], PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null, { replyTo: EMAILS.promo }).then(() => (c.emailed = true)).catch(() => (c.emailed = false));
+      `Hi **${target.username}**, you've been given a free ${c.planName} plan on Tree Host${c.days ? ` for ${c.length}` : ' for life'}! 🎁`,
+      'Open Billing, choose **Have a code?**, and paste your code. It only works for your account.',
+    ], PUBLIC_URL ? { text: 'Claim my server', url: `${PUBLIC_URL}/dashboard?billing` } : null, {
+      heading: 'A free server for you 🎁', replyTo: EMAILS.promo,
+      details: [['Your code', `**${c.code}**`], ['Plan', c.planName], ['For', c.days ? c.length : 'Life']],
+    }).then(() => (c.emailed = true)).catch(() => (c.emailed = false));
   }
   return c;
 }, { perm: 'promos.manage' });
@@ -1189,6 +1269,70 @@ route('GET', '/api/admin/audit', (req, res, p, q) => {
   return activity.events.filter((e) => e.kind === 'audit').slice(-limit).reverse();
 }, { perm: 'audit.view' });
 
+/** Welcome email; for an email that isn't verified yet it carries the confirm button. */
+async function welcomeEmail(req, user) {
+  let verifyLink = null;
+  if (user.firebaseUid && !user.emailVerified && firebase.linksEnabled()) {
+    verifyLink = await firebase.emailLink('verify', user.email, `${siteUrl(req)}/dashboard`).catch(() => null);
+  }
+  await sendEmail(user.email, EMAIL.welcome(user, siteUrl(req), verifyLink));
+}
+
+// Our own branded password reset and email confirmation emails (with Firebase making the one-time links).
+// Without them set up, the browser asks Firebase to send its plain emails instead ({ fallback: true }).
+route('POST', '/api/auth/email-link', async (req) => {
+  const b = await readJson(req);
+  const type = b.type === 'verify' ? 'verify' : 'reset';
+  const email = String(b.email || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw httpError(400, 'Enter your email address.');
+  if (!TEAM || !firebase.linksEnabled() || !mail.enabled()) return { ok: true, fallback: true };
+  const keys = [`link:${clientIp(req)}`, `link:${email}`];
+  auth.checkRate(keys);
+  auth.recordFailure(keys);
+  const user = auth.users.find((u) => u.email === email);
+  const link = await firebase.emailLink(type, email, `${siteUrl(req)}/dashboard`);
+  if (link) await sendEmail(email, type === 'verify' ? EMAIL.verify(user && user.username, link) : EMAIL.reset(user && user.username, link));
+  // Same answer either way, so nobody can find out which emails have accounts.
+  return { ok: true };
+}, { public: true });
+
+// Staff: email status, previews of every email, and a test email to yourself.
+const PREVIEW_USER = { username: 'Steve', email: 'steve@example.com' };
+const PREVIEW_SUB = { planName: 'Oak', ramMb: 4096, cpus: 2, diskGb: 30, periodEnd: Date.now() + 30 * 86400000 };
+const PREVIEWS = {
+  welcome: (base) => EMAIL.welcome(PREVIEW_USER, base, `${base}/dashboard`),
+  verify: (base) => EMAIL.verify('Steve', `${base}/dashboard`),
+  reset: (base) => EMAIL.reset('Steve', `${base}/dashboard`),
+  planActive: (base) => EMAIL.planActive(PREVIEW_USER, PREVIEW_SUB, base),
+  planEnded: (base) => EMAIL.planEnded(PREVIEW_USER, PREVIEW_SUB, base),
+  paymentFailed: (base) => ['Your Tree Host payment failed', ["Hi Steve, we couldn't take the payment for your Oak server.", 'Your server keeps running for 3 days. Please update your card in Billing to keep it online.'], { text: 'Open Billing', url: `${base}/dashboard?billing` }, { replyTo: EMAILS.billing }],
+  action: (base) => ["We've suspended your server \"Steve's SMP\"", ['Your server was running a crypto miner, which our Terms of Service do not allow.', "The server is stopped and can't be started for 7 days. Your files are kept.", 'Reason: Crypto mining. Action number: TH-000012.', 'If you think this is a mistake, you can appeal: open your Tree Host inbox and press "Appeal", or reply to this email. Mention the action number.'], { text: 'Open your inbox', url: `${base}/dashboard?inbox` }, {}],
+};
+route('GET', '/api/admin/emails', () => ({
+  enabled: mail.enabled(),
+  brandedLinks: firebase.linksEnabled(),
+  from: process.env.MAIL_FROM || 'Tree Host <no-reply@treehost.online>',
+  inboxes: EMAILS,
+  previews: Object.keys(PREVIEWS),
+}), { perm: 'settings.manage' });
+route('GET', '/api/admin/emails/preview/:kind', (req, res, p) => {
+  const make = PREVIEWS[p.kind];
+  if (!make) throw httpError(404, 'No such email.');
+  const [subject, paragraphs, button, opts] = make(siteUrl(req));
+  const { html } = mail.render(subject, paragraphs, button, opts);
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'" });
+  res.end(html);
+  return HANDLED;
+}, { perm: 'settings.manage' });
+route('POST', '/api/admin/emails/test', async (req) => {
+  if (!mail.enabled()) throw httpError(400, 'Emails are off: put RESEND_API_KEY in the settings file and restart.');
+  if (!req.user.email) throw httpError(400, 'Your account has no email address.');
+  const { kind } = await readJson(req);
+  await sendEmail(req.user.email, (PREVIEWS[kind] || PREVIEWS.welcome)(siteUrl(req)));
+  audit(req, 'sent a test email to themselves');
+  return { ok: true, to: req.user.email };
+}, { perm: 'settings.manage' });
+
 // Staff docs: kept out of public/ (so they can't be fetched as static files) and served only to staff.
 const STAFF_DOCS_DIR = path.join(__dirname, '..', 'staff-docs');
 const STAFF_DOCS = [
@@ -1309,6 +1453,46 @@ route('DELETE', '/api/servers/:id', async (req, res, p) => {
   await manager.remove(p.id);
   billing.detachServer(p.id);
   return { ok: true };
+});
+
+// Server icon: server-icon.png (a 64x64 PNG) in the server folder, shown next to the server in Minecraft's server
+// list. Paper, Spigot, Fabric, Vanilla, Velocity, BungeeCord and Waterfall all read it when they start.
+function pngSize(buf) {
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (!buf || buf.length < 24 || sig.some((b, i) => buf[i] !== b) || buf.toString('latin1', 12, 16) !== 'IHDR') return null;
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+route('GET', '/api/servers/:id/icon', async (req, res, p) => {
+  const inst = getFor(req, p.id);
+  const data = await fsp.readFile(path.join(inst.dir, 'server-icon.png')).catch(() => null);
+  if (!data) throw httpError(404, 'This server has no icon.');
+  res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=31536000', 'X-Content-Type-Options': 'nosniff' });
+  res.end(data);
+  return HANDLED;
+});
+route('PUT', '/api/servers/:id/icon', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  const png = await readBytes(req, 512 * 1024);
+  const size = pngSize(png);
+  if (!size) throw httpError(400, 'The icon must be a PNG picture.');
+  if (size.width !== 64 || size.height !== 64) throw httpError(400, `Minecraft needs the icon to be exactly 64×64 pixels (this one is ${size.width}×${size.height}).`);
+  await fsp.mkdir(inst.dir, { recursive: true });
+  await fsp.writeFile(path.join(inst.dir, 'server-icon.png'), png);
+  inst.cfg.iconAt = Date.now();
+  manager.save();
+  inst.sysLog(`${who(req)} changed the server icon.${inst.proc ? ' Restart the server to show it in Minecraft.' : ''}`);
+  inst.logActivity('server', who(req), 'changed the server icon');
+  inst.emitStatus();
+  return { ok: true, icon: inst.cfg.iconAt, restartNeeded: !!inst.proc };
+});
+route('DELETE', '/api/servers/:id/icon', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  await fsp.unlink(path.join(inst.dir, 'server-icon.png')).catch(() => {});
+  inst.cfg.iconAt = null;
+  manager.save();
+  inst.sysLog(`${who(req)} removed the server icon.`);
+  inst.emitStatus();
+  return { ok: true, restartNeeded: !!inst.proc };
 });
 
 route('GET', '/api/servers/:id/log', (req, res, p, q) => {

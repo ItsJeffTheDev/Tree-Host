@@ -117,7 +117,7 @@ async function checkEmailVerified() {
   bar.addEventListener('click', (e) => {
     const v = e.target.dataset && e.target.dataset.v;
     if (v === 'hide') bar.remove();
-    if (v === 'send') fb.sendEmailVerification(cur).then(() => toast(`Sent to ${u.email}`), (err) => toast(fbMessage(err), 'error'));
+    if (v === 'send') sendEmailLink('verify', u.email, cur).then(() => toast(`Sent to ${u.email}`), (err) => toast(fbMessage(err), 'error'));
     if (v === 'done') refresh().then((ok) => ok || toast("It's not verified yet: open the link in the email first.", 'error'), (err) => toast(err.message, 'error'));
   });
 }
@@ -214,7 +214,7 @@ function showFirebaseAuth(forceMode) {
     try {
       const fb = await firebaseAuth();
       if (mode === 'forgot') {
-        await fb.sendPasswordResetEmail(fb.auth, f.email.value.trim());
+        await sendEmailLink('reset', f.email.value.trim());
         const ok = $('#auth-ok');
         ok.textContent = 'If an account uses that email, a reset link is on its way. Check your inbox (and spam).';
         ok.classList.remove('hidden');
@@ -230,7 +230,8 @@ function showFirebaseAuth(forceMode) {
       let cred;
       try {
         cred = await fb.createUserWithEmailAndPassword(fb.auth, f.email.value.trim(), f.password.value);
-        fb.sendEmailVerification(cred.user).catch(() => {});
+        // With branded emails the welcome email carries the confirm button (sent when the account is made).
+        if (!state.me.customEmails) fb.sendEmailVerification(cred.user).catch(() => {});
       } catch (err) {
         if (err.code !== 'auth/email-already-in-use') throw err;
         cred = await fb.signInWithEmailAndPassword(fb.auth, f.email.value.trim(), f.password.value);
@@ -276,9 +277,22 @@ function showFirebaseAuth(forceMode) {
 }
 
 /** Firebase password reset email for an address (used by Account and by admins). */
-async function sendResetEmail(email) {
+/**
+ * Password reset / email confirmation. With branded emails set up, Tree Host sends them (our design, from our address);
+ * otherwise Firebase sends its plain ones.
+ */
+async function sendEmailLink(type, email, fbUser) {
+  if (state.me?.customEmails) {
+    const r = await api('POST', '/api/auth/email-link', { type, email });
+    if (!r.fallback) return;
+  }
   const fb = await firebaseAuth();
-  await fb.sendPasswordResetEmail(fb.auth, email);
+  if (type === 'verify') await fb.sendEmailVerification(fbUser || fb.auth.currentUser);
+  else await fb.sendPasswordResetEmail(fb.auth, email);
+}
+
+async function sendResetEmail(email) {
+  await sendEmailLink('reset', email);
 }
 
 // ---------- sign in / sign up / setup / invite / password reset (without Firebase) ----------
@@ -1111,12 +1125,17 @@ async function adminSettings(body) {
       <h3>Sign-ups</h3>
       <label class="check"><input type="checkbox" id="allow-signup"> Anyone can create an account on the website</label>
     </div>
+    <div class="card stack" id="email-card">
+      <h3>Emails</h3>
+      <div id="email-body" class="muted">Loading...</div>
+    </div>
     <div class="card stack" id="notify-card">
       <h3>Discord alerts for admins</h3>
       <div id="notify-body" class="muted">Loading...</div>
     </div>
 `;
   renderNotifications(body).catch((e) => toast(e.message, 'error'));
+  renderEmailSettings(body).catch((e) => ($('#email-body', body).textContent = e.message));
   const st = await api('GET', '/api/team/settings');
   const box = $('#allow-signup', body);
   box.checked = !!st.allowSignup;
@@ -1124,6 +1143,38 @@ async function adminSettings(body) {
     attempt(async () => {
       await api('PUT', '/api/team/settings', { allowSignup: box.checked });
       toast(box.checked ? 'Sign-ups are open' : 'Sign-ups are closed');
+    }),
+  );
+}
+
+const EMAIL_NAMES = {
+  welcome: 'Welcome (with "confirm your email")',
+  verify: 'Confirm your email',
+  reset: 'Reset your password',
+  planActive: 'Plan is active',
+  planEnded: 'Plan has ended',
+  paymentFailed: 'Payment failed',
+  action: 'Staff action (suspension)',
+};
+
+async function renderEmailSettings(body) {
+  const e = await api('GET', '/api/admin/emails');
+  $('#email-body', body).innerHTML = `
+    <div class="row" style="flex-wrap:wrap;gap:8px">
+      ${e.enabled ? '<span class="badge green">Sending is on</span>' : '<span class="badge red">Off: no email key set</span>'}
+      ${e.brandedLinks ? '<span class="badge green">Branded password and confirm emails</span>' : '<span class="badge yellow">Password and confirm emails use the plain default</span>'}
+    </div>
+    <p class="hint" style="margin:10px 0">Sent from <b>${esc(e.from)}</b>. Replies go to ${esc(e.inboxes.support)} (billing emails: ${esc(e.inboxes.billing)}, creators: ${esc(e.inboxes.promo)}).</p>
+    <div class="small muted" style="margin-bottom:6px">See every email:</div>
+    <div class="row" style="flex-wrap:wrap;gap:6px">${e.previews.map((k) => `<a class="btn sm" href="/api/admin/emails/preview/${k}" target="_blank">${esc(EMAIL_NAMES[k] || k)}</a>`).join('')}</div>
+    <div class="row" style="margin-top:12px;flex-wrap:wrap">
+      <select id="email-test-kind" style="width:auto">${e.previews.map((k) => `<option value="${k}">${esc(EMAIL_NAMES[k] || k)}</option>`).join('')}</select>
+      <button class="btn" id="email-test" ${e.enabled ? '' : 'disabled'}>Send it to me (${esc(state.me.user.email || 'no email')})</button>
+    </div>`;
+  $('#email-test', body).addEventListener('click', () =>
+    attempt(async () => {
+      const r = await api('POST', '/api/admin/emails/test', { kind: $('#email-test-kind', body).value });
+      toast(`Sent to ${r.to}. Check your inbox (and spam).`);
     }),
   );
 }

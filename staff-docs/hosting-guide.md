@@ -221,15 +221,27 @@ The public Firebase settings (API key, project ID...) are already in `/etc/tree-
 
 ---
 
-## 6. Email for failed payments (optional)
+## 6. Email
 
-Password reset emails come from Firebase. Tree Host itself only emails customers when a payment fails. To turn that on:
+Tree Host sends its own branded emails through Resend: welcome (with "confirm your email"), password resets, plan
+active / ended, failed payments, free server codes, staff actions, appeals and staff messages. Without it, nothing is
+sent except Firebase's plain sign-in emails. To turn it on:
 
 1. Create a free account at [resend.com](https://resend.com).
 2. **Domains → Add domain** → `treehost.online`. Resend shows a few DNS records (TXT and MX). Add them at your domain's DNS
    settings exactly as shown, then click **Verify**.
-3. **API keys → Create** and put it in `RESEND_API_KEY`. Keep `MAIL_FROM=Tree Host <no-reply@treehost.online>`.
+3. **API keys → Create** (permission: *Sending access*) and put it in `RESEND_API_KEY` in the settings file
+   (`/etc/tree-host.env` on the server, `test-site.env` on your PC). Keep `MAIL_FROM=Tree Host <no-reply@treehost.online>`.
 4. Restart Tree Host.
+5. Staff Console → **Settings → Emails**: both badges should be green. Open the previews to see every email, and
+   use **Send it to me** to get a real one in your inbox.
+
+The password reset and confirm-your-email emails are also ours (same design, from our address) as long as the
+Firebase **service account** file is set up (`FIREBASE_SERVICE_ACCOUNT_FILE`); Firebase still makes the one-time
+links. Without the service account, Firebase sends its own plain versions.
+
+> **Note:** until the domain is verified in Resend, sending fails. Resend's test address (`onboarding@resend.dev`)
+> only delivers to your own Resend login email.
 
 > **Important:** your mailboxes (below) already use the domain's **MX** records. Resend's records go on a
 > `send` subdomain, so add them **next to** your existing records; never replace the main MX records, or your

@@ -330,7 +330,10 @@ class Billing {
     s.status = 'active';
     s.pastDueSince = null;
     if (pe) s.periodEnd = pe;
-    if (was === 'pending') this.hooks.notify('billing', s, `bought a ${s.planName} server`);
+    if (was === 'pending') {
+      this.hooks.notify('billing', s, `bought a ${s.planName} server`);
+      if (this.hooks.sendEmail) this.hooks.sendEmail('planActive', this.hooks.userById(s.userId), s).catch(() => {});
+    }
     if (was === 'past_due' && s.serverId) this.hooks.unsuspend(s);
   }
 
@@ -508,9 +511,10 @@ class Billing {
         const st = event.type === 'customer.subscription.deleted' ? 'canceled' : STATUS[o.status] || 'past_due';
         if (st === 'active') this.activate(s);
         else if (st === 'past_due') this.markPastDue(s, users);
-        else if (st === 'canceled') {
+        else if (st === 'canceled' && s.status !== 'canceled') {
           this.markCanceled(s);
           this.hooks.notify('billing', s, 'subscription ended');
+          if (this.hooks.sendEmail) this.hooks.sendEmail('planEnded', users.userById(s.userId), s).catch(() => {});
         }
         break;
       }

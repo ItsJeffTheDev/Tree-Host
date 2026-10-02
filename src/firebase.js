@@ -159,4 +159,29 @@ async function deleteAuthUser(uid) {
   return res.ok;
 }
 
-module.exports = { authEnabled, dbEnabled, publicConfig, verifyIdToken, dbGet, dbSet, deleteAuthUser, ROOT };
+/** True when the server can make sign-in links itself (needs the service account), so our own emails can carry them. */
+const linksEnabled = () => authEnabled() && !!serviceAccount;
+
+/**
+ * A one-time link for an email address: 'reset' (choose a new password) or 'verify' (confirm the email).
+ * Returns null when there is no account with that email. continueUrl: where Firebase sends them afterwards.
+ */
+async function emailLink(type, email, continueUrl) {
+  if (!linksEnabled()) throw httpError(400, 'Sign-in links are not set up.');
+  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${web.projectId}/accounts:sendOobCode`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestType: type === 'verify' ? 'VERIFY_EMAIL' : 'PASSWORD_RESET', email, returnOobLink: true, ...(continueUrl ? { continueUrl } : {}) }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const code = (json.error && json.error.message) || String(res.status);
+    if (/EMAIL_NOT_FOUND|USER_NOT_FOUND/.test(code)) return null;
+    if (/UNAUTHORIZED_DOMAIN|INVALID_CONTINUE_URI/.test(code) && continueUrl) return emailLink(type, email, null);
+    throw httpError(502, `Could not make the ${type} link: ${code}`);
+  }
+  return json.oobLink || null;
+}
+
+module.exports = { authEnabled, dbEnabled, publicConfig, verifyIdToken, dbGet, dbSet, deleteAuthUser, linksEnabled, emailLink, ROOT };
