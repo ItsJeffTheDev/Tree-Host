@@ -118,17 +118,41 @@ class Moderation {
     a.history.push({ at: Date.now(), by, text });
   }
 
-  /** Staff search: number, customer name/email, server name; filters by type, status and appeals. */
-  search({ q = '', type = '', status = '', appeal = '' } = {}) {
-    q = String(q).trim().toLowerCase();
-    return [...this.actions.values()]
-      .filter((a) => !type || a.type === type)
-      .filter((a) => !status || a.status === status)
-      .filter((a) => !appeal || (appeal === 'pending' ? a.appeal && a.appeal.status === 'pending' : !!a.appeal))
-      .filter((a) => !q || [a.id, a.customer.username, a.customer.email, a.customer.id, a.server && a.server.name, a.server && a.server.id, a.by.username]
-        .some((x) => String(x || '').toLowerCase().includes(q)))
-      .sort((x, y) => y.createdAt - x.createdAt)
-      .map((a) => this.summary(a));
+  /**
+   * The action logs. Every filter is optional and they combine:
+   * q (anything), id (action number, or just its digits), username, email, by (staff member), server (name or ID),
+   * types (comma list: warn,suspend,ban,delete), target (account|server), reason, status, appeal (pending|any|none),
+   * from / to (dates, YYYY-MM-DD, whole days in UTC), sort (newest|oldest).
+   */
+  search(f = {}) {
+    const has = (v, want) => String(v || '').toLowerCase().includes(String(want).trim().toLowerCase());
+    const types = String(f.types || f.type || '').split(',').filter((t) => TYPES[t]);
+    let id = String(f.id || '').trim().toUpperCase();
+    if (/^\d+$/.test(id)) id = `TH-${id.padStart(6, '0')}`;
+    const day = (d, end) => {
+      const t = Date.parse(`${d}T00:00:00Z`);
+      return Number.isNaN(t) ? null : t + (end ? 86400000 : 0);
+    };
+    const from = f.from ? day(f.from) : null;
+    const to = f.to ? day(f.to, true) : null;
+    const q = String(f.q || '').trim();
+    const list = [...this.actions.values()]
+      .filter((a) => !types.length || types.includes(a.type))
+      .filter((a) => !f.target || a.target === f.target)
+      .filter((a) => !f.reason || a.reason === f.reason)
+      .filter((a) => !f.status || a.status === f.status)
+      .filter((a) => !f.appeal || (f.appeal === 'pending' ? a.appeal && a.appeal.status === 'pending' : f.appeal === 'none' ? !a.appeal : !!a.appeal))
+      .filter((a) => !id || a.id.includes(id))
+      .filter((a) => !f.username || has(a.customer.username, f.username))
+      .filter((a) => !f.email || has(a.customer.email, f.email))
+      .filter((a) => !f.by || has(a.by.username, f.by))
+      .filter((a) => !f.server || (a.server && (has(a.server.name, f.server) || has(a.server.id, f.server))))
+      .filter((a) => from === null || a.createdAt >= from)
+      .filter((a) => to === null || a.createdAt < to)
+      .filter((a) => !q || [a.id, a.customer.username, a.customer.email, a.customer.id, a.server && a.server.name, a.server && a.server.id, a.by.username, REASONS[a.reason]]
+        .some((x) => has(x, q)));
+    list.sort((x, y) => (f.sort === 'oldest' ? x.createdAt - y.createdAt : y.createdAt - x.createdAt));
+    return list.map((a) => this.summary(a));
   }
 
   summary(a) {

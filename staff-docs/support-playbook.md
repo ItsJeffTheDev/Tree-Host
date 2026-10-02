@@ -122,13 +122,13 @@ The rules are in the [Terms of Service](/terms) (section 3). Every warning, susp
 
 The customer is told in their **📬 Inbox** and by email, with the **action number** (like `TH-000012`).
 
-**Actions taken** (Staff Console) lists everything. Look up an action number to see the reason, the evidence, who took
+**Action logs** (Staff Console) lists everything. Filter by action type (pick one or several), action number, username, email, staff member, server, reason, status, appeal or date range, and click a name to see all of their actions. Open one to see the reason, the evidence, who took
 it and when, a snapshot of the customer, the appeal and the timeline. **📄 View PDF report** or **⬇ Download PDF** gives
 the full report to keep or send to the Owner. **Export all (CSV)** gives the whole list. Opening or downloading a
 report is written to the audit log.
 
 **Appeals:** customers press **Appeal** in their inbox (or on the suspended/banned page). It shows up as "Appeal waiting"
-in Actions taken, and support@ gets an email. **Admins** accept (this lifts it) or deny, with an answer the customer
+in Action logs, and support@ gets an email. **Admins** accept (this lifts it) or deny, with an answer the customer
 sees. Each action can be appealed once.
 
 **Lifting early:** open the action → **Lift**, with a reason (the customer sees it).

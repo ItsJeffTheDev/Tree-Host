@@ -78,7 +78,7 @@ Changes in **Roles & permissions** apply instantly to everyone with that role, w
 ## Suspending, banning or removing someone
 
 Staff Console → People → **More → 🛡️ Take action**: warn, suspend, ban or delete, always with a reason, a message to
-the customer and evidence. Every action gets a number and a PDF report in **Actions taken**. See the
+the customer and evidence. Every action gets a number and a PDF report in **Action logs**. See the
 [Support playbook](support-playbook.md#5-rule-breakers-taking-action).
 
 - **Temporary password** (People → More): for people locked out without email access. Send it privately.

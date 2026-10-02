@@ -292,7 +292,7 @@ updates.
 
 ## 9. Backups of the whole machine
 
-Accounts, plans, subscriptions and moderation records (Actions taken, appeals, inboxes) are safe in Firebase. The
+Accounts, plans, subscriptions and moderation records (Action logs, appeals, inboxes) are safe in Firebase. The
 **evidence files** attached to actions (screenshots, logs) stay on the machine, in
 `/var/lib/tree-host/moderation-evidence`. Worlds and server files live in **`/var/lib/tree-host`** too, and
 your settings in **`/etc/tree-host.env`** and **`/etc/tree-host-firebase.json`**.

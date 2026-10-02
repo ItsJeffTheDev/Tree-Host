@@ -1,7 +1,7 @@
 'use strict';
 // Moderation in the browser.
 // Staff: "Take action" (warn, suspend, ban, delete accounts and servers, with a reason and evidence), messages to
-// customers, and the Actions taken page (look up an action number, evidence, appeals, PDF reports, CSV export).
+// customers, and the Action logs page (look up an action number, evidence, appeals, PDF reports, CSV export).
 // Customers: the Tree Host inbox, the page shown to suspended or banned accounts, server notices and appeals.
 
 const MOD_REASONS = {
@@ -146,7 +146,7 @@ function openTakeAction(opts) {
           includeLog: form.includeLog.checked, appealable: form.appealable.checked, email: form.email.checked, evidence,
         });
         close();
-        toast(`Done: action ${a.id}. Look it up any time in Actions taken.`);
+        toast(`Done: action ${a.id}. Look it up any time in Action logs.`);
         if (opts.onDone) opts.onDone(a);
       } finally {
         const b = $('#ta-go', root);
@@ -187,62 +187,134 @@ function restrictionBadge(r) {
     : ` <span class="badge red">${esc(label)}</span>`;
 }
 
-// ---------- Staff Console: Actions taken ----------
+// ---------- Staff Console: Action logs ----------
 
+const TYPE_CHIP = { warn: '⚠️ Warnings', suspend: '⏸️ Suspensions', ban: '⛔ Bans', delete: '🗑️ Deletions' };
+const isoDay = (d) => d.toISOString().slice(0, 10);
+
+/** Every action taken, filtered by type, action number, username, email, staff member, server, reason, status, appeal and date. */
 async function consoleActions(body, sub) {
-  let q = '';
-  let type = '';
-  let status = '';
-  let appeal = '';
+  // Filters stay while you move around the console (this tab only).
+  let f = {};
+  try {
+    f = JSON.parse(sessionStorage.getItem('th.actionLogs') || '{}');
+  } catch {}
+  const types = new Set((f.types || '').split(',').filter(Boolean));
+  const field = (name, label, attrs = '') => `<label class="field">${label}<input type="search" name="${name}" value="${esc(f[name] || '')}" ${attrs}></label>`;
+  const sel = (name, label, options) => `<label class="field">${label}<select name="${name}">${options.map(([v, l]) => `<option value="${v}" ${(f[name] || '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
   body.innerHTML = `
     <div class="card">
       <form id="act-lookup" class="row" style="flex-wrap:wrap">
-        <input type="search" name="id" placeholder="Look up an action number, e.g. TH-000012" style="max-width:340px">
+        <input type="search" name="id" placeholder="Go to an action number, e.g. TH-000012 or 12" style="max-width:340px">
         <button class="btn primary">Open</button>
-        <span style="flex:1"></span>
-        <a class="btn" href="/api/admin/actions.csv" download>⬇ Export all (CSV)</a>
       </form>
     </div>
-    <div class="row" style="margin-bottom:10px;flex-wrap:wrap">
-      <input type="search" id="act-q" placeholder="Search customer, email, server or staff" style="max-width:300px">
-      <select id="act-type" style="max-width:160px"><option value="">All actions</option>${Object.entries(MOD_TYPES).map(([k, v]) => `<option value="${k}">${v}s</option>`).join('')}</select>
-      <select id="act-status" style="max-width:160px"><option value="">Any status</option><option value="active">Active</option><option value="lifted">Lifted</option><option value="expired">Ended</option><option value="done">Done</option></select>
-      <select id="act-appeal" style="max-width:190px"><option value="">Appeals: any</option><option value="pending">Appeal waiting</option><option value="any">Has an appeal</option></select>
-      <span class="muted small" id="act-count"></span>
-    </div>
+    <form class="card stack" id="act-filters" autocomplete="off">
+      <div class="row" style="flex-wrap:wrap;gap:8px">
+        <button type="button" class="chip" data-type="">All actions <span class="muted" data-count="all"></span></button>
+        ${Object.entries(TYPE_CHIP).map(([t, l]) => `<button type="button" class="chip" data-type="${t}">${l} <span class="muted" data-count="${t}"></span></button>`).join('')}
+      </div>
+      <div class="log-grid">
+        ${field('id', 'Action number', 'placeholder="TH-000012"')}
+        ${field('username', 'Username', 'placeholder="Customer username"')}
+        ${field('email', 'Email', 'placeholder="customer@example.com"')}
+        ${field('by', 'Taken by', 'placeholder="Staff member"')}
+        ${field('server', 'Server', 'placeholder="Server name or ID"')}
+        ${sel('reason', 'Reason', [['', 'Any reason'], ...Object.entries(MOD_REASONS)])}
+        ${sel('target', 'On', [['', 'Accounts and servers'], ['account', 'Accounts'], ['server', 'Servers']])}
+        ${sel('status', 'Status', [['', 'Any status'], ...Object.entries(MOD_STATUS).map(([k, [l]]) => [k, l])])}
+        ${sel('appeal', 'Appeal', [['', 'Any'], ['pending', 'Waiting for a decision'], ['any', 'Has an appeal'], ['none', 'No appeal']])}
+        <label class="field">From<input type="date" name="from" value="${esc(f.from || '')}"></label>
+        <label class="field">To<input type="date" name="to" value="${esc(f.to || '')}"></label>
+        ${sel('sort', 'Order', [['', 'Newest first'], ['oldest', 'Oldest first']])}
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:8px">
+        <span class="small muted">Dates:</span>
+        <button type="button" class="btn sm" data-range="0">Today</button>
+        <button type="button" class="btn sm" data-range="7">Last 7 days</button>
+        <button type="button" class="btn sm" data-range="30">Last 30 days</button>
+        <button type="button" class="btn sm" data-range="all">All time</button>
+        <span style="flex:1"></span>
+        <button type="button" class="btn sm" id="act-clear">Clear filters</button>
+        <a class="btn sm" id="act-csv" download>⬇ Export these (CSV)</a>
+      </div>
+    </form>
+    <div class="small muted" id="act-count" style="margin:0 0 8px"></div>
     <div class="card" id="act-list"><div class="muted">Loading...</div></div>`;
+  const form = $('#act-filters', body);
+  const query = () => {
+    const out = {};
+    for (const el of form.elements) if (el.name && el.value.trim()) out[el.name] = el.value.trim();
+    if (types.size) out.types = [...types].join(',');
+    return out;
+  };
+  const syncChips = () => $$('[data-type]', form).forEach((c) => c.classList.toggle('on', c.dataset.type ? types.has(c.dataset.type) : !types.size));
   const draw = async () => {
-    const d = await api('GET', `/api/admin/actions?${new URLSearchParams({ q, type, status, appeal })}`);
-    $('#act-count', body).textContent = `${d.actions.length} action${d.actions.length === 1 ? '' : 's'}${d.pendingAppeals ? ` · ${d.pendingAppeals} appeal${d.pendingAppeals === 1 ? '' : 's'} waiting` : ''}`;
+    const qs = query();
+    try {
+      sessionStorage.setItem('th.actionLogs', JSON.stringify(qs));
+    } catch {}
+    const params = new URLSearchParams(qs);
+    $('#act-csv', body).href = `/api/admin/actions.csv?${params}`;
+    const d = await api('GET', `/api/admin/actions?${params}`);
+    $('[data-count="all"]', form).textContent = d.total;
+    for (const t of Object.keys(TYPE_CHIP)) $(`[data-count="${t}"]`, form).textContent = d.counts[t];
+    const filtered = Object.keys(qs).some((k) => k !== 'sort');
+    $('#act-count', body).textContent = `${d.actions.length} of ${d.total} action${d.total === 1 ? '' : 's'}${filtered ? ' match your filters' : ''}${d.pendingAppeals ? ` · ${d.pendingAppeals} appeal${d.pendingAppeals === 1 ? '' : 's'} waiting` : ''}`;
     $('#act-list', body).innerHTML = d.actions.length
-      ? `<table><thead><tr><th>Action</th><th>Customer</th><th>Reason</th><th>By</th><th>When</th><th>Status</th><th></th></tr></thead><tbody>${d.actions
+      ? `<table><thead><tr><th>Action</th><th>Customer</th><th>Reason</th><th>Taken by</th><th>Date</th><th>Status</th><th></th></tr></thead><tbody>${d.actions
           .map((a) => `<tr>
             <td><b>${esc(a.id)}</b><div class="small muted">${MOD_TYPES[a.type]} · ${a.target === 'server' ? `🖥️ ${esc(a.server ? a.server.name : 'server')}` : '👤 account'}</div></td>
-            <td class="small">${esc(a.customer.username || '-')}${a.customer.email ? `<div class="muted">${esc(a.customer.email)}</div>` : ''}</td>
-            <td class="small">${esc(a.reasonLabel)}${a.evidence ? `<div class="muted">📎 ${a.evidence}</div>` : ''}</td>
-            <td class="small">${esc(a.by)}</td>
+            <td class="small">${a.customer.username ? `<a href="#" data-filter="username" data-val="${esc(a.customer.username)}" title="Show every action for ${esc(a.customer.username)}">${esc(a.customer.username)}</a>` : '-'}${a.customer.email ? `<div><a href="#" class="muted" data-filter="email" data-val="${esc(a.customer.email)}">${esc(a.customer.email)}</a></div>` : ''}</td>
+            <td class="small">${esc(a.reasonLabel)}${a.evidence ? `<div class="muted">📎 ${a.evidence} evidence</div>` : ''}</td>
+            <td class="small"><a href="#" data-filter="by" data-val="${esc(a.by)}" title="Show every action by ${esc(a.by)}">${esc(a.by)}</a></td>
             <td class="small">${when(a.createdAt)}</td>
             <td>${badge(MOD_STATUS[a.status])}${a.appeal ? ` ${badge(APPEAL_BADGE[a.appeal])}` : ''}</td>
             <td class="actions-cell"><button class="btn sm primary" data-open-act="${esc(a.id)}">Open</button></td></tr>`)
           .join('')}</tbody></table>`
-      : '<p class="muted" style="margin:0">No actions match.</p>';
+      : `<p class="muted" style="margin:0">${d.total ? 'No actions match these filters.' : 'No actions have been taken yet.'}</p>`;
     $$('[data-open-act]', body).forEach((b) => b.addEventListener('click', () => openActionDetail(b.dataset.openAct, draw)));
+    $$('[data-filter]', body).forEach((l) => l.addEventListener('click', (e) => {
+      e.preventDefault();
+      form.elements[l.dataset.filter].value = l.dataset.val;
+      redraw();
+    }));
   };
+  const redraw = () => draw().catch((err) => toast(err.message, 'error'));
   let timer;
-  $('#act-q', body).addEventListener('input', (e) => {
-    q = e.target.value.trim();
+  form.addEventListener('input', (e) => {
+    if (e.target.type !== 'search') return;
     clearTimeout(timer);
-    timer = setTimeout(() => draw().catch((err) => toast(err.message, 'error')), 250);
+    timer = setTimeout(redraw, 300);
   });
-  $('#act-type', body).addEventListener('change', (e) => ((type = e.target.value), draw()));
-  $('#act-status', body).addEventListener('change', (e) => ((status = e.target.value), draw()));
-  $('#act-appeal', body).addEventListener('change', (e) => ((appeal = e.target.value), draw()));
+  form.addEventListener('change', (e) => e.target.type !== 'search' && redraw());
+  form.addEventListener('submit', (e) => e.preventDefault());
+  $$('[data-type]', form).forEach((c) => c.addEventListener('click', () => {
+    if (!c.dataset.type) types.clear();
+    else if (types.has(c.dataset.type)) types.delete(c.dataset.type);
+    else types.add(c.dataset.type);
+    syncChips();
+    redraw();
+  }));
+  $$('[data-range]', form).forEach((b) => b.addEventListener('click', () => {
+    const r = b.dataset.range;
+    form.elements.from.value = r === 'all' ? '' : isoDay(new Date(Date.now() - Number(r) * 86400000));
+    form.elements.to.value = r === 'all' ? '' : isoDay(new Date());
+    redraw();
+  }));
+  $('#act-clear', body).addEventListener('click', () => {
+    for (const el of form.elements) if (el.name) el.value = '';
+    types.clear();
+    syncChips();
+    redraw();
+  });
   $('#act-lookup', body).addEventListener('submit', (e) => {
     e.preventDefault();
     let id = e.target.id.value.trim().toUpperCase();
     if (/^\d+$/.test(id)) id = `TH-${id.padStart(6, '0')}`;
     if (id) openActionDetail(id, draw);
   });
+  syncChips();
   await draw();
   if (sub) openActionDetail(decodeURIComponent(sub).toUpperCase(), draw);
 }

@@ -700,22 +700,27 @@ function actionNotice(a) {
   return { title, paragraphs: [a.message, effect, `Reason: ${REASONS[a.reason]}. Action number: ${a.id}.`, appeal] };
 }
 
+const LOG_FILTERS = ['q', 'id', 'username', 'email', 'by', 'server', 'types', 'type', 'target', 'reason', 'status', 'appeal', 'from', 'to', 'sort'];
+const logFilters = (q) => Object.fromEntries(LOG_FILTERS.map((k) => [k, q.get(k) || '']));
+
 route('GET', '/api/admin/actions', (req, res, p, q) => ({
-  actions: moderation.search({ q: q.get('q') || '', type: q.get('type') || '', status: q.get('status') || '', appeal: q.get('appeal') || '' }),
+  actions: moderation.search(logFilters(q)),
   pendingAppeals: [...moderation.actions.values()].filter((a) => a.appeal && a.appeal.status === 'pending').length,
+  total: moderation.actions.size,
+  counts: Object.fromEntries(Object.keys(TYPES).map((t) => [t, [...moderation.actions.values()].filter((a) => a.type === t).length])),
   types: TYPES,
   reasons: REASONS,
 }), { perm: 'moderation.view' });
 
-route('GET', '/api/admin/actions.csv', (req, res) => {
+route('GET', '/api/admin/actions.csv', (req, res, p, q) => {
   const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const rows = [['Action', 'Type', 'Target', 'Status', 'Reason', 'Customer', 'Email', 'Server', 'Taken by', 'Taken at (UTC)', 'Ends (UTC)', 'Appeal', 'Evidence']];
-  for (const a of moderation.search()) {
+  for (const a of moderation.search(logFilters(q))) {
     rows.push([a.id, a.typeLabel, a.target, a.status, a.reasonLabel, a.customer.username, a.customer.email, a.server ? a.server.name : '', a.by,
       new Date(a.createdAt).toISOString(), a.until ? new Date(a.until).toISOString() : '', a.appeal || '', a.evidence]);
   }
-  audit(req, 'exported the list of actions taken (CSV)');
-  res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="tree-host-actions-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
+  audit(req, `exported the action logs (CSV${[...q.keys()].length ? ', filtered' : ''})`);
+  res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="tree-host-action-logs-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
   res.end(`﻿${rows.map((r) => r.map(cell).join(',')).join('\r\n')}\r\n`);
   return HANDLED;
 }, { perm: 'moderation.view' });
@@ -944,7 +949,7 @@ route('POST', '/api/moderation/:aid/appeal', async (req, res, p) => {
   activity.log('moderation', req.user.username, `appealed ${a.id} (${TYPES[a.type].toLowerCase()} of ${a.target === 'server' ? `"${a.server.name}"` : 'their account'})`);
   await moderation.message(req.user.id, { title: `We got your appeal for ${a.id}`, body: "Thanks. A member of our team will look at it and you'll get the answer here and by email.", actionId: a.id, kind: 'appeal' });
   if (mail.enabled()) {
-    mail.send(EMAILS.support, `New appeal for ${a.id} from ${req.user.username}`, [`${req.user.username} appealed ${a.id} (${TYPES[a.type]} of the ${a.target}).`, text, 'Decide it in the Staff Console → Actions taken.'],
+    mail.send(EMAILS.support, `New appeal for ${a.id} from ${req.user.username}`, [`${req.user.username} appealed ${a.id} (${TYPES[a.type]} of the ${a.target}).`, text, 'Decide it in the Staff Console → Action logs.'],
       PUBLIC_URL ? { text: 'Open the action', url: `${PUBLIC_URL}/admin#actions/${a.id}` } : null).catch(() => {});
   }
   return moderation.forCustomer(a);

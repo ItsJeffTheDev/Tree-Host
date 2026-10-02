@@ -416,3 +416,8 @@ details.menu > summary::-webkit-details-marker { display: none; }
   .kv > b { margin-bottom: 6px; }
 }
 .app.app-restricted { display: block; overflow-y: auto; }
+.log-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px 12px; }
+.log-grid .field { margin: 0; }
+.chip { border: 1px solid var(--border); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.chip:hover { border-color: var(--accent); }
+.chip.on { border-color: var(--accent); background: rgba(70,195,123,.14); color: #8fe6b6; }

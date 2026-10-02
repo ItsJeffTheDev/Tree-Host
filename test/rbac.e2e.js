@@ -96,6 +96,19 @@ function expect(label, got, want) {
   expect('a reason message is required', (await act('admin1', { target: 'account', userId: id('cust2'), type: 'warn', message: 'no' })).status, 400);
   await matrix('GET actions taken', 'GET', '/api/admin/actions', undefined, [200, 200, 200, 200, 403]);
   await matrix('GET a PDF report', 'GET', `/api/admin/actions/${sus.data.id}/report.pdf`, undefined, [200, 200, 200, 200, 403]);
+  // action logs: filters by type, number, username, email, staff member and date
+  const logs = async (qs) => (await call('owner1', 'GET', `/api/admin/actions?${new URLSearchParams(qs)}`)).data.actions;
+  const today = new Date().toISOString().slice(0, 10);
+  expect('logs: by type', (await logs({ types: 'warn' })).every((a) => a.type === 'warn') && (await logs({ types: 'warn' })).length >= 1, true);
+  expect('logs: several types', (await logs({ types: 'warn,suspend' })).length, (await logs({})).length);
+  expect('logs: by action number digits', (await logs({ id: String(Number(sus.data.id.slice(3))) }))[0].id, sus.data.id);
+  expect('logs: by username', (await logs({ username: 'cust2' })).every((a) => a.customer.username === 'cust2'), true);
+  expect('logs: by email', (await logs({ email: 'cust2@example.com' })).length >= 2, true);
+  expect('logs: by staff member', (await logs({ by: 'support1' })).every((a) => a.by === 'support1'), true);
+  expect('logs: today', (await logs({ from: today, to: today })).length, (await logs({})).length);
+  expect('logs: a past date range is empty', (await logs({ from: '2020-01-01', to: '2020-01-31' })).length, 0);
+  expect('logs: oldest first', (await logs({ sort: 'oldest' }))[0].id, 'TH-000001');
+  expect('logs: CSV respects filters', (await (await fetch(`${B}/api/admin/actions.csv?types=warn`, { headers: { Cookie: jar.owner1 } })).text()).includes('Suspension'), false);
   expect('PDF is a PDF', (await (await fetch(`${B}/api/admin/actions/${sus.data.id}/report.pdf`, { headers: { Cookie: jar.owner1 } })).text()).startsWith('%PDF-'), true);
 
   // a customer's server: who can see / operate / destroy it
