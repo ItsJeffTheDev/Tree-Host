@@ -1336,7 +1336,7 @@ async function openNewServer() {
         </div>
         <div class="stack">
           <div class="grid2" id="nv-version-row">
-            <label class="field">Minecraft version <select id="nv-version"></select></label>
+            <label class="field"><span id="nv-version-label">Minecraft version</span> <select id="nv-version"></select></label>
             <label class="field"><span id="nv-build-label">Build</span> <select id="nv-build"></select></label>
           </div>
           <label class="check" id="nv-pre-wrap"><input type="checkbox" id="nv-pre"> Show pre-releases and snapshots</label>
@@ -1408,8 +1408,10 @@ async function openNewServer() {
     $('#nv-custom-wrap').classList.toggle('hidden', type.id !== 'custom');
     $('#nv-version-row').classList.toggle('hidden', type.id === 'custom' || type.id === 'bungeecord');
     $('#nv-pre-wrap').classList.toggle('hidden', type.id === 'custom' || type.id === 'bungeecord' || type.id === 'spigot' || type.id === 'craftbukkit');
-    $('#nv-eula-wrap').classList.toggle('hidden', isProxy);
+    // The EULA applies to every server type, proxies included (they connect players to Minecraft servers).
     $('#nv-online-wrap').classList.toggle('hidden', isProxy);
+    // Proxies have their own version numbers (e.g. Velocity 3.x), not Minecraft's.
+    $('#nv-version-label').textContent = isProxy ? `${type.label} version` : 'Minecraft version';
     $('#nv-build-label').textContent = type.buildLabel;
     setPort();
     if (type.id === 'custom') {
@@ -1440,8 +1442,7 @@ async function openNewServer() {
 
   $('#new-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    const isProxy = type.kind === 'proxy';
-    if (!isProxy && !$('#nv-eula').checked) {
+    if (!$('#nv-eula').checked) {
       toast('Please accept the Minecraft EULA to create a server.', 'error');
       return;
     }
