@@ -8,7 +8,8 @@ const { spawn } = require('child_process');
 const { URL } = require('url');
 const { PUBLIC, DATA } = require('./paths');
 const { Manager } = require('./instances');
-const { Auth, isStaff } = require('./auth');
+const { Auth } = require('./auth');
+const { Rbac, PERMISSIONS } = require('./rbac');
 const { Billing } = require('./billing');
 const mail = require('./mail');
 const firebase = require('./firebase');
@@ -35,10 +36,11 @@ const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
 const SESSION_COOKIE = 'th_session';
 const MAX_CUSTOMER_BACKUPS = Number(env('MAX_BACKUPS')) || 5;
 // In personal mode everyone who can reach the dashboard is the PC's owner.
-const LOCAL_ADMIN = { id: 'local', username: 'you', role: 'admin', local: true };
+const LOCAL_ADMIN = { id: 'local', username: 'you', role: 'owner', local: true };
 
 const manager = new Manager();
 const auth = new Auth();
+const rbac = new Rbac();
 const billing = new Billing();
 const activity = new Activity();
 manager.teamMode = TEAM;
@@ -109,7 +111,7 @@ billing.hooks.email = (user, subject, paragraphs) =>
 const routes = [];
 const HANDLED = Symbol('handled');
 
-/** opts.public: no login needed. opts.admin: admins only (in team mode). */
+/** opts.public: no login needed. opts.perm: the permission needed (see rbac.js). */
 function route(method, pattern, handler, opts = {}) {
   const keys = [];
   const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => (keys.push(k), '([^/]+)')) + '$');
@@ -144,7 +146,7 @@ async function readRaw(req, limit) {
 /** Error text for the browser: never shows host paths (like the data folder) to anyone but admins. */
 function publicMessage(e, user) {
   let msg = (e && e.message) || String(e);
-  if (TEAM && (!user || user.role !== 'admin')) {
+  if (TEAM && !can(user, 'system.view')) {
     for (const p of [DATA, path.resolve(DATA)]) msg = msg.split(p).join('…');
     msg = msg.replace(/[A-Za-z]:\\[^\s'"]+|\/(?:home|opt|var|srv|root|tmp)\/[^\s'"]+/g, '…');
   }
@@ -233,28 +235,38 @@ function authenticate(req) {
   return auth.userFromSession(getCookie(req, SESSION_COOKIE));
 }
 
-function requireAdmin(req) {
-  if (TEAM && req.user.role !== 'admin') throw httpError(403, 'Only admins can do that.');
+// ---------- role-based access control (see rbac.js) ----------
+
+/** True if this user has the permission. Personal mode (no accounts) can do everything. */
+const can = (user, permission) => !TEAM || rbac.can(user, permission);
+
+function requirePerm(req, permission) {
+  if (!can(req.user, permission)) {
+    const p = PERMISSIONS.find((x) => x.id === permission);
+    throw httpError(403, `You don't have access to that${p ? ` (needs: ${p.label})` : ''}.`, 'FORBIDDEN');
+  }
 }
 
-function requireStaff(req) {
-  if (TEAM && !isStaff(req.user)) throw httpError(403, 'Only Tree Host support staff can do that.');
-}
-
-/** Customers see only their own servers; support staff and admins see every server (to help). */
+/** Customers see only their own servers; staff with servers.viewAll see every server (to help). */
 function canView(user, inst) {
-  if (!TEAM || !user) return !TEAM;
-  if (user.role === 'customer') return inst.cfg.owner === user.id;
-  return true;
+  if (!TEAM) return true;
+  if (!user || !inst) return false;
+  return inst.cfg.owner === user.id || can(user, 'servers.viewAll');
 }
 
 /**
- * What each role may do with a server it can see.
- *   Customer: everything on their own servers (host-level settings stay admin-only).
- *   Support:  everything on their own servers; on other people's servers everything except delete / reset world /
- *             change version (those can't be undone).
- *   Admin:    everything.
+ * What someone may do with a server they can see. Everyone may do everything on their own servers (host-level
+ * settings are checked separately). On other people's servers it depends on their role's permissions.
  */
+const ACTION_PERMISSION = {
+  control: 'servers.operate',
+  command: 'servers.operate',
+  plugins: 'servers.edit',
+  files: 'servers.edit',
+  settings: 'servers.edit',
+  deploy: 'servers.edit',
+  manage: 'servers.destroy',
+};
 const ACTION_TEXT = {
   control: 'start or stop servers',
   command: 'run console commands',
@@ -266,10 +278,12 @@ const ACTION_TEXT = {
 };
 
 function permissionError(user, action, inst) {
-  if (!TEAM || !user || user.role === 'admin') return null;
-  if (user.role === 'customer') return inst && inst.cfg.owner === user.id ? null : 'That is not your server.';
-  if (inst && inst.cfg.owner !== user.id) return action === 'manage' ? `Only the server's owner or an admin can ${ACTION_TEXT.manage}.` : null;
-  return null;
+  if (!TEAM) return null;
+  if (!user) return 'Please sign in.';
+  if (action === 'view' || (inst && inst.cfg.owner === user.id)) return null;
+  if (!rbac.isStaff(user)) return 'That is not your server.';
+  const perm = ACTION_PERMISSION[action];
+  return perm && !can(user, perm) ? `Your role can't ${ACTION_TEXT[action] || action} on other people's servers.` : null;
 }
 
 function getFor(req, id, action = 'view') {
@@ -288,12 +302,26 @@ function publicOrigin(req) {
   return `${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
 }
 
-/** In team mode, settings that point at files or programs on the host machine are admin-only. */
+/** Settings that point at files or programs on the host machine need servers.host. */
 function checkHostSettings(req, body) {
-  if (!TEAM || req.user.role === 'admin') return;
-  if (body.java !== undefined && !/^(auto|\d+)$/.test(String(body.java))) throw httpError(403, 'Only admins can set a custom Java path.');
-  if (body.customJar) throw httpError(403, 'Only admins can use a custom server jar from the host PC.');
-  if (body.type === 'custom') throw httpError(403, 'Only admins can create Custom JAR servers.');
+  if (can(req.user, 'servers.host')) return;
+  if (body.java !== undefined && !/^(auto|\d+)$/.test(String(body.java))) throw httpError(403, 'Only people with host access can set a custom Java path.');
+  if (body.customJar) throw httpError(403, 'Only people with host access can use a custom server jar from the host machine.');
+  if (body.type === 'custom') throw httpError(403, 'Only people with host access can create Custom JAR servers.');
+}
+
+/** Staff can only manage people below their own role (Owners can manage everyone). */
+function requireOutranks(req, targetId) {
+  const target = auth.userById(targetId);
+  if (!target || !TEAM || req.user.role === 'owner') return;
+  if (rbac.level(target.role) >= rbac.level(req.user.role)) {
+    throw httpError(403, `Only someone above ${rbac.role(target.role).label} can do that to this account.`);
+  }
+}
+
+/** Records a staff action in the audit log (only visible with audit.view). `inst`: the server it was about, if any. */
+function audit(req, text, inst = null) {
+  if (TEAM) activity.log('audit', who(req), text, inst);
 }
 
 // ---------- Server-sent events ----------
@@ -309,13 +337,14 @@ function broadcast(event, data, inst) {
 manager.on('status', (inst) => broadcast('status', inst.toJSON(), inst));
 manager.on('removed', (id) => broadcast('removed', { id }));
 
-/** Customers only see their own servers' activity; sign-ups and billing only admins. */
+/** Customers see their own servers' activity; staff see server events; sign-ups and billing need activity.viewAll. */
 function canSeeEvent(user, e) {
   if (!TEAM) return true;
   if (!user) return false;
-  if (user.role === 'customer') return !!e.owner && e.owner === user.id && e.kind !== 'billing' && e.kind !== 'people';
-  if (e.kind === 'people' || e.kind === 'billing') return user.role === 'admin';
-  return true;
+  if (e.kind === 'audit') return can(user, 'audit.view');
+  if (e.kind === 'people' || e.kind === 'billing') return can(user, 'activity.viewAll');
+  if (e.owner && e.owner === user.id) return true;
+  return can(user, 'servers.viewAll') || can(user, 'activity.viewAll');
 }
 activity.listeners.add((e) => {
   const msg = `event: activity\ndata: ${JSON.stringify(e)}\n\n`;
@@ -346,7 +375,7 @@ route(
     const user = authenticate(req);
     return {
       teamMode: TEAM,
-      user: user ? (user.local ? user : auth.publicUser(user)) : null,
+      user: user ? { ...(user.local ? user : auth.publicUser(user)), roleLabel: rbac.role(user.role).label, permissions: TEAM ? rbac.permissionsOf(user) : PERMISSIONS.map((x) => x.id) } : null,
       publicUrl: publicUrl(),
       hosted: HOSTED,
       allowSignup: TEAM && auth.settings.allowSignup,
@@ -354,7 +383,7 @@ route(
       firebase: TEAM ? firebase.publicConfig() : null,
       billingMode: billing.mode,
       isolated: manager.docker,
-      lanUrls: TEAM && !HOSTED && HOST !== '127.0.0.1' && user && isStaff(user) ? lanUrls() : [],
+      lanUrls: TEAM && !HOSTED && HOST !== '127.0.0.1' && user && can(user, 'system.view') ? lanUrls() : [],
     };
   },
   { public: true },
@@ -493,60 +522,78 @@ route(
         ...auth.publicUser(u),
         servers: [...manager.instances.values()].filter((i) => i.cfg.owner === u.id && i.isCustomer).length,
         activePlans: subs.filter((x) => x.status === 'active' || x.status === 'past_due').map((x) => x.planName),
+        roleLabel: rbac.role(u.role).label,
       };
     }),
-  { admin: true },
+  { perm: 'users.view' },
 );
 route(
   'PUT',
   '/api/team/users/:uid/disabled',
   async (req, res, p) => {
     if (p.uid === req.user.id) throw httpError(400, 'You cannot suspend yourself.');
+    requireOutranks(req, p.uid);
     const { disabled } = await readJson(req);
     const u = await auth.setDisabled(p.uid, disabled);
     if (disabled) for (const inst of manager.instances.values()) if (inst.cfg.owner === u.id && inst.proc) inst.stop();
     activity.log('people', who(req), `${disabled ? 'suspended' : 'unsuspended'} the account ${u.username}`);
+    audit(req, `${disabled ? 'suspended' : 'unsuspended'} the account ${u.username}`);
     return auth.publicUser(u);
   },
-  { admin: true },
+  { perm: 'users.manage' },
 );
 route(
   'POST',
   '/api/team/users/:uid/temp-password',
   async (req, res, p) => {
+    requireOutranks(req, p.uid);
     if ((auth.userById(p.uid) || {}).firebaseUid) throw httpError(400, 'This account signs in with Firebase: use "Send password reset email" instead.');
     const password = await auth.tempPassword(p.uid);
-    activity.log('people', who(req), `set a temporary password for ${(auth.userById(p.uid) || {}).username}`);
+    audit(req, `set a temporary password for ${(auth.userById(p.uid) || {}).username}`);
     return { password };
   },
-  { admin: true },
+  { perm: 'users.manage' },
 );
 route(
   'POST',
   '/api/team/invites',
   async (req) => {
     const { role } = await readJson(req);
+    rbac.checkRoleChange(req.user, null, role);
     const invite = await auth.createInvite(req.user, role);
+    audit(req, `created a ${rbac.role(role).label} invite link`);
     return { link: `${publicOrigin(req)}/?invite=${invite}`, expiresInDays: 7 };
   },
-  { admin: true },
+  { perm: 'users.roles' },
 );
 route(
   'PUT',
   '/api/team/users/:uid/role',
   async (req, res, p) => {
-    if (p.uid === req.user.id) throw httpError(400, 'Ask another admin to change your own role.');
-    return auth.publicUser(await auth.setRole(p.uid, (await readJson(req)).role));
+    if (p.uid === req.user.id) throw httpError(400, 'Ask someone else to change your own role.');
+    const target = auth.userById(p.uid);
+    if (!target) throw httpError(404, 'User not found');
+    const role = (await readJson(req)).role;
+    rbac.checkRoleChange(req.user, target, role);
+    const before = rbac.role(target.role).label;
+    const u = await auth.setRole(p.uid, role);
+    audit(req, `changed ${u.username}'s role from ${before} to ${rbac.role(u.role).label}`);
+    return auth.publicUser(u);
   },
-  { admin: true },
+  { perm: 'users.roles' },
 );
-route('PUT', '/api/team/settings', async (req) => auth.setSettings(await readJson(req)), { admin: true });
-route('GET', '/api/team/settings', () => auth.settings, { admin: true });
+route('PUT', '/api/team/settings', async (req) => {
+  const r = await auth.setSettings(await readJson(req));
+  audit(req, `changed site settings (sign-ups ${r.allowSignup ? 'open' : 'closed'})`);
+  return r;
+}, { perm: 'settings.manage' });
+route('GET', '/api/team/settings', () => auth.settings, { perm: 'settings.manage' });
 route(
   'DELETE',
   '/api/team/users/:uid',
   async (req, res, p) => {
     if (p.uid === req.user.id) throw httpError(400, 'You cannot remove yourself.');
+    requireOutranks(req, p.uid);
     const u = auth.userById(p.uid);
     if (u && billing.forUser(u.id).some((x) => x.status === 'active' || x.status === 'past_due')) {
       throw httpError(400, 'This person still has an active plan. Cancel it in Billing first (or suspend the account instead).');
@@ -554,9 +601,10 @@ route(
     for (const inst of [...manager.instances.values()]) if (inst.cfg.owner === p.uid && inst.isCustomer) await manager.remove(inst.cfg.id);
     await auth.removeUser(p.uid);
     if (u && u.firebaseUid) await firebase.deleteAuthUser(u.firebaseUid).catch(() => {});
+    if (u) audit(req, `deleted the account ${u.username}`);
     return { ok: true };
   },
-  { admin: true },
+  { perm: 'users.manage' },
 );
 
 // ---------- activity feed & Discord notifications ----------
@@ -569,8 +617,12 @@ route('GET', '/api/activity', (req, res, p, q) => {
     .slice(-limit)
     .reverse();
 });
-route('GET', '/api/team/notifications', () => activity.publicSettings(), { admin: true });
-route('PUT', '/api/team/notifications', async (req) => activity.setSettings(await readJson(req)), { admin: true });
+route('GET', '/api/team/notifications', () => activity.publicSettings(), { perm: 'settings.manage' });
+route('PUT', '/api/team/notifications', async (req) => {
+  const r = await activity.setSettings(await readJson(req));
+  audit(req, 'changed the Discord notification settings');
+  return r;
+}, { perm: 'settings.manage' });
 route(
   'POST',
   '/api/team/notifications/test',
@@ -578,7 +630,7 @@ route(
     await activity.testDiscord(who(req));
     return { ok: true };
   },
-  { admin: true },
+  { perm: 'settings.manage' },
 );
 
 // ---------- plans & billing ----------
@@ -626,10 +678,18 @@ route(
     x.redeemedBy = x.redeemedBy.map((u) => ({ ...u, username: (auth.userById(u.userId) || {}).username || '(deleted)' }));
     return x;
   }).reverse(),
-  { admin: true },
+  { perm: 'promos.manage' },
 );
-route('POST', '/api/admin/promos', async (req) => billing.createPromo(await readJson(req), req.user.username), { admin: true });
-route('DELETE', '/api/admin/promos/:code', async (req, res, p) => billing.disablePromo(p.code), { admin: true });
+route('POST', '/api/admin/promos', async (req) => {
+  const c = await billing.createPromo(await readJson(req), req.user.username);
+  audit(req, `created promo code ${c.code} (${c.planName}, ${c.months ? `${c.months} months` : 'no end date'}, ${c.maxUses} use${c.maxUses === 1 ? '' : 's'})`);
+  return c;
+}, { perm: 'promos.manage' });
+route('DELETE', '/api/admin/promos/:code', async (req, res, p) => {
+  const c = await billing.disablePromo(p.code);
+  audit(req, `disabled promo code ${c.code}`);
+  return c;
+}, { perm: 'promos.manage' });
 route(
   'POST',
   '/api/billing/webhook',
@@ -657,10 +717,18 @@ route(
       }))
       .reverse(),
   }),
-  { admin: true },
+  { perm: 'billing.view' },
 );
-route('PUT', '/api/admin/plans', async (req) => billing.setPlans((await readJson(req)).plans), { admin: true });
-route('PUT', '/api/admin/billing-settings', async (req) => billing.setSettings(await readJson(req)), { admin: true });
+route('PUT', '/api/admin/plans', async (req) => {
+  const r = await billing.setPlans((await readJson(req)).plans);
+  audit(req, `changed the plans (${r.map((x) => `${x.name} ${(x.priceCents / 100).toFixed(2)}`).join(', ')})`);
+  return r;
+}, { perm: 'billing.manage' });
+route('PUT', '/api/admin/billing-settings', async (req) => {
+  const r = await billing.setSettings(await readJson(req));
+  audit(req, `changed the sellable capacity to ${(r.capacityMb / 1024).toFixed(1)} GB`);
+  return r;
+}, { perm: 'billing.manage' });
 route(
   'POST',
   '/api/admin/subscriptions',
@@ -668,16 +736,77 @@ route(
     const { userId, planId, months, note } = await readJson(req);
     const u = auth.userById(userId);
     if (!u) throw httpError(404, 'User not found');
-    return billing.publicSub(await billing.grant(u, planId, req.user.username, { months, note }));
+    const s = await billing.grant(u, planId, req.user.username, { months, note });
+    audit(req, `gave ${u.username} a free ${s.planName} plan${Number(months) > 0 ? ` for ${months} months` : ''}`);
+    return billing.publicSub(s);
   },
-  { admin: true },
+  { perm: 'billing.manage' },
 );
 route(
   'DELETE',
   '/api/admin/subscriptions/:sid',
-  async (req, res, p) => billing.publicSub(await billing.cancel(p.sid, req.user.username)),
-  { admin: true },
+  async (req, res, p) => {
+    const s = await billing.cancel(p.sid, req.user.username);
+    audit(req, `canceled ${(auth.userById(s.userId) || {}).username || 'a customer'}'s ${s.planName} plan`);
+    return billing.publicSub(s);
+  },
+  { perm: 'billing.manage' },
 );
+
+// ---------- Staff Console (/admin) ----------
+
+/** Numbers for the console's first page; each part only if your role may see it. */
+route('GET', '/api/admin/overview', (req) => {
+  const u = req.user;
+  const all = [...manager.instances.values()];
+  const out = {
+    servers: { total: all.length, running: all.filter((i) => i.proc).length, suspended: all.filter((i) => i.cfg.suspended).length },
+    people: can(u, 'users.view')
+      ? auth.users.reduce((acc, x) => ((acc[x.role] = (acc[x.role] || 0) + 1), acc), { total: auth.users.length })
+      : null,
+    billing: can(u, 'billing.view') ? billing.adminSummary() : null,
+    system: can(u, 'system.view')
+      ? { totalMemMb: Math.floor(os.totalmem() / 1048576), freeMemMb: Math.floor(os.freemem() / 1048576), uptimeSec: Math.floor(process.uptime()), isolated: manager.docker, node: process.version }
+      : null,
+    activity: activity.events.filter((e) => e.kind !== 'audit' && canSeeEvent(u, e)).slice(-15).reverse(),
+  };
+  return out;
+}, { perm: 'console.access' });
+
+/** Every server with its owner and plan (support's main tool). */
+route('GET', '/api/admin/servers', (req) => [...manager.instances.values()].map((i) => {
+  const j = i.toJSON();
+  const owner = auth.userById(i.cfg.owner);
+  return {
+    id: j.id, name: j.name, type: j.typeLabel || j.type, version: j.version, port: j.port, status: j.status,
+    running: !!i.proc, suspended: i.cfg.suspended || null, players: (j.players || []).length,
+    memUsedMb: i.memUsedMb || null, memoryMb: Number(i.cfg.memoryMb) || null, diskUsedMb: i.diskUsedMb || null,
+    owner: owner ? { id: owner.id, username: owner.username, email: can(req.user, 'users.view') ? owner.email : undefined } : null,
+    plan: manager.planInfo(i),
+    createdAt: i.cfg.createdAt || null,
+  };
+}), { perm: 'servers.viewAll' });
+
+route('GET', '/api/admin/roles', () => rbac.publicRoles(), { perm: 'console.access' });
+route('PUT', '/api/admin/roles/:role', async (req, res, p) => {
+  const before = rbac.role(p.role).permissions.slice();
+  const r = await rbac.setPermissions(p.role, (await readJson(req)).permissions);
+  const after = rbac.role(p.role).permissions;
+  const added = after.filter((x) => !before.includes(x));
+  const removed = before.filter((x) => !after.includes(x));
+  audit(req, `changed the ${rbac.role(p.role).label} role${added.length ? ` (+ ${added.join(', ')})` : ''}${removed.length ? ` (- ${removed.join(', ')})` : ''}`);
+  return r;
+}, { perm: 'roles.manage' });
+route('POST', '/api/admin/roles/reset', async (req) => {
+  const r = await rbac.resetDefaults();
+  audit(req, 'reset every role to the default permissions');
+  return r;
+}, { perm: 'roles.manage' });
+
+route('GET', '/api/admin/audit', (req, res, p, q) => {
+  const limit = Math.min(Number(q.get('limit')) || 200, 1000);
+  return activity.events.filter((e) => e.kind === 'audit').slice(-limit).reverse();
+}, { perm: 'audit.view' });
 
 // ---------- servers API ----------
 
@@ -699,7 +828,7 @@ route('GET', '/api/events', (req, res) => {
 });
 
 route('GET', '/api/health', () => ({ ok: true }), { public: true });
-route('GET', '/api/system', async (req) => (TEAM && !isStaff(req.user) ? { customer: true, lanIps: [] } : {
+route('GET', '/api/system', async (req) => (!can(req.user, 'system.view') ? { customer: true, lanIps: [] } : {
   platform: process.platform,
   totalMemMb: Math.floor(os.totalmem() / 1048576),
   freeMemMb: Math.floor(os.freemem() / 1048576),
@@ -722,7 +851,7 @@ route('GET', '/api/types/:type/versions/:version/builds', async (req, res, p) =>
   return prov.hasBuilds ? prov.builds(p.version) : [];
 });
 route('GET', '/api/next-port', async (req, res, p, q) => {
-  requireStaff(req);
+  requirePerm(req, 'servers.host');
   return { port: await manager.nextFreePort(q.get('kind')) };
 });
 
@@ -740,7 +869,7 @@ route('POST', '/api/servers', async (req) => {
     if (!body.eula) throw httpError(400, 'Please accept the Minecraft EULA.');
     if (body.type === 'custom') throw httpError(403, 'Custom JAR servers are not available.');
     sub = billing.sub(String(body.subscriptionId || ''));
-    if (!sub || (sub.userId !== req.user.id && req.user.role !== 'admin')) throw httpError(400, 'Pick one of your plans for this server.');
+    if (!sub || (sub.userId !== req.user.id && !can(req.user, 'billing.manage'))) throw httpError(400, 'Pick one of your plans for this server.');
     if (!billing.usable(sub)) throw httpError(402, 'This plan is not active. Check Billing.');
     if (sub.serverId && manager.instances.has(sub.serverId)) throw httpError(400, 'This plan already has a server. Delete that server first, or buy another plan.');
     body.memoryMb = sub.ramMb;
@@ -821,7 +950,7 @@ route('POST', '/api/servers/:id/team-access', async (req, res, p) => {
 route('POST', '/api/servers/:id/watches', async (req, res, p) => {
   if (HOSTED) throw httpError(400, 'Watching folders on the host is not available on a hosted Tree Host. Use the deploy API.');
   return manager.addWatch(p.id, (await readJson(req)).path);
-}, { admin: true });
+}, { perm: 'servers.host' });
 route(
   'PATCH',
   '/api/servers/:id/watches/:wid',
@@ -829,7 +958,7 @@ route(
     manager.updateWatch(p.id, p.wid, await readJson(req));
     return { ok: true };
   },
-  { admin: true },
+  { perm: 'servers.host' },
 );
 route(
   'DELETE',
@@ -838,7 +967,7 @@ route(
     manager.removeWatch(p.id, p.wid);
     return { ok: true };
   },
-  { admin: true },
+  { perm: 'servers.host' },
 );
 
 route('GET', '/api/servers/:id/properties', (req, res, p) => getFor(req, p.id).getProperties());
@@ -937,7 +1066,7 @@ route('POST', '/api/servers/:id/:action', async (req, res, p, q) => {
       inst.logActivity('server', who(req), 'reset the world');
       break;
     case 'open-folder': {
-      requireAdmin(req);
+      requirePerm(req, 'servers.host');
       if (HOSTED) throw httpError(400, 'Not available on a hosted Tree Host.');
       const sub = q.get('sub');
       const target = sub ? inst.resolvePath(sub) : inst.dir;
@@ -972,6 +1101,7 @@ const MIME = {
 const PAGES = {
   '/dashboard': 'dashboard.html',
   '/app': 'dashboard.html',
+  '/admin': 'dashboard.html',
   '/features': 'features.html',
   '/pricing': 'pricing.html',
   '/support': 'support.html',
@@ -1042,7 +1172,7 @@ const server = http.createServer(async (req, res) => {
       if (!r.opts.public) {
         req.user = authenticate(req);
         if (!req.user) throw httpError(401, 'Please sign in.', 'AUTH');
-        if (r.opts.admin) requireAdmin(req);
+        if (r.opts.perm) requirePerm(req, r.opts.perm);
       }
       const result = await r.handler(req, res, params, url.searchParams);
       if (result !== HANDLED) sendJson(res, 200, result === undefined ? { ok: true } : result);
@@ -1065,6 +1195,7 @@ async function main() {
   if (TEAM) {
     await migrateTeamData();
     await auth.init();
+    await rbac.init();
     // Local test sites (http://localhost...) make the first account the admin; real sites use TREEHOST_ADMIN_EMAILS.
     auth.allowFirstAdmin = !auth.adminEmails.size && (!HOSTED || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/'));
     await billing.init();
@@ -1098,12 +1229,12 @@ async function main() {
     }
     console.log(`  Data folder: ${DATA}`);
     console.log('');
-    if (TEAM && !auth.users.some((u) => u.role === 'admin')) {
+    if (TEAM && !auth.hasOwner()) {
       banner(
         auth.allowFirstAdmin
-          ? ['No admin yet: the first account you create becomes the admin (local test mode).']
+          ? ['No Owner yet: the first account you create becomes the Owner (local test mode).']
           : auth.adminEmails.size
-            ? ['No admin yet. Sign up on the website with one of these emails to become the admin:', [...auth.adminEmails].join(', '), firebase.authEnabled() ? 'Verify the email (check your inbox), then sign in again.' : '']
+            ? ['No Owner yet. Sign up on the website with one of these emails to become the Owner:', [...auth.adminEmails].join(', '), firebase.authEnabled() ? 'Verify the email (check your inbox), then sign in again.' : '']
             : ['No admin yet. Set TREEHOST_ADMIN_EMAILS=you@example.com in the settings and restart.'],
       );
       console.log('');

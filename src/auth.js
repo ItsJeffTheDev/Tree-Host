@@ -20,11 +20,13 @@ const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex'
 const randomToken = (bytes = 32) => crypto.randomBytes(bytes).toString('base64url');
 const httpError = (status, message, code) => Object.assign(new Error(message), { status, code });
 
-// admin: runs Tree Host. staff: support (can help with any server). customer: everyone who signs up.
-const ROLES = ['admin', 'staff', 'customer'];
-const STAFF_ROLES = ['admin', 'staff'];
+// Roles (what each may do is in rbac.js): owner runs Tree Host, admin runs the business, developer builds it,
+// staff is Support, customer is everyone who signs up.
+const ROLES = ['owner', 'admin', 'developer', 'staff', 'customer'];
 const cleanRole = (r) => (ROLES.includes(r) ? r : 'customer');
-const isStaff = (u) => !!u && STAFF_ROLES.includes(u.role);
+const isStaff = (u) => !!u && u.role !== 'customer';
+// Roles that are allowed to manage everything; the last one of the highest kind can't be removed.
+const isOwner = (u) => !!u && u.role === 'owner';
 
 function hashPassword(password) {
   return new Promise((resolve, reject) => {
@@ -97,6 +99,15 @@ class Auth {
       if (u.role === 'dev' || u.role === 'tester') (u.role = 'staff'), (migrated = true);
       if (u.role === 'pending') (u.role = 'customer'), (migrated = true);
     }
+    // Role-based access: there must always be an Owner. Emails in TREEHOST_ADMIN_EMAILS are Owners; if there is
+    // none yet, the earliest admin becomes the Owner.
+    for (const u of this.users) {
+      if (u.role === 'admin' && u.email && this.adminEmails.has(u.email)) (u.role = 'owner'), (migrated = true);
+    }
+    if (!this.users.some(isOwner)) {
+      const first = this.users.filter((u) => u.role === 'admin').sort((a, b) => a.createdAt - b.createdAt)[0];
+      if (first) (first.role = 'owner'), (migrated = true);
+    }
     if (migrated) await this.save();
     try {
       const list = JSON.parse(await fsp.readFile(SESSIONS_FILE, 'utf8'));
@@ -145,7 +156,12 @@ class Auth {
   }
 
   firstAdmin() {
-    return this.users.find((u) => u.role === 'admin') || null;
+    return this.users.find(isOwner) || this.users.find((u) => u.role === 'admin') || null;
+  }
+
+  /** True when someone can run the place (an Owner exists). */
+  hasOwner() {
+    return this.users.some(isOwner);
   }
 
   async setSettings({ allowSignup }) {
@@ -161,8 +177,8 @@ class Auth {
     this.checkRate([`signup:${ip}`]);
     this.recordFailure([`signup:${ip}`]);
     if (!cleanEmail(body.email)) throw httpError(400, 'Enter your email address');
-    const first = !this.users.some((u) => u.role === 'admin');
-    const user = await this.createUser(body, first && this.allowFirstAdmin ? 'admin' : 'customer');
+    const first = !this.hasOwner();
+    const user = await this.createUser(body, first && this.allowFirstAdmin ? 'owner' : 'customer');
     return { user, token: await this.createSession(user) };
   }
 
@@ -229,12 +245,13 @@ class Auth {
     return this.createSession(user);
   }
 
-  /** Invite links add support staff or admins. Customers sign up on the website. */
+  /** Invite links add staff (Support, Developer, Admin). Customers sign up on the website. Who may invite whom is checked by the caller (rbac). */
   async createInvite(byUser, role) {
+    if (!['admin', 'developer', 'staff'].includes(role)) throw httpError(400, 'Invites are for Support, Developer or Admin.');
     const token = randomToken(24);
     this.invites.push({
       hash: sha256(token),
-      role: role === 'admin' ? 'admin' : 'staff',
+      role,
       createdBy: byUser.username,
       expires: Date.now() + INVITE_TTL,
     });
@@ -276,13 +293,13 @@ class Auth {
     await this.save();
   }
 
-  /** Changes someone's role (the last admin can't be demoted). */
+  /** Changes someone's role (the last Owner can't be demoted). Who may do it is checked by rbac in server.js. */
   async setRole(id, role) {
     const user = this.userById(id);
     if (!user) throw httpError(404, 'User not found');
     role = cleanRole(role);
-    if (user.role === 'admin' && role !== 'admin' && this.users.filter((u) => u.role === 'admin').length === 1) {
-      throw httpError(400, 'You cannot demote the last admin. Make someone else an admin first.');
+    if (isOwner(user) && role !== 'owner' && this.users.filter(isOwner).length === 1) {
+      throw httpError(400, 'You cannot demote the last Owner. Make someone else an Owner first.');
     }
     user.role = role;
     await this.save();
@@ -293,7 +310,7 @@ class Auth {
   async setDisabled(id, disabled) {
     const user = this.userById(id);
     if (!user) throw httpError(404, 'User not found');
-    if (user.role === 'admin' && disabled) throw httpError(400, 'Admins cannot be suspended. Change their role first.');
+    if (isOwner(user) && disabled) throw httpError(400, 'Owners cannot be suspended. Change their role first.');
     user.disabled = !!disabled;
     if (disabled) this.dropSessions(id);
     await this.save();
@@ -304,8 +321,8 @@ class Auth {
   async removeUser(id) {
     const user = this.users.find((u) => u.id === id);
     if (!user) throw httpError(404, 'User not found');
-    if (user.role === 'admin' && this.users.filter((u) => u.role === 'admin').length === 1) {
-      throw httpError(400, 'You cannot remove the last admin');
+    if (isOwner(user) && this.users.filter(isOwner).length === 1) {
+      throw httpError(400, 'You cannot remove the last Owner');
     }
     this.users = this.users.filter((u) => u !== user);
     this.dropSessions(id);
@@ -388,11 +405,11 @@ class Auth {
       user = this.users.find((u) => !u.firebaseUid && u.email === id.email) || null;
       if (user) user.firebaseUid = id.uid;
     }
-    const isOwner = this.isAdminEmail(id);
+    const ownerEmail = this.isAdminEmail(id);
     if (user) {
       if (user.disabled) throw httpError(403, 'This account has been suspended. Contact support.', 'DISABLED');
       if (id.email && user.email !== id.email) user.email = id.email;
-      if (isOwner && user.role !== 'admin') user.role = 'admin';
+      if (ownerEmail && user.role !== 'owner') user.role = 'owner';
       user.lastLogin = Date.now();
       await this.save();
       return { user, token: await this.createSession(user) };
@@ -401,8 +418,8 @@ class Auth {
     // A new account.
     let role = 'customer';
     let invite = null;
-    if (isOwner || (this.allowFirstAdmin && !this.users.some((u) => u.role === 'admin'))) {
-      role = 'admin';
+    if (ownerEmail || (this.allowFirstAdmin && !this.hasOwner())) {
+      role = 'owner';
     } else if (body.invite) {
       invite = this.invites.find((i) => i.hash === sha256(body.invite) && i.expires > Date.now());
       if (!invite) throw httpError(400, 'This invite link is invalid or has expired. Ask an admin for a new one.');

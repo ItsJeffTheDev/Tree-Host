@@ -1,43 +1,44 @@
 'use strict';
-// Accounts UI: sign-in screens, account, billing (plans and subscriptions) and the admin panel.
+// Accounts UI: sign-in screens, account, billing (plans and subscriptions) and the Staff Console sections.
 // Loaded before app.js; uses app.js helpers ($, esc, api, toast, attempt, state) at call time.
 
 function isTeam() {
   return !!(state.me && state.me.teamMode);
 }
 
-function isAdmin() {
-  return !isTeam() || state.me.user?.role === 'admin';
-}
-
-function isStaffUser() {
-  return !isTeam() || ['admin', 'staff'].includes(state.me.user?.role);
+/** Role-based access: the server sends the signed-in user's permissions (see src/rbac.js). */
+function hasPerm(permission) {
+  return !isTeam() || (state.me.user?.permissions || []).includes(permission);
 }
 
 function isCustomer() {
   return isTeam() && state.me.user?.role === 'customer';
 }
 
-const ROLE_LABEL = { admin: 'Admin', staff: 'Support', customer: 'Customer' };
-const ROLE_OPTIONS = (selected, roles = ['customer', 'staff', 'admin']) =>
-  roles.map((r) => `<option value="${r}" ${r === selected ? 'selected' : ''}>${ROLE_LABEL[r]}</option>`).join('');
+const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', developer: 'Developer', staff: 'Support', customer: 'Customer' };
+const ROLE_BADGE = { owner: 'yellow', admin: 'green', developer: 'blue', staff: 'blue', customer: '' };
+const ROLE_OPTIONS = (selected, roles = ['customer', 'staff', 'developer', 'admin']) =>
+  roles.map((r) => `<option value="${r}" ${r === selected ? 'selected' : ''}>${ROLE_LABEL[r] || r}</option>`).join('');
 
 /**
  * Mirrors the server's permission rules so the dashboard only shows what you can use.
  * Actions: view, control, command, plugins, files, settings, deploy, manage (delete / reset world / change version).
  */
+const ACTION_PERMISSION = {
+  control: 'servers.operate', command: 'servers.operate',
+  plugins: 'servers.edit', files: 'servers.edit', settings: 'servers.edit', deploy: 'servers.edit',
+  manage: 'servers.destroy',
+};
 function can(action, s) {
   if (!isTeam()) return true;
   const u = state.me.user;
-  if (u.role === 'admin') return true;
-  if (u.role === 'customer') return !s || s.owner === u.id;
-  // Support staff can help with anyone's server, but not delete it, reset its world or change its version.
-  return !s || s.owner === u.id || action !== 'manage';
+  if (!s || action === 'view' || s.owner === u.id) return true;
+  return hasPerm(ACTION_PERMISSION[action] || 'servers.viewAll');
 }
 
 /** Features that act on the host machine itself (Play, open folder, watching build folders, custom paths). */
 function hostFeatures() {
-  return isAdmin() && !state.me?.hosted;
+  return hasPerm('servers.host') && !state.me?.hosted;
 }
 
 function money(cents, currency = 'usd') {
@@ -364,7 +365,7 @@ function renderUserBox() {
   const u = state.me.user;
   el.classList.remove('hidden');
   el.innerHTML = `
-    <div class="ub-name">${esc(u.username)} <span class="badge ${u.role === 'admin' ? 'green' : u.role === 'staff' ? 'blue' : ''}">${ROLE_LABEL[u.role] || u.role}</span></div>
+    <div class="ub-name">${esc(u.username)} <span class="badge ${ROLE_BADGE[u.role] || ''}">${esc(u.roleLabel || ROLE_LABEL[u.role] || u.role)}</span></div>
     ${
       state.me.lanUrls?.length
         ? `<div class="ub-link small">Home network: <span class="copy" data-copy="${esc(state.me.lanUrls[1] || state.me.lanUrls[0])}" title="Click to copy">${esc((state.me.lanUrls[1] || state.me.lanUrls[0]).replace('http://', ''))}</span></div>`
@@ -373,12 +374,11 @@ function renderUserBox() {
     <div class="row" style="flex-wrap:wrap;margin-top:6px">
       <button class="btn sm" id="ub-account">Account</button>
       ${state.me.hosted ? '<button class="btn sm" id="ub-billing">💳 Billing</button>' : ''}
-      ${isAdmin() ? '<button class="btn sm" id="ub-team">Admin</button>' : ''}
+      ${isTeam() && hasPerm('console.access') ? '<a class="btn sm" href="/admin">🛠️ Staff Console</a>' : ''}
       <button class="btn sm" id="ub-logout">Sign out</button>
     </div>`;
   $('#ub-account').addEventListener('click', openAccount);
   if ($('#ub-billing')) $('#ub-billing').addEventListener('click', openBilling);
-  if ($('#ub-team')) $('#ub-team').addEventListener('click', openTeam);
   $('#ub-logout').addEventListener('click', async () => {
     await api('POST', '/api/auth/logout').catch(() => {});
     const fb = await firebaseAuth().catch(() => null);
@@ -648,33 +648,19 @@ async function openBilling() {
     );
 }
 
-// ---------- admin panel ----------
-
-async function openTeam() {
-  const { root } = openModal(`
-    <h2>Admin</h2>
-    <div class="tabs admin-tabs">
-      <button class="tab active" data-atab="people">People</button>
-      <button class="tab" data-atab="billing">Billing</button>
-      <button class="tab" data-atab="plans">Plans</button>
-      <button class="tab" data-atab="promos">Promo codes</button>
-      <button class="tab" data-atab="settings">Settings</button>
-    </div>
-    <div id="admin-body" style="margin-top:14px"></div>
-    <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
-  root.querySelector('.modal').classList.add('wide');
-  const show = (tab) => {
-    $$('[data-atab]', root).forEach((t) => t.classList.toggle('active', t.dataset.atab === tab));
-    const body = $('#admin-body', root);
-    body.innerHTML = '<div class="muted">Loading...</div>';
-    ({ people: adminPeople, billing: adminBilling, plans: adminPlans, promos: adminPromos, settings: adminSettings })[tab](body).catch((e) => (body.textContent = e.message));
-  };
-  $$('[data-atab]', root).forEach((t) => t.addEventListener('click', () => show(t.dataset.atab)));
-  show('people');
-}
+// ---------- Staff Console sections (rendered by console.js) ----------
 
 async function adminPeople(body) {
-  const [all, plans] = await Promise.all([api('GET', '/api/team/users'), api('GET', '/api/plans')]);
+  const [all, plans, rbac] = await Promise.all([api('GET', '/api/team/users'), api('GET', '/api/plans'), api('GET', '/api/admin/roles')]);
+  // You can only manage people (and hand out roles) below your own role; Owners can do everything.
+  const me = state.me.user;
+  const level = (role) => (rbac.roles.find((r) => r.id === role) || { level: 0 }).level;
+  const iAmOwner = me.role === 'owner';
+  const outranks = (u) => iAmOwner || level(u.role) < level(me.role);
+  const assignable = rbac.roles.filter((r) => iAmOwner || r.level < level(me.role)).map((r) => r.id).reverse();
+  const canRoles = hasPerm('users.roles');
+  const canManage = hasPerm('users.manage');
+  const canGrant = hasPerm('billing.manage');
   let filter = 'all';
   let q = '';
   const draw = () => {
@@ -687,25 +673,26 @@ async function adminPeople(body) {
           <td><b>${esc(u.username)}</b>${u.disabled ? ' <span class="badge red">suspended</span>' : ''}
             <div class="small muted">${esc(u.email) || 'no email'} · joined ${new Date(u.createdAt).toLocaleDateString()}${u.lastLogin ? ` · last seen ${new Date(u.lastLogin).toLocaleDateString()}` : ''}</div></td>
           <td>${
-            u.id === state.me.user.id
-              ? `<span class="badge green">${ROLE_LABEL[u.role]}</span>`
-              : `<select data-role="${esc(u.id)}" style="width:auto">${ROLE_OPTIONS(u.role)}</select>`
+            u.id !== me.id && canRoles && outranks(u)
+              ? `<select data-role="${esc(u.id)}" style="width:auto">${ROLE_OPTIONS(u.role, assignable)}</select>`
+              : `<span class="badge ${ROLE_BADGE[u.role] || ''}">${esc(u.roleLabel || ROLE_LABEL[u.role] || u.role)}</span>`
           }</td>
           <td class="small">${u.activePlans.length ? esc(u.activePlans.join(', ')) : '<span class="muted">none</span>'}${u.servers ? ` · ${u.servers} server${u.servers > 1 ? 's' : ''}` : ''}</td>
-          <td class="actions-cell">${
-            u.id === state.me.user.id
-              ? '<span class="muted small">you</span>'
-              : `<details class="menu"><summary class="btn sm">More</summary><div class="menu-body">
-                  <button class="btn sm" data-grant="${esc(u.id)}">Give a free plan</button>
-                  ${
-                    u.firebase
-                      ? `<button class="btn sm" data-reset="${esc(u.email)}">Send password reset email</button>`
-                      : `<button class="btn sm" data-temp="${esc(u.id)}">Temporary password</button>`
-                  }
-                  <button class="btn sm" data-dis="${esc(u.id)}" data-val="${u.disabled ? '0' : '1'}">${u.disabled ? 'Unsuspend' : 'Suspend'}</button>
-                  <button class="btn sm danger" data-udel="${esc(u.id)}">Delete account</button>
-                </div></details>`
-          }</td></tr>`,
+          <td class="actions-cell">${(() => {
+            if (u.id === me.id) return '<span class="muted small">you</span>';
+            const manage = canManage && outranks(u);
+            const items = [
+              canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan</button>` : '',
+              manage
+                ? u.firebase
+                  ? `<button class="btn sm" data-reset="${esc(u.email)}">Send password reset email</button>`
+                  : `<button class="btn sm" data-temp="${esc(u.id)}">Temporary password</button>`
+                : '',
+              manage ? `<button class="btn sm" data-dis="${esc(u.id)}" data-val="${u.disabled ? '0' : '1'}">${u.disabled ? 'Unsuspend' : 'Suspend'}</button>` : '',
+              manage ? `<button class="btn sm danger" data-udel="${esc(u.id)}">Delete account</button>` : '',
+            ].join('');
+            return items ? `<details class="menu"><summary class="btn sm">More</summary><div class="menu-body">${items}</div></details>` : '';
+          })()}</td></tr>`,
       )
       .join('')}</tbody></table>`;
     bindRows();
@@ -717,7 +704,8 @@ async function adminPeople(body) {
   const bindRows = () => {
     $$('[data-role]', body).forEach((sel) =>
       sel.addEventListener('change', () => {
-        if (sel.value !== 'customer' && !confirm(`Make this person ${ROLE_LABEL[sel.value]}? They can see and manage every customer's server.`)) return reload();
+        const r = rbac.roles.find((x) => x.id === sel.value);
+        if (sel.value !== 'customer' && !confirm(`Make this person ${r.label}?\n\n${r.description}`)) return reload();
         attempt(async () => {
           await api('PUT', `/api/team/users/${sel.dataset.role}/role`, { role: sel.value });
           toast(`Role changed to ${ROLE_LABEL[sel.value]}`);
@@ -782,18 +770,22 @@ async function adminPeople(body) {
       <span class="muted small">${all.length} account${all.length === 1 ? '' : 's'}</span>
     </div>
     <div id="ppl-list"></div>
-    <div class="card stack" style="margin-top:14px">
-      <h3>Invite support staff</h3>
-      <p class="hint" style="margin:0">Support staff can see and help with every customer's server (but not delete them). Creates a one-time link valid for 7 days.</p>
+    ${
+      canRoles && assignable.some((r) => ['staff', 'developer', 'admin'].includes(r))
+        ? `<div class="card stack" style="margin-top:14px">
+      <h3>Invite staff</h3>
+      <p class="hint" style="margin:0">Creates a one-time sign-up link (valid for 7 days) that gives the new account this role. See <b>Roles</b> for what each role can do.</p>
       <div class="row">
-        <select id="inv-role" style="max-width:200px">${ROLE_OPTIONS('staff', ['staff', 'admin'])}</select>
+        <select id="inv-role" style="max-width:200px">${ROLE_OPTIONS('staff', assignable.filter((r) => ['staff', 'developer', 'admin'].includes(r)))}</select>
         <button class="btn primary" id="inv-create">Create invite link</button>
       </div>
       <div id="inv-link" class="hidden"></div>
-    </div>`;
+    </div>`
+        : ''
+    }`;
   $('#ppl-q', body).addEventListener('input', (e) => ((q = e.target.value.trim().toLowerCase()), draw()));
   $('#ppl-filter', body).addEventListener('change', (e) => ((filter = e.target.value), draw()));
-  $('#inv-create', body).addEventListener('click', () =>
+  if ($('#inv-create', body)) $('#inv-create', body).addEventListener('click', () =>
     attempt(async () => {
       const { link } = await api('POST', '/api/team/invites', { role: $('#inv-role', body).value });
       const shareLink = (state.me.publicUrl || location.origin) + link.slice(link.indexOf('/?invite=')).replace('/?', '/dashboard?');
@@ -839,7 +831,7 @@ async function adminBilling(body) {
                   <td>${esc(x.planName)} <span class="muted small">${x.free ? 'free' : `${money(x.priceCents, x.currency)}/mo`}</span></td>
                   <td><span class="badge ${cls}">${label}</span></td>
                   <td class="small">${x.serverName ? esc(x.serverName) : '<span class="muted">none</span>'}</td>
-                  <td class="actions-cell">${x.status !== 'canceled' ? `<button class="btn sm danger" data-cancel="${esc(x.id)}">Cancel</button>` : ''}</td></tr>`;
+                  <td class="actions-cell">${x.status !== 'canceled' && hasPerm('billing.manage') ? `<button class="btn sm danger" data-cancel="${esc(x.id)}">Cancel</button>` : ''}</td></tr>`;
               })
               .join('')}</tbody></table>`
           : '<p class="muted" style="margin:0">No subscriptions yet.</p>'

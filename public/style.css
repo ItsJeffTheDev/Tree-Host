@@ -347,3 +347,16 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .auth-or::before, .auth-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .google-btn { display: flex; align-items: center; justify-content: center; gap: 10px; background: #fff; color: #1f1f1f; border-color: #dadce0; font-weight: 600; }
 .google-btn:hover { background: #f4f6f8; }
+
+/* ---------- Staff Console (/admin) ---------- */
+.console-nav { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 10px; }
+.console-nav a { color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; }
+.console-nav a:hover { background: var(--panel-2); }
+.console-nav a.active { background: var(--panel-2); border-color: var(--border); color: var(--accent); }
+.console-page { max-width: 1200px; }
+.console-title { font-size: 22px; margin: 0 0 14px; }
+.role-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.perm-table th.c, .perm-table td.c { text-align: center; width: 92px; }
+.perm-table tr.perm-group td { background: var(--panel-2); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.perm-table input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
+.perm-table input[type=checkbox]:disabled { opacity: .55; }

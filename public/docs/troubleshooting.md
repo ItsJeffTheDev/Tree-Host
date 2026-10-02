@@ -83,4 +83,4 @@ or missing. Fix it in `/etc/tree-host.env`, restart, and click **Resend** on the
 Docker isn't running: `sudo systemctl start docker`, then `sudo systemctl restart tree-host`.
 
 **Plans show "Sold out"**
-All memory is sold. Raise **capacity** (Admin → Plans) only if the machine really has the memory, or rent a bigger server.
+All memory is sold. Raise **capacity** (Staff Console → Plans) only if the machine really has the memory, or rent a bigger server.

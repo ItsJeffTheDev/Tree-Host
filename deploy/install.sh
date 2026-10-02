@@ -37,7 +37,7 @@ if [ ! -f /etc/tree-host.env ]; then
 fi
 # Without an admin email nobody can manage the site, so ask for it now.
 if ! grep -qE '^TREEHOST_ADMIN_EMAILS=.+' /etc/tree-host.env && [ -t 0 ]; then
-  read -rp "    Your email (you become the admin when you sign up with it): " ADMIN_EMAIL
+  read -rp "    Your email (you become the Owner when you sign up with it): " ADMIN_EMAIL
   if [ -n "$ADMIN_EMAIL" ]; then sed -i "s|^TREEHOST_ADMIN_EMAILS=.*|TREEHOST_ADMIN_EMAILS=$ADMIN_EMAIL|" /etc/tree-host.env; fi
 fi
 chown root:treehost /etc/tree-host.env
@@ -95,6 +95,6 @@ echo ""
 echo "Tree Host is installed."
 echo "  Website:     $(grep -E '^TREEHOST_PUBLIC_URL=' /etc/tree-host.env | cut -d= -f2)"
 echo "  Settings:    sudo nano /etc/tree-host.env   then   sudo systemctl restart tree-host"
-echo "  Admin:       sign up with the email in TREEHOST_ADMIN_EMAILS to become the admin."
+echo "  Admin:       sign up with the email in TREEHOST_ADMIN_EMAILS to become the Owner (Staff Console: /admin)."
 echo "  Check again: sudo bash $APP/deploy/doctor.sh"
 echo "  Logs:        journalctl -u tree-host -f"

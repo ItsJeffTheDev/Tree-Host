@@ -134,7 +134,7 @@ show your server's IP).
    ```
 
 3. Run the installer. It installs Docker, Node.js, Caddy and a firewall, creates a `treehost` user, turns on nightly
-   backups, and starts everything. It asks for **your email** (that account becomes the admin) and ends with a health
+   backups, and starts everything. It asks for **your email** (that account becomes the Owner) and ends with a health
    check:
 
    ```bash
@@ -151,9 +151,9 @@ show your server's IP).
    firewall, disk space and backups.
 
 5. Sign up at **https://treehost.online/dashboard** with that email,
-   click the link in the verification email Firebase sends you, and sign in again: you're the admin. (Signing in with
+   click the link in the verification email Firebase sends you, and sign in again: you're the Owner, with access to the **Staff Console** (`/admin`). (Signing in with
    Google using that email works straight away.) Everyone else who signs up is a normal customer. Want your own servers
-   too? Give yourself a free plan in **Admin → People → More → Give a free plan**.
+   too? Give yourself a free plan in **Staff Console → People → More → Give a free plan**.
 
 Your settings live in **`/etc/tree-host.env`**. After changing it: `sudo systemctl restart tree-host`.
 
@@ -176,7 +176,7 @@ Your settings live in **`/etc/tree-host.env`**. After changing it: `sudo systemc
 
 When everything works: switch Stripe to **Live mode**, repeat steps 2-4 with the live keys, and restart.
 
-> **Tip:** set your prices in **Admin → Plans**. Changes apply to new purchases; existing customers keep their price.
+> **Tip:** set your prices in **Staff Console → Plans**. Changes apply to new purchases; existing customers keep their price.
 
 ---
 
@@ -245,7 +245,7 @@ Password reset emails come from Firebase. Tree Host itself only emails customers
 - [ ] Realtime Database rules are locked (step 5.3), and the log says **Database: Firebase Realtime Database**.
 - [ ] **Terms** and **Privacy** pages: fill in `TREEHOST_COMPANY`, `TREEHOST_SUPPORT_EMAIL` and `TREEHOST_JURISDICTION`,
       and **have them checked by a lawyer** for your country. They are starting templates, not legal advice.
-- [ ] Plans and prices set (**Admin → Plans**), and **capacity** set so you never sell more memory than the machine has.
+- [ ] Plans and prices set (**Staff Console → Plans**), and **capacity** set so you never sell more memory than the machine has.
 - [ ] You can join a test server at `play.treehost.online:25600` from outside your home network.
 - [ ] Off-server backups are set up (section 9).
 
@@ -253,11 +253,11 @@ Password reset emails come from Firebase. Tree Host itself only emails customers
 
 ## 8. Day-to-day
 
-- **Admin → Billing**: monthly revenue, memory sold vs. capacity, every subscription. Unpaid plans keep running for 3
+- **Staff Console → Billing**: monthly revenue, memory sold vs. capacity, every subscription. Unpaid plans keep running for 3
   days, then stop; servers of ended plans are deleted after 14 days.
-- **Admin → People**: find customers, give free plans (giveaways, partners, your own servers), suspend abusers, reset passwords.
+- **Staff Console → People**: find customers, give free plans (giveaways, partners, your own servers), suspend abusers, reset passwords.
 - **🌳 All servers** (top of the sidebar, support and admins): every customer's server, to help with problems.
-- **Activity** and **Discord alerts** (Admin → Settings): new customers, payments, failed payments and crashes.
+- **Activity** and **Discord alerts** (Staff Console → Settings): new customers, payments, failed payments and crashes.
 - **Logs:** `journalctl -u tree-host -f`
 
 ### Updating Tree Host

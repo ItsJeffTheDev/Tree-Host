@@ -94,7 +94,7 @@ function currentSpace() {
 /** Servers shown in the sidebar: customers see theirs; support and admins switch between their own and everyone's. */
 function spaceServers() {
   const all = [...state.servers.values()].sort((a, b) => a.createdAt - b.createdAt);
-  if (!isTeam() || isCustomer()) return all;
+  if (!isTeam() || !hasPerm('servers.viewAll')) return all;
   return state.space === 'all' ? all : all.filter((s) => s.owner === state.me.user.id);
 }
 
@@ -120,7 +120,7 @@ function renderSpaceSwitch() {
     return;
   }
   $('#btn-new').textContent = '+ New server';
-  if (isCustomer()) {
+  if (!hasPerm('servers.viewAll')) {
     el.classList.add('hidden');
     return;
   }
@@ -308,7 +308,7 @@ function renderHeader() {
                ${
                  s.gateway.address
                    ? `<div class="addr-main copy" data-copy="${esc(s.gateway.address)}">${esc(s.gateway.address)}</div>`
-                   : `<div class="addr-lan">The Gateway has no public address yet${isAdmin() ? ' (Team panel → Gateway)' : ''}.</div>`
+                   : `<div class="addr-lan">The Gateway has no public address yet${hasPerm('system.view') ? ' (Team panel → Gateway)' : ''}.</div>`
                }
                <div class="addr-lan">then type <span class="copy" data-copy="/server ${esc(s.gateway.name)}"><b>/server ${esc(s.gateway.name)}</b></span>${
                  s.pid && !s.gateway.applied ? ' · <span style="color:#e8c27a">restart once to move it behind the Gateway</span>' : ''
@@ -319,7 +319,7 @@ function renderHeader() {
                <div class="addr-main copy" data-copy="${esc(s.publicAddress)}">${esc(s.publicAddress)}</div>
                ${lanGameLine(s)}`
             : state.me?.hosted
-              ? `<div class="addr-label">Join address</div><div class="addr-lan">${isAdmin() ? 'Set TREEHOST_GAME_HOST on the server, or type an address in Settings.' : 'No address yet. Contact support.'}</div>`
+              ? `<div class="addr-label">Join address</div><div class="addr-lan">${hasPerm('system.view') ? 'Set TREEHOST_GAME_HOST on the server, or type an address in Settings.' : 'No address yet. Contact support.'}</div>`
               : `<div class="addr-label">Server address <span class="muted">(click to copy)</span></div>
                  <div class="addr-main copy" data-copy="${addr}">${addr}</div>
                  ${
@@ -1588,6 +1588,10 @@ async function init() {
   }
   if (state.me.teamMode && (!state.me.user || new URLSearchParams(location.search).has('invite'))) {
     showAuth();
+    return;
+  }
+  if (location.pathname.replace(/\/$/, '') === '/admin') {
+    initConsole();
     return;
   }
   const params = new URLSearchParams(location.search);

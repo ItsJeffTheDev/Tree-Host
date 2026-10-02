@@ -32,7 +32,8 @@ Most "if hosted / if team" checks are at the top of `src/server.js` (`HOSTED`, `
 | `providers.js` | Where each server type's jar comes from (PaperMC API, Mojang, Fabric meta, BuildTools for Spigot/CraftBukkit…) and which versions/builds exist. |
 | `java.js` | Picks and downloads the right Java for a Minecraft version. |
 | `docker.js` | `docker run` arguments for an isolated server: memory/CPU/process limits, read-only system, dropped capabilities, private network. |
-| `auth.js` | Users, roles (customer/support/admin), sessions, invites, password resets, API tokens, Firebase sign-in. |
+| `auth.js` | Users and their role (owner/admin/developer/staff/customer), sessions, invites, password resets, API tokens, Firebase sign-in. |
+| `rbac.js` | Role-based access control: the permission catalog, what each role may do (saved via `store.js`, so in Firebase), and `can(user, permission)`. **Every staff check in `server.js` asks for a permission, never a role name.** |
 | `firebase.js` | Firebase without the SDK: verifies ID tokens, talks to the Realtime Database and Auth admin API. |
 | `store.js` | Saves collections (users, plans, subscriptions, activity) to Firebase with a local JSON copy, or local files only. |
 | `billing.js` | Plans, subscriptions, Stripe Checkout/portal/webhooks, grace periods, suspension, capacity. |
@@ -52,7 +53,8 @@ Plain HTML/CSS/JS, no build step.
 |---|---|
 | `index.html`, `features.html`, `pricing.html`, … + `site.js`, `site.css` | The public website |
 | `dashboard.html` + `app.js` | Dashboard core: server list, console, settings, files, plugins |
-| `team.js` | Sign-in screens, account, billing and the admin panel (loaded before `app.js`) |
+| `team.js` | Sign-in screens, account, billing, and the Staff Console sections for people, billing, plans, promo codes, settings (loaded before `app.js`) |
+| `console.js` | The **Staff Console** (`/admin`): overview, all servers, roles & permissions, audit log, system. Sections appear by permission. |
 | `extras.js` | Activity feed, backups UI, Modrinth browser, Discord notification settings |
 | `help.js` + `docs/*.md` | The Help center, rendered from Markdown |
 

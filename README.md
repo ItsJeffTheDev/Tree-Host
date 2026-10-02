@@ -67,8 +67,9 @@ How the code fits together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Dashboard:** live console, plugin manager and Modrinth plugin browser, file editor, game settings, backups (manual
   and scheduled) with restore, auto-restart after crashes, memory and disk usage.
 - **Developers:** upload plugins straight from Gradle/Maven with personal API tokens.
-- **Admin tools:** admin panel (people, billing, plans, capacity), an "All servers" view for support, activity feed and
-  Discord alerts.
+- **Staff Console (`/admin`) with role-based access:** Owner, Admin, Developer and Support roles made of permissions
+  (editable by the Owner, stored in Firebase), an overview, every server, people, billing, plans, promo codes, an audit
+  log of staff actions, and system info. See [Roles & permissions](public/docs/roles.md).
 
 ## Deploy (production)
 

@@ -26,6 +26,9 @@ jobs:
             echo "$code $p"; [ "$code" = 200 ] || { cat server.log; exit 1; }
           done
 
+      - name: Role-based access test (owner, admin, developer, support, customer)
+        run: node test/rbac.e2e.js
+
       - name: Check the Discord bot
         working-directory: discord-bot
         run: |
