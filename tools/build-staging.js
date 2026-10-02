@@ -3,7 +3,7 @@
 // Builds the staging website: only the public pages (home, menu and footer pages, legal pages, guides), as plain files
 // ready for Wasmer Edge (or any static host). No dashboard, no accounts, no servers.
 //
-//   node tools/build-staging.js [--url https://treehost.online] [--from http://localhost:8766] [--out staging] [--discord ...]
+//   node tools/build-staging.js [--url https://www.treehost.online] [--from http://localhost:8766] [--out staging] [--discord ...]
 //
 // --url is the address the staging site is published at (for search engines: canonical links, sitemap, llms.txt).
 //
@@ -24,7 +24,8 @@ const SITE = path.join(OUT, 'public');
 // Donations go through the existing Stripe payment link while the site is a preview.
 const DONATE_URL = args['donate-url'] || 'https://buy.stripe.com/00wcN7cfK3Jh9lEgEf0oM00';
 const DISCORD_DEFAULT = 'https://discord.gg/a37pbwajKd';
-const BASE = (args.url || 'https://treehost.online').replace(/\/$/, '');
+// The live staging site is served at www. (treehost.online redirects there), so every address uses www.
+const BASE = (args.url || 'https://www.treehost.online').replace(/\/$/, '');
 if (!/^https:\/\/[a-z0-9.-]+$/i.test(BASE)) {
   console.error('--url must be the site address, like https://treehost.online');
   process.exit(1);
