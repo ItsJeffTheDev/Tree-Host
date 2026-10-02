@@ -6,9 +6,10 @@ How plans, payments and canceling work. Open **💳 Billing** at the bottom left
 
 ## Plans
 
-- One plan = **one server**. The plan decides the server's memory, CPU and disk.
+- Every monthly plan runs **as many servers as you like**. Each one gets the plan's full memory, CPU and disk.
+- **Lifetime** is paid **once**: 4 servers of any type and version, 2 proxies and priority support, with no monthly bills.
 - Plans are billed **monthly**, starting the day you buy them, by card through our secure payment provider. We never see your card number.
-- Want another server? **Billing → + Buy a plan**. Each plan renews and cancels on its own.
+- Want another server? **Billing → + Another server** on any plan. Each plan renews and cancels on its own.
 
 ---
 

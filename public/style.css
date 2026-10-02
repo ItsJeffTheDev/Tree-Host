@@ -442,3 +442,21 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .acct-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--accent-dim); color: #fff; display: grid; place-items: center; font-weight: 800; flex: 0 0 36px; }
 .acct-text { display: flex; flex-direction: column; flex: 1; min-width: 140px; }
 .linked-box { border: 1px solid rgba(74,158,255,.4); background: rgba(74,158,255,.07); border-radius: 8px; padding: 10px 12px; }
+
+/* ---------- lifetime plan ---------- */
+.plan-card.lifetime { border: 1px solid rgba(232,194,122,.6); background: linear-gradient(160deg, rgba(232,194,122,.10), var(--panel) 55%); position: relative; }
+.plan-ribbon { font-size: 11px; font-weight: 800; letter-spacing: .4px; color: #e8c27a; text-transform: uppercase; margin-bottom: 4px; }
+.badge.lifetime-badge { background: rgba(232,194,122,.14); border-color: rgba(232,194,122,.55); color: #f0cf8c; }
+.lifetime-card { border: 1px solid rgba(232,194,122,.55); background: linear-gradient(135deg, rgba(232,194,122,.12), var(--panel) 60%); }
+.lifetime-kicker { font-size: 11px; font-weight: 800; letter-spacing: .6px; color: #e8c27a; }
+.lifetime-slots { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
+.slot-bar { height: 7px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--border); margin-top: 5px; overflow: hidden; }
+.slot-bar span { display: block; height: 100%; background: linear-gradient(90deg, #e8c27a, #46c37b); }
+@media (max-width: 600px) { .lifetime-slots { grid-template-columns: 1fr; } }
+
+/* ---------- custom address, server list settings ---------- */
+.dns-table td { vertical-align: top; font-size: 13px; }
+.dns-table .copy { font-family: ui-monospace, Consolas, monospace; background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; cursor: pointer; overflow-wrap: anywhere; }
+.tag-pick { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; cursor: pointer; }
+.tag-pick:has(input:checked) { border-color: var(--accent); background: rgba(70,195,123,.12); }
+.tag-pick input { margin: 0; accent-color: var(--accent); }

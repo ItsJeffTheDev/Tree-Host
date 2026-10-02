@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Server list - Tree Host</title>
+  <meta name="description" content="Minecraft servers hosted on Tree Host: survival SMPs, modded worlds, minigames and more. Find one and join.">
+  <link rel="icon" href="/brand/tree-host-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <style>
+    .sl-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 18px; }
+    .sl-tools input[type=search], .sl-tools select { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font: inherit; }
+    .sl-tools input[type=search] { flex: 1; min-width: 220px; }
+    .sl-tools label { display: inline-flex; align-items: center; gap: 6px; }
+    .sl-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 22px; }
+    .sl-tag { border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+    .sl-tag.on, .sl-tag:hover { border-color: var(--accent); color: var(--accent2); }
+    .sl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+    .sl-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .sl-top { display: flex; gap: 14px; align-items: center; min-width: 0; }
+    .sl-icon { width: 64px; height: 64px; flex: 0 0 64px; border-radius: 8px; image-rendering: pixelated; background: #2a352e; display: grid; place-items: center; font-size: 28px; }
+    .sl-name { font-weight: 800; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sl-meta { color: var(--muted); font-size: 13px; }
+    .sl-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+    .sl-dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7a70; }
+    .sl-status.on { color: var(--accent2); }
+    .sl-status.on .sl-dot { background: var(--accent); box-shadow: 0 0 0 3px rgba(70,195,123,.2); }
+    .sl-desc { color: #c9d6cd; font-size: 14px; margin: 0; overflow-wrap: anywhere; }
+    .sl-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .sl-chip { font-size: 12px; padding: 2px 9px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--border); color: var(--muted); }
+    .sl-addr { display: flex; gap: 8px; align-items: center; margin-top: auto; }
+    .sl-addr code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sl-addr button { border: 0; border-radius: 8px; padding: 9px 14px; background: var(--accent); color: var(--dark); font-weight: 800; cursor: pointer; font: inherit; font-weight: 800; }
+    .sl-links { display: flex; gap: 12px; font-size: 13px; }
+    .sl-links a { color: var(--accent2); }
+    .sl-empty { text-align: center; color: var(--muted); padding: 48px 16px; border: 1px dashed var(--border); border-radius: var(--radius); }
+    @media (max-width: 420px) { .sl-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body data-page="servers">
+  <header id="site-header"></header>
+
+  <div class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow reveal">Server list</span>
+      <h1 class="reveal d1">Find a server to <span class="green">play</span></h1>
+      <p class="reveal d2">Minecraft servers hosted on Tree Host, listed by their owners. Copy an address, open Minecraft → Multiplayer → Add Server, and you're in.</p>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <div class="sl-tools">
+        <input type="search" id="sl-q" placeholder="Search servers by name, description or version" aria-label="Search servers">
+        <select id="sl-sort" aria-label="Sort">
+          <option value="players">Most players</option>
+          <option value="new">Newest</option>
+          <option value="name">Name</option>
+        </select>
+        <label class="sl-meta"><input type="checkbox" id="sl-online"> Online only</label>
+      </div>
+      <div class="sl-tags" id="sl-tags"></div>
+      <div class="sl-grid" id="sl-grid"><div class="sl-empty">Loading servers…</div></div>
+      <p class="sl-meta" style="margin-top:28px;text-align:center">Run your own server on Tree Host? Turn on <b>Settings → Public server list</b> to show it here.
+        <a href="/pricing" style="color:var(--accent2)">Get a server</a></p>
+    </div>
+  </section>
+
+  <footer id="site-footer"></footer>
+  <script src="/site.js"></script>
+  <script>
+    (() => {
+      const $ = (s) => document.querySelector(s);
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+      let data = { servers: [], tags: [] };
+      let tag = '';
+      const card = (s) => `<article class="sl-card">
+        <div class="sl-top">
+          ${s.icon ? `<img class="sl-icon" src="${esc(s.icon)}" alt="">` : '<div class="sl-icon">🌳</div>'}
+          <div style="min-width:0;flex:1">
+            <div class="sl-name" title="${esc(s.name)}">${esc(s.name)}</div>
+            <div class="sl-meta">${esc(s.software)} ${esc(s.version)}${s.kind === 'proxy' ? ' · network' : ''}</div>
+            <div class="sl-status ${s.online ? 'on' : ''}"><span class="sl-dot"></span>${s.online ? `${s.players}${s.maxPlayers ? ` / ${s.maxPlayers}` : ''} online` : 'Offline'}</div>
+          </div>
+        </div>
+        ${s.description ? `<p class="sl-desc">${esc(s.description)}</p>` : ''}
+        ${s.tags.length ? `<div class="sl-chips">${s.tags.map((t) => `<span class="sl-chip">${esc(t)}</span>`).join('')}</div>` : ''}
+        ${s.discord || s.website ? `<div class="sl-links">${s.discord ? `<a href="${esc(s.discord)}" target="_blank" rel="noopener nofollow">💬 Discord</a>` : ''}${s.website ? `<a href="${esc(s.website)}" target="_blank" rel="noopener nofollow">🌐 Website</a>` : ''}</div>` : ''}
+        ${s.address ? `<div class="sl-addr"><code title="${esc(s.address)}">${esc(s.address)}</code><button type="button" data-copy="${esc(s.address)}">Copy</button></div>` : ''}
+      </article>`;
+      const draw = () => {
+        const q = $('#sl-q').value.trim().toLowerCase();
+        const sort = $('#sl-sort').value;
+        let list = data.servers.filter((s) => (!tag || s.tags.includes(tag)) && (!$('#sl-online').checked || s.online)
+          && (!q || [s.name, s.description, s.software, s.version, ...s.tags].some((x) => String(x || '').toLowerCase().includes(q))));
+        list.sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name)
+          : sort === 'new' ? (b.listedSince || 0) - (a.listedSince || 0)
+          : (b.online - a.online) || (b.players - a.players) || a.name.localeCompare(b.name));
+        $('#sl-grid').innerHTML = list.length ? list.map(card).join('')
+          : `<div class="sl-empty" style="grid-column:1/-1">${data.servers.length ? 'No servers match your search.' : 'No servers are listed yet. Be the first: turn on Settings → Public server list for your server.'}</div>`;
+        document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => {
+          navigator.clipboard.writeText(b.dataset.copy).then(() => {
+            b.textContent = 'Copied!';
+            setTimeout(() => (b.textContent = 'Copy'), 1500);
+          });
+        }));
+      };
+      const drawTags = () => {
+        const used = data.tags.filter((t) => data.servers.some((s) => s.tags.includes(t)));
+        $('#sl-tags').innerHTML = used.length ? [['', 'All'], ...used.map((t) => [t, t])].map(([v, l]) => `<button class="sl-tag ${tag === v ? 'on' : ''}" data-tag="${esc(v)}">${esc(l)}</button>`).join('') : '';
+        document.querySelectorAll('[data-tag]').forEach((b) => b.addEventListener('click', () => {
+          tag = b.dataset.tag;
+          drawTags();
+          draw();
+        }));
+      };
+      const load = () => fetch('/api/public/servers').then((r) => r.json()).then((d) => {
+        data = d;
+        drawTags();
+        draw();
+      }).catch(() => ($('#sl-grid').innerHTML = '<div class="sl-empty">Could not load the server list. Try again in a moment.</div>'));
+      ['#sl-q', '#sl-sort', '#sl-online'].forEach((s) => $(s).addEventListener('input', draw));
+      load();
+      setInterval(load, 30000);
+    })();
+  </script>
+</body>
+</html>

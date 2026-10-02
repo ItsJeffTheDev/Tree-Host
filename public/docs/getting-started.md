@@ -16,7 +16,8 @@ Welcome to Tree Host! This guide takes you from a new account to playing on your
 
 ## 2. Pick a plan
 
-Each plan is **one Minecraft server**, billed monthly. Plans differ in memory (RAM), CPU and disk space:
+Monthly plans run as many servers as you like, each with the plan's memory (RAM), CPU and disk. Or pay once for
+**Lifetime** (4 servers, 2 proxies and priority support). Plans differ in:
 
 | More memory helps with... | |
 |---|---|

@@ -9,6 +9,7 @@
 
   const NAV = [
     ['features', '/features', 'Features'],
+    ['servers', '/servers', 'Servers'],
     ['pricing', '/pricing', 'Pricing'],
     ['support', '/support', 'Support'],
     ['about', '/about', 'About'],
@@ -45,7 +46,7 @@
             <p>Minecraft server hosting that grows with you. Every server type and version, one-click plugins and automatic backups.</p>
           </div>
           <div class="footer-col"><h4>Product</h4>
-            <a href="/features">Features</a><a href="/pricing">Pricing</a><a href="/dashboard?signup">Create a server</a><a href="/dashboard">Dashboard</a></div>
+            <a href="/features">Features</a><a href="/servers">Server list</a><a href="/pricing">Pricing</a><a href="/dashboard?signup">Create a server</a><a href="/dashboard">Dashboard</a></div>
           <div class="footer-col"><h4>Help</h4>
             <a href="/help.html">Guides</a><a href="/support">Contact &amp; FAQ</a><a href="/help.html?doc=billing">Billing help</a><span id="ft-discord"></span></div>
           <div class="footer-col"><h4>Company</h4>
@@ -113,12 +114,14 @@
     fetch('/api/plans')
       .then((r) => r.json())
       .then((data) => {
-        const plans = data.plans || [];
+        const all = data.plans || [];
+        const plans = all.filter((p) => !p.oneTime);
+        const lifetime = all.filter((p) => p.oneTime);
         const cheapest = plans.filter((p) => !p.soldOut).sort((a, b) => a.priceCents - b.priceCents)[0];
         const hp = document.getElementById('hero-price');
         if (hp && cheapest) hp.textContent = `From ${money(cheapest.priceCents, data.currency)}/month`;
         if (!plansEl) return;
-        if (!plans.length) {
+        if (!all.length) {
           plansEl.innerHTML = '<div class="loading">Plans are coming soon.</div>';
           return;
         }
@@ -133,10 +136,32 @@
                 <li><b>${+(p.ramMb / 1024).toFixed(1)} GB</b> RAM</li>
                 <li><b>${p.cpus}</b> CPU core${p.cpus === 1 ? '' : 's'}</li>
                 <li><b>${p.diskGb} GB</b> NVMe disk</li>
+                <li><b>Unlimited</b> servers</li>
                 <li>Plugins, mods &amp; backups</li>
               </ul>
               <p>${esc(p.description)}</p>
               ${p.soldOut ? '<span class="btn-ghost block disabled">Sold out</span>' : `<a href="/dashboard?signup" class="${p.id === popular ? 'btn-cta' : 'btn-ghost'} block">Choose ${esc(p.name)}</a>`}
+            </div>`,
+          )
+          .join('') + lifetime
+          .map(
+            (p) => `<div class="plan lifetime reveal">
+              <div class="tag">♾️ Pay once, keep forever</div>
+              <div class="lifetime-body">
+                <div>
+                  <h3>${esc(p.name)}</h3>
+                  <div class="price">${money(p.priceCents, data.currency)}<span> once</span></div>
+                  <p>${esc(p.description)}</p>
+                  ${p.soldOut ? '<span class="btn-ghost block disabled">Sold out</span>' : `<a href="/dashboard?signup" class="btn-cta block">Get ${esc(p.name)}</a>`}
+                </div>
+                <ul>
+                  <li><b>${p.slots ? p.slots.servers : 0} servers</b> of any type and version</li>
+                  <li><b>${+(p.ramMb / 1024).toFixed(1)} GB</b> RAM, ${p.cpus} CPU cores, ${p.diskGb} GB disk each</li>
+                  <li><b>${p.slots ? p.slots.proxies : 0} proxies</b> (Velocity, BungeeCord, Waterfall)</li>
+                  ${p.prioritySupport ? '<li><b>Priority support</b></li>' : ''}
+                  <li>No monthly bills, ever</li>
+                </ul>
+              </div>
             </div>`,
           )
           .join('');

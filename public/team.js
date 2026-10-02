@@ -419,7 +419,7 @@ function renderUserBox() {
   const u = state.me.user;
   el.classList.remove('hidden');
   el.innerHTML = `
-    <div class="ub-name">${esc(u.username)} <span class="badge ${ROLE_BADGE[u.role] || ''}">${esc(u.roleLabel || ROLE_LABEL[u.role] || u.role)}</span></div>
+    <div class="ub-name">${esc(u.username)} <span class="badge ${ROLE_BADGE[u.role] || ''}">${esc(u.roleLabel || ROLE_LABEL[u.role] || u.role)}</span>${u.lifetime ? ' <span class="badge lifetime-badge" title="Lifetime member: paid once, yours forever">♾️ Lifetime</span>' : ''}</div>
     ${
       state.me.lanUrls?.length
         ? `<div class="ub-link small">Home network: <span class="copy" data-copy="${esc(state.me.lanUrls[1] || state.me.lanUrls[0])}" title="Click to copy">${esc((state.me.lanUrls[1] || state.me.lanUrls[0]).replace('http://', ''))}</span></div>`
@@ -620,6 +620,23 @@ async function openAccount() {
 // ---------- plans & billing ----------
 
 function planCardHtml(p, currency) {
+  if (p.oneTime) {
+    const sl = p.slots || { servers: 0, proxies: 0 };
+    return `<div class="plan-card lifetime ${p.soldOut ? 'sold-out' : ''}">
+    <div class="plan-ribbon">♾️ Pay once, keep forever</div>
+    <div class="plan-name">${esc(p.name)}</div>
+    <div class="plan-price">${money(p.priceCents, currency)}<span> once</span></div>
+    <ul class="plan-specs">
+      <li><b>${sl.servers} servers</b> of any type and version · ${+(p.ramMb / 1024).toFixed(1)} GB each</li>
+      <li><b>${sl.proxies} prox${sl.proxies === 1 ? 'y' : 'ies'}</b> (Velocity, BungeeCord, Waterfall) · ${+((p.proxyRamMb || 1024) / 1024).toFixed(1)} GB each</li>
+      <li><b>${p.cpus}</b> CPU core${p.cpus === 1 ? '' : 's'} and <b>${p.diskGb} GB</b> disk per server</li>
+      ${p.prioritySupport ? '<li><b>⭐ Priority support</b></li>' : ''}
+      <li>No monthly bills, ever</li>
+    </ul>
+    <p class="small muted">${esc(p.description)}</p>
+    <button class="btn ${p.soldOut ? '' : 'primary'} block" data-buy="${esc(p.id)}" ${p.soldOut ? 'disabled' : ''}>${p.soldOut ? 'Sold out' : 'Get Lifetime'}</button>
+  </div>`;
+  }
   return `<div class="plan-card ${p.soldOut ? 'sold-out' : ''}">
     <div class="plan-name">${esc(p.name)}</div>
     <div class="plan-price">${money(p.priceCents, currency)}<span>/month</span></div>
@@ -627,6 +644,7 @@ function planCardHtml(p, currency) {
       <li><b>${+(p.ramMb / 1024).toFixed(1)} GB</b> memory</li>
       <li><b>${p.cpus}</b> CPU core${p.cpus === 1 ? '' : 's'}</li>
       <li><b>${p.diskGb} GB</b> disk</li>
+      <li><b>Unlimited</b> servers</li>
     </ul>
     <p class="small muted">${esc(p.description)}</p>
     <button class="btn ${p.soldOut ? '' : 'primary'} block" data-buy="${esc(p.id)}" ${p.soldOut ? 'disabled' : ''}>${p.soldOut ? 'Sold out' : 'Choose'}</button>
@@ -638,7 +656,7 @@ async function openPlans() {
   const data = await api('GET', '/api/plans');
   const { root } = openModal(`
     <h2>Choose a plan</h2>
-    <p class="hint" style="margin-top:-6px">Each plan is one Minecraft server, billed monthly. Every server type and version, cancel any time.</p>
+    <p class="hint" style="margin-top:-6px">Monthly plans run as many servers as you like, each with the plan's full memory, CPU and disk. Or pay once for Lifetime. Every server type and version.</p>
     ${data.mode === 'demo' ? '<div class="warn-box">Demo mode: no real payment is taken. Plans activate instantly.</div>' : ''}
     ${data.mode === 'off' ? '<div class="warn-box">Payments are not set up yet, so plans can\'t be bought right now.</div>' : ''}
     <div class="plan-grid">${data.plans.map((p) => planCardHtml(p, data.currency)).join('')}</div>
@@ -665,6 +683,25 @@ async function openPlans() {
   );
 }
 
+/** Monthly plans take any number of servers; bundles (Lifetime) up to their slots. */
+const planHasRoom = (x) => !x.slots || x.slotsUsed.servers < x.slots.servers || x.slotsUsed.proxies < x.slots.proxies;
+
+/** The big card on Billing for a lifetime plan: what's included and how much is in use. */
+function lifetimeCardHtml(x) {
+  const bar = (used, max) => `<div class="slot-bar"><span style="width:${max ? Math.min(100, (used / max) * 100) : 0}%"></span></div>`;
+  return `<div class="card lifetime-card">
+    <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div><div class="lifetime-kicker">♾️ LIFETIME MEMBER</div><h3 style="margin:2px 0 0">${esc(x.planName)}${x.free ? ' <span class="muted small">(gift)</span>' : ''}</h3></div>
+      <span class="badge lifetime-badge">Paid once · yours forever</span>
+    </div>
+    <div class="lifetime-slots">
+      <div><div class="small"><b>Servers</b> ${x.slotsUsed.servers} of ${x.slots.servers} · ${+(x.ramMb / 1024).toFixed(1)} GB each</div>${bar(x.slotsUsed.servers, x.slots.servers)}</div>
+      <div><div class="small"><b>Proxies</b> ${x.slotsUsed.proxies} of ${x.slots.proxies} · ${+((x.proxyRamMb || 1024) / 1024).toFixed(1)} GB each</div>${bar(x.slotsUsed.proxies, x.slots.proxies)}</div>
+    </div>
+    ${x.prioritySupport ? `<div class="small" style="margin-top:10px">⭐ <b>Priority support</b>: your tickets and emails go to the front of the line. Write to <a href="mailto:support@treehost.online">support@treehost.online</a> or open a ticket on Discord.</div>` : ''}
+  </div>`;
+}
+
 const SUB_STATUS = {
   active: ['green', 'Active'],
   past_due: ['yellow', 'Payment failed'],
@@ -681,7 +718,9 @@ async function openBilling() {
   if (!b) return;
   const el = $('#bill-body', root);
   el.classList.remove('muted');
+  const lifetimes = b.subscriptions.filter((x) => x.oneTime && x.usable);
   el.innerHTML = `
+    ${lifetimes.map((x) => lifetimeCardHtml(x)).join('')}
     <div class="card">
       <div class="row" style="justify-content:space-between;margin-bottom:8px">
         <h3>Your plans</h3>
@@ -696,19 +735,23 @@ async function openBilling() {
               .map((x) => {
                 const [cls, label] = SUB_STATUS[x.status] || ['', x.status];
                 return `<tr>
-                  <td><b>${esc(x.planName)}</b> <span class="muted small">${+(x.ramMb / 1024).toFixed(1)} GB · ${x.free ? 'free' : `${money(x.priceCents, x.currency)}/mo`}</span></td>
+                  <td><b>${esc(x.planName)}</b>${x.oneTime ? ' <span class="badge lifetime-badge">♾️ Lifetime</span>' : ''} <span class="muted small">${+(x.ramMb / 1024).toFixed(1)} GB · ${x.free ? 'free' : x.oneTime ? `${money(x.priceCents, x.currency)} once` : `${money(x.priceCents, x.currency)}/mo`}</span></td>
                   <td><span class="badge ${cls}">${label}</span>${
                     x.status === 'past_due' ? '<div class="small muted">Update your card to keep the server running.</div>' : ''
                   }${x.deleteAt ? `<div class="small muted">Server deleted on ${new Date(x.deleteAt).toLocaleDateString()}</div>` : ''}${
                     x.cancelAtPeriodEnd ? '<div class="small muted">Ends at the end of this period</div>' : ''
                   }</td>
-                  <td>${x.serverName ? esc(x.serverName) : x.usable ? '<button class="btn sm primary" data-create>Create server</button>' : '<span class="muted">-</span>'}</td>
+                  <td>${x.servers.length ? `<div class="small">${x.servers.map((v) => esc(v.name)).join('<br>')}</div>` : ''}${
+                    x.usable && planHasRoom(x) ? `<button class="btn sm ${x.servers.length ? '' : 'primary'}" data-create style="margin-top:4px">+ ${x.servers.length ? 'Another server' : 'Create server'}</button>` : x.servers.length ? '' : '<span class="muted">-</span>'
+                  }</td>
                   <td class="small">${
                     x.status === 'canceled'
                       ? '<span class="muted">-</span>'
-                      : x.free
-                        ? x.freeUntil ? `Free until ${new Date(x.freeUntil).toLocaleDateString()}` : 'Free (lifetime)'
-                        : x.renewsAt ? new Date(x.renewsAt).toLocaleDateString() : '<span class="muted">-</span>'
+                      : x.oneTime
+                        ? 'Never: yours for life'
+                        : x.free
+                          ? x.freeUntil ? `Free until ${new Date(x.freeUntil).toLocaleDateString()}` : 'Free (lifetime)'
+                          : x.renewsAt ? new Date(x.renewsAt).toLocaleDateString() : '<span class="muted">-</span>'
                   }</td>
                 </tr>`;
               })
@@ -773,7 +816,7 @@ async function adminPeople(body) {
     $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
       .map(
         (u) => `<tr>
-          <td><b>${esc(u.username)}</b>${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">🔗 ${u.linked.length} linked</span>` : ''}
+          <td><b>${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">♾️ Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">⭐ Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">🔗 ${u.linked.length} linked</span>` : ''}
             <div class="small muted">${esc(u.email) || 'no email'} · joined ${new Date(u.createdAt).toLocaleDateString()}${u.lastLogin ? ` · last seen ${new Date(u.lastLogin).toLocaleDateString()}` : ''}</div></td>
           <td>${
             u.id !== me.id && canRoles && outranks(u)
@@ -907,6 +950,7 @@ async function adminBilling(body) {
     }
     <div class="stat-row">
       <div class="stat"><div class="stat-num">${mrr}</div><div class="stat-label">per month (MRR)</div></div>
+      <div class="stat"><div class="stat-num">${Object.entries(d.oneTime || {}).map(([c, v]) => money(v, c)).join(' + ') || money(0, d.currency)}</div><div class="stat-label">♾️ lifetime sales (${d.lifetimeCount || 0} active)</div></div>
       <div class="stat"><div class="stat-num">${d.activeCount}</div><div class="stat-label">active plans${d.pastDueCount ? ` · ${d.pastDueCount} unpaid` : ''}</div></div>
       <div class="stat"><div class="stat-num">${+(d.soldMb / 1024).toFixed(1)} / ${+(d.capacityMb / 1024).toFixed(1)} GB</div><div class="stat-label">memory sold</div>
         <div class="mem-bar ${pct > 90 ? 'high' : pct > 75 ? 'mid' : ''}"><div style="width:${pct}%"></div></div></div>
@@ -1110,7 +1154,15 @@ async function adminPromos(body) {
 async function adminPlans(body) {
   const d = await api('GET', '/api/admin/billing');
   const row = (p = {}) => `<tr class="plan-row">
-    <td><input type="text" data-k="name" value="${esc(p.name || '')}" placeholder="Name"></td>
+    <td><input type="text" data-k="name" value="${esc(p.name || '')}" placeholder="Name">${
+      p.oneTime
+        ? `<input type="hidden" data-k="oneTime" value="1"><div class="small muted" style="margin-top:4px;white-space:nowrap">♾️ Paid once ·
+            <input type="number" data-k="slotServers" value="${p.slots ? p.slots.servers : 4}" min="0" style="width:52px"> servers +
+            <input type="number" data-k="slotProxies" value="${p.slots ? p.slots.proxies : 2}" min="0" style="width:52px"> proxies of
+            <input type="number" data-k="proxyGb" value="${+((p.proxyRamMb || 1024) / 1024).toFixed(2)}" min="0.5" step="0.5" style="width:60px"> GB ·
+            <label><input type="checkbox" data-k="priority" ${p.prioritySupport ? 'checked' : ''}> priority support</label></div>`
+        : ''
+    }</td>
     <td><input type="number" data-k="ramGb" value="${p.ramMb ? +(p.ramMb / 1024).toFixed(2) : ''}" min="0.5" step="0.5" style="width:80px"></td>
     <td><input type="number" data-k="cpus" value="${p.cpus || 1}" min="0.5" step="0.5" style="width:70px"></td>
     <td><input type="number" data-k="diskGb" value="${p.diskGb || 10}" min="1" style="width:70px"></td>
@@ -1122,7 +1174,8 @@ async function adminPlans(body) {
   body.innerHTML = `
     <div class="card">
       <h3 style="margin-bottom:4px">Plans</h3>
-      <p class="hint small" style="margin:0 0 10px">Prices are monthly in ${esc(d.currency.toUpperCase())}. Changes apply to new purchases; existing customers keep what they bought.
+      <p class="hint small" style="margin:0 0 10px">Prices are monthly in ${esc(d.currency.toUpperCase())} (the ♾️ Lifetime plan is a one-time price; its RAM is per server).
+        Monthly plans run any number of servers. Changes apply to new purchases; existing customers keep what they bought.
         Untick "for sale" to hide a plan.</p>
       <div style="overflow-x:auto"><table class="plans-edit"><thead><tr><th>Name</th><th>RAM (GB)</th><th>CPUs</th><th>Disk (GB)</th><th>Price</th><th>Description</th><th>For sale</th><th></th></tr></thead>
         <tbody id="plan-rows">${d.plans.map(row).join('')}</tbody></table></div>
@@ -1154,6 +1207,14 @@ async function adminPlans(body) {
           priceCents: Math.round(Number(v('price').value) * 100),
           description: v('description').value.trim(),
           active: v('active').checked,
+          ...(v('oneTime')
+            ? {
+                oneTime: true,
+                slots: { servers: Number(v('slotServers').value), proxies: Number(v('slotProxies').value) },
+                proxyRamMb: Math.round(Number(v('proxyGb').value) * 1024),
+                prioritySupport: v('priority').checked,
+              }
+            : {}),
         };
       });
       await api('PUT', '/api/admin/plans', { plans });

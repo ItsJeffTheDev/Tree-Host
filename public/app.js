@@ -1008,6 +1008,8 @@ async function renderSettings(body) {
 
   body.innerHTML = `
     ${iconCardHtml(s)}
+    ${domainCardHtml(s)}
+    ${listingCardHtml(s)}
     <form id="settings-form">
       <div class="card stack">
         <h3>General</h3>
@@ -1200,8 +1202,135 @@ async function renderSettings(body) {
   });
 
   bindIconCard(s);
+  bindDomainCard(s);
+  bindListingCard(s);
   if (s.kind !== 'proxy') loadProps(s);
 }
+
+// ---------- custom address (the owner's own domain) ----------
+
+function domainCardHtml(s) {
+  if (!isTeam() || !s.providedAddress && !s.customDomain) return '';
+  const edit = can('settings', s);
+  const d = s.customDomain;
+  const copy = (v) => `<span class="copy" data-copy="${esc(v)}" title="Click to copy">${esc(v)}</span>`;
+  return `<div class="card stack" id="domain-card">
+    <h3>Custom address <span class="muted small" style="font-weight:400">(use your own domain instead of ${esc(s.providedAddress || 'the Tree Host address')})</span></h3>
+    ${
+      !d
+        ? `<p class="hint" style="margin:0">Got a domain? Players can join with <b>play.yourserver.com</b> instead of <b>${esc(s.providedAddress)}</b>.
+            You add one DNS record at your domain provider and we check it for you.</p>
+           ${edit ? `<form class="row" id="domain-form" style="flex-wrap:wrap"><input type="text" name="domain" placeholder="play.yourserver.com" style="max-width:300px" autocomplete="off"><button class="btn primary">Use this domain</button></form>` : ''}`
+        : `<div class="row" style="flex-wrap:wrap;align-items:center;gap:8px">
+             <b style="font-size:16px">${esc(d.host)}</b>
+             ${d.verified ? '<span class="badge green">✓ Working: players can join with it</span>' : '<span class="badge yellow">Waiting for your DNS record</span>'}
+           </div>
+           ${d.verified ? '' : `<div class="warn-box">${esc(d.message || 'Add the record below, then press Check again.')}</div>`}
+           <p class="hint" style="margin:0">Add ${d.records.length === 1 ? 'this record' : 'these records'} in your domain's DNS settings (Cloudflare, Namecheap, GoDaddy...). On Cloudflare, set it to <b>DNS only</b> (grey cloud).</p>
+           <div style="overflow-x:auto"><table class="dns-table"><thead><tr><th>Type</th><th>Name / host</th><th>Value</th></tr></thead><tbody>${d.records
+             .map((r) => `<tr><td><b>${esc(r.type)}</b></td><td>${copy(r.name)}</td><td>${
+               r.type === 'SRV'
+                 ? `Priority ${copy(String(r.priority))} · Weight ${copy(String(r.weight))} · Port ${copy(String(r.port))} · Target ${copy(r.target)}`
+                 : copy(r.value)
+             }<div class="small muted">${esc(r.note)}</div></td></tr>`)
+             .join('')}</tbody></table></div>
+           <p class="small muted" style="margin:0">Some providers want only the first part of the name (e.g. <b>${esc(d.records[d.records.length - 1].name.replace(/\.[^.]+\.[^.]+$/, ''))}</b>) because they add your domain themselves.
+             The Tree Host address keeps working too.</p>
+           ${edit ? `<div class="row" style="flex-wrap:wrap">
+             <button class="btn ${d.verified ? '' : 'primary'}" id="domain-check" type="button">Check again</button>
+             <button class="btn" id="domain-remove" type="button">Remove</button>
+             ${d.checkedAt ? `<span class="small muted">Last checked ${new Date(d.checkedAt).toLocaleTimeString()}</span>` : ''}</div>` : ''}`
+    }
+  </div>`;
+}
+
+function bindDomainCard(s) {
+  const redraw = (fresh) => {
+    const card = $('#domain-card');
+    if (card) {
+      card.outerHTML = domainCardHtml(fresh);
+      bindDomainCard(fresh);
+    }
+  };
+  const form = $('#domain-form');
+  if (form) form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    attempt(async () => {
+      const r = await api('PUT', `/api/servers/${s.id}/domain`, { domain: form.domain.value });
+      toast(r.customDomain.verified ? `Done: players can join with ${r.customDomain.host}` : 'Saved. Now add the DNS record shown.');
+      redraw(r);
+    });
+  });
+  const check = $('#domain-check');
+  if (check) check.addEventListener('click', () => attempt(async () => {
+    check.disabled = true;
+    check.textContent = 'Checking...';
+    const r = await api('POST', `/api/servers/${s.id}/domain/check`).finally(() => {
+      check.disabled = false;
+      check.textContent = 'Check again';
+    });
+    toast(r.customDomain.verified ? `It works! Players can join with ${r.customDomain.host}` : 'Not found yet. DNS can take a few minutes.', r.customDomain.verified ? 'info' : 'error');
+    redraw(r);
+  }));
+  const rm = $('#domain-remove');
+  if (rm) rm.addEventListener('click', () => {
+    if (!confirm('Stop using this domain? Players use the Tree Host address again.')) return;
+    attempt(async () => redraw(await api('PUT', `/api/servers/${s.id}/domain`, { domain: '' })));
+  });
+  $$('#domain-card [data-copy]').forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
+}
+
+// ---------- public server list ----------
+
+const LIST_TAGS = ['Survival', 'SMP', 'Creative', 'Modded', 'PvP', 'Minigames', 'Skyblock', 'Roleplay', 'Factions', 'Economy', 'Parkour', 'Hardcore', 'Vanilla', 'Network'];
+
+function listingCardHtml(s) {
+  if (!isTeam()) return '';
+  const edit = can('settings', s);
+  const l = s.listing || {};
+  const tags = new Set(l.tags || []);
+  return `<form class="card stack" id="listing-card">
+    <h3>Public server list <span class="muted small" style="font-weight:400">(<a href="/servers" target="_blank">treehost.online/servers</a>)</span></h3>
+    <label class="check"><input type="checkbox" name="public" ${l.public ? 'checked' : ''} ${edit ? '' : 'disabled'}>
+      <span><b>Show this server on the Tree Host server list</b> <span class="muted">(anyone can see its name, icon, description, address and how many players are online)</span></span></label>
+    <label class="field">Description <span class="muted small" style="font-weight:400">(up to 200 characters)</span>
+      <textarea name="description" rows="2" maxlength="200" placeholder="e.g. Friendly survival SMP with land claims, shops and weekly events." ${edit ? '' : 'disabled'}>${esc(l.description || '')}</textarea></label>
+    <div><div class="small muted" style="margin-bottom:6px">Tags (up to 4)</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px">${LIST_TAGS.map((t) => `<label class="tag-pick"><input type="checkbox" name="tag" value="${t}" ${tags.has(t) ? 'checked' : ''} ${edit ? '' : 'disabled'}> ${t}</label>`).join('')}</div></div>
+    <div class="grid2">
+      <label class="field">Discord invite <span class="muted small" style="font-weight:400">(optional)</span><input type="url" name="discord" value="${esc(l.discord || '')}" placeholder="https://discord.gg/..." ${edit ? '' : 'disabled'}></label>
+      <label class="field">Website <span class="muted small" style="font-weight:400">(optional)</span><input type="url" name="website" value="${esc(l.website || '')}" placeholder="https://..." ${edit ? '' : 'disabled'}></label>
+    </div>
+    ${edit ? '<div class="row"><button class="btn primary">Save list settings</button></div>' : ''}
+  </form>`;
+}
+
+function bindListingCard(s) {
+  const form = $('#listing-card');
+  if (!form) return;
+  form.addEventListener('change', (e) => {
+    if (e.target.name !== 'tag') return;
+    const picked = $$('[name=tag]:checked', form);
+    if (picked.length > 4) {
+      e.target.checked = false;
+      toast('Pick up to 4 tags.', 'error');
+    }
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    attempt(async () => {
+      await api('PUT', `/api/servers/${s.id}/listing`, {
+        public: form.public.checked,
+        description: form.description.value,
+        tags: $$('[name=tag]:checked', form).map((x) => x.value),
+        discord: form.discord.value,
+        website: form.website.value,
+      });
+      toast(form.public.checked ? 'Saved: your server is on the public list' : 'Saved: your server is not on the public list');
+    });
+  });
+}
+
 
 // ---------- server icon (server-icon.png, shown in Minecraft's server list) ----------
 
@@ -1404,7 +1533,7 @@ async function openNewServer() {
   if (forCustomer) {
     const b = await api('GET', '/api/billing').catch((e) => (toast(e.message, 'error'), null));
     if (!b) return;
-    freePlans = b.subscriptions.filter((x) => x.usable && !x.serverId);
+    freePlans = b.subscriptions.filter((x) => x.usable && planHasRoom(x));
     if (!freePlans.length) return openPlans();
   }
   const memOptions = [1024, 2048, 3072, 4096, 6144, 8192].filter((m) => !state.system || m <= state.system.totalMemMb * 0.75);
@@ -1446,7 +1575,11 @@ async function openNewServer() {
               ? `<div class="grid2">
                   <label class="field">Name <input type="text" id="nv-name" maxlength="40"></label>
                   <label class="field">Plan <select id="nv-plan">${freePlans
-                    .map((x) => `<option value="${esc(x.id)}">${esc(x.planName)}: ${fmtMem(x.ramMb)}, ${x.cpus} CPU, ${x.diskGb} GB disk</option>`)
+                    .map((x) => `<option value="${esc(x.id)}">${esc(x.planName)}${
+                      x.slots
+                        ? ` (♾️ servers ${x.slotsUsed.servers}/${x.slots.servers}, proxies ${x.slotsUsed.proxies}/${x.slots.proxies})`
+                        : `: ${fmtMem(x.ramMb)}, ${x.cpus} CPU, ${x.diskGb} GB disk${x.serverCount ? ` · ${x.serverCount} server${x.serverCount === 1 ? '' : 's'} already` : ''}`
+                    }</option>`)
                     .join('')}</select></label>
                 </div>
                 <div class="hidden"><select id="nv-mem"><option value="0"></option></select><input type="number" id="nv-port"></div>`

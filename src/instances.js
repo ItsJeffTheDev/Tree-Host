@@ -296,7 +296,11 @@ class Instance extends EventEmitter {
       createdBy: c.createdBy || null,
       createdByName: c.createdBy ? this.manager.ownerName(c.createdBy) : null,
       ownerName: c.owner ? this.manager.ownerName(c.owner) : null,
-      publicAddress: c.publicAddress || c.autoAddress || '',
+      // A verified custom domain (the owner's own address) replaces the address Tree Host gives the server.
+      publicAddress: (c.customDomain && c.customDomain.verified && c.customDomain.host) || c.publicAddress || c.autoAddress || '',
+      providedAddress: c.publicAddress || c.autoAddress || '',
+      customDomain: c.customDomain ? { ...c.customDomain, records: this.manager.domainRecords ? this.manager.domainRecords(this) : [] } : null,
+      listing: c.listing || null,
       manualAddress: c.publicAddress || '',
       autoAddress: c.autoAddress || '',
       onlineMode: c.onlineMode !== false,

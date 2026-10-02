@@ -163,6 +163,30 @@ function expect(label, got, want) {
     await call('owner1', 'PUT', '/api/admin/roles/staff', { permissions: staffPerms });
     expect('developer can kill it (servers.operate)', (await call('dev1', 'POST', `/api/servers/${sid}/kill`)).status, 200);
     for (let i = 0; i < 20 && (await call('dev1', 'GET', `/api/servers/${sid}`)).data.status !== 'stopped'; i++) await new Promise((r) => setTimeout(r, 500));
+    // unlimited servers on a monthly plan
+    const second = await call('cust1', 'POST', '/api/servers', { name: 'Second Server', type: 'vanilla', version: '1.21.1', eula: true, subscriptionId: sub.id });
+    expect('a second server on the same monthly plan', second.status, 200);
+    expect('...with the full plan memory', second.data && second.data.memoryMb, 2048);
+    expect('billing lists both servers', (await call('cust1', 'GET', '/api/billing')).data.subscriptions[0].serverCount, 2);
+    if (second.data) await call('cust1', 'DELETE', `/api/servers/${second.data.id}`);
+    // public server list
+    expect('listing the server', (await call('cust1', 'PUT', `/api/servers/${sid}/listing`, { public: true, description: 'Friendly SMP', tags: ['SMP', 'Survival', 'Nope'] })).status, 200);
+    const pub = await (await fetch(`${B}/api/public/servers`)).json();
+    const mine = pub.servers.find((x) => x.id === sid);
+    expect('it shows on the public list (no sign-in needed)', !!mine, true);
+    expect('...with only known tags', mine && mine.tags.join(), 'SMP,Survival');
+    expect('...and no owner details', mine && 'owner' in mine, false);
+    expect('bad Discord links are refused', (await call('cust1', 'PUT', `/api/servers/${sid}/listing`, { public: true, discord: 'https://evil.example/x' })).status, 400);
+    // custom address
+    expect('a bad domain is refused', (await call('cust1', 'PUT', `/api/servers/${sid}/domain`, { domain: 'not a domain' })).status, 400);
+    expect("a Tree Host domain can't be claimed", (await call('cust1', 'PUT', `/api/servers/${sid}/domain`, { domain: 'mc.treehost.online' })).status, 400);
+    const dom = await call('cust1', 'PUT', `/api/servers/${sid}/domain`, { domain: 'https://Play.Example.com:25565/' });
+    expect('a custom domain is saved (cleaned up)', dom.data && dom.data.customDomain.host, 'play.example.com');
+    expect('...with the DNS records to add', dom.data && dom.data.customDomain.records.some((r) => r.type === 'SRV' || r.type === 'CNAME'), true);
+    expect('...not verified until DNS points here', dom.data && dom.data.customDomain.verified, false);
+    expect("another customer can't set it", (await call('cust2', 'PUT', `/api/servers/${sid}/domain`, { domain: 'x.example.com' })).status, 404);
+    expect('removing the domain', (await call('cust1', 'PUT', `/api/servers/${sid}/domain`, { domain: '' })).data.customDomain, null);
+
     // server icon
     expect('customer uploads a 64x64 icon', await putIcon('cust1', sid, makePng(64, 64)), 200);
     expect('the server knows it has an icon', !!(await call('cust1', 'GET', `/api/servers/${sid}`)).data.icon, true);
@@ -273,6 +297,26 @@ function expect(label, got, want) {
   expect('signing out switches to another account on the browser', !!out.data.switchedTo, true);
   await bcall('POST', '/api/auth/logout', { all: true });
   expect('sign out of all', (await bcall('GET', '/api/auth/me')).data.user, null);
+
+  // lifetime plan: paid once, 4 servers + 2 proxies
+  const plansNow = (await call('cust2', 'GET', '/api/plans')).data.plans;
+  const lifePlan = plansNow.find((p) => p.oneTime);
+  expect("the lifetime plan is for sale", lifePlan && lifePlan.priceCents, 50000);
+  expect("...with 4 servers and 2 proxies", lifePlan && `${lifePlan.slots.servers}/${lifePlan.slots.proxies}`, "4/2");
+  await call('life1', 'POST', '/api/auth/signup', { username: 'life1', email: 'life1@example.com', password: 'TreeHost-test-123', acceptTerms: true });
+  expect('buying lifetime (demo)', (await call('life1', 'POST', '/api/billing/checkout', { planId: lifePlan.id })).status, 200);
+  const lsub = (await call('life1', 'GET', '/api/billing')).data.subscriptions.find((x) => x.oneTime);
+  expect('lifetime plan is active and never renews', lsub && lsub.status === 'active' && !lsub.renewsAt, true);
+  expect('account shows lifetime', (await call('life1', 'GET', '/api/auth/me')).data.user.lifetime, true);
+  const made = [];
+  for (let i = 1; i <= 4; i++) {
+    const r = await call('life1', 'POST', '/api/servers', { name: `Life ${i}`, type: 'vanilla', version: '1.21.1', eula: true, subscriptionId: lsub.id });
+    if (r.data && r.data.id) made.push(r.data.id);
+  }
+  expect('4 servers on lifetime', made.length, 4);
+  expect('a 5th server is refused', (await call('life1', 'POST', '/api/servers', { name: 'Life 5', type: 'vanilla', version: '1.21.1', eula: true, subscriptionId: lsub.id })).status, 400);
+  expect('staff see the lifetime badge', (await call('owner1', 'GET', '/api/team/users')).data.find((x) => x.username === 'life1').lifetime, true);
+  for (const id of made) await call('life1', 'DELETE', `/api/servers/${id}`);
 
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);

@@ -22,6 +22,27 @@ const DEFAULT_PLANS = [
   { id: 'oak', name: 'Oak', ramMb: 4096, cpus: 2, diskGb: 30, priceCents: 900, description: 'Friends servers and light modpacks, about 5-20 players.', active: true },
   { id: 'redwood', name: 'Redwood', ramMb: 8192, cpus: 3, diskGb: 60, priceCents: 1600, description: 'Communities and bigger modpacks, about 20-60 players.', active: true },
 ];
+// A one-time purchase with a fixed number of servers and proxies (monthly plans have no server limit).
+const LIFETIME_PLAN = {
+  id: 'lifetime', name: 'Lifetime', oneTime: true, ramMb: 4096, proxyRamMb: 1024, cpus: 2, diskGb: 30,
+  slots: { servers: 4, proxies: 2 }, prioritySupport: true, priceCents: 50000,
+  description: 'Pay once, keep it forever: 4 servers of any type and version (4 GB each), 2 proxies and priority support.', active: true,
+};
+DEFAULT_PLANS.push(LIFETIME_PLAN);
+
+/** Memory a plan (or subscription) holds on the machine: one server, or all the servers and proxies of a bundle. */
+function reserveMb(p) {
+  if (p.slots) return p.slots.servers * (p.ramMb + OVERHEAD_MB) + p.slots.proxies * ((p.proxyRamMb || 1024) + OVERHEAD_MB);
+  return p.ramMb + OVERHEAD_MB;
+}
+const bundleFields = (p) => (p.oneTime || p.slots
+  ? {
+      oneTime: !!p.oneTime,
+      slots: p.slots ? { servers: Math.max(0, Math.round(Number(p.slots.servers) || 0)), proxies: Math.max(0, Math.round(Number(p.slots.proxies) || 0)) } : undefined,
+      proxyRamMb: p.slots ? Math.max(512, Math.round(Number(p.proxyRamMb) || 1024)) : undefined,
+      prioritySupport: !!p.prioritySupport,
+    }
+  : {});
 
 // ---------- Stripe (no npm package) ----------
 
@@ -121,6 +142,7 @@ class Billing {
     this.hooks = {
       notify: () => {}, email: async () => {}, suspend: () => {}, unsuspend: () => {}, deleteServer: async () => {},
       userById: () => null,
+      serversOf: () => [], // [{ id, name, kind }] of the servers using a subscription (set by server.js)
     };
   }
 
@@ -131,8 +153,14 @@ class Billing {
   async init() {
     const d = (await store.load('plans')) || {};
     const plans = Object.values(d.plans || {});
-    if (plans.length) this.plans = plans;
+    if (plans.length) this.plans = plans.map((p) => (p.slots ? { ...p, slots: { servers: 0, proxies: 0, ...p.slots } } : p));
     this.settings = { ...this.settings, ...(d.settings || {}) };
+    // Plans saved before the lifetime plan existed get it once (if it's removed later, it stays removed).
+    if (plans.length && !this.settings.lifetimeAdded && !this.plans.some((p) => p.oneTime)) this.plans.push({ ...LIFETIME_PLAN });
+    if (!this.settings.lifetimeAdded) {
+      this.settings.lifetimeAdded = true;
+      if (plans.length) await this.savePlans();
+    }
     this.subs = Object.values((await store.load('subscriptions')) || {});
     this.promos = Object.values((await store.load('promos')) || {});
   }
@@ -162,9 +190,10 @@ class Billing {
       mode: this.mode,
       plans: this.plans
         .filter((p) => p.active)
-        .map(({ id, name, ramMb, cpus, diskGb, priceCents, description }) => ({
-          id, name, ramMb, cpus, diskGb, priceCents, description,
-          soldOut: free < ramMb + OVERHEAD_MB,
+        .map((p) => ({
+          id: p.id, name: p.name, ramMb: p.ramMb, cpus: p.cpus, diskGb: p.diskGb, priceCents: p.priceCents, description: p.description,
+          ...bundleFields(p),
+          soldOut: free < reserveMb(p),
         })),
     };
   }
@@ -183,6 +212,7 @@ class Billing {
         priceCents: Math.round(Number(p.priceCents)),
         description: String(p.description || '').slice(0, 200),
         active: p.active !== false,
+        ...bundleFields(p),
       };
       if (!(plan.ramMb >= 512 && plan.ramMb <= 131072)) throw httpError(400, `${plan.name}: memory must be between 512 MB and 128 GB.`);
       if (!(plan.priceCents >= 0)) throw httpError(400, `${plan.name}: enter a price.`);
@@ -200,7 +230,7 @@ class Billing {
   }
 
   soldMb() {
-    return this.subs.filter((s) => ['active', 'past_due', 'pending'].includes(s.status)).reduce((n, s) => n + s.ramMb + OVERHEAD_MB, 0);
+    return this.subs.filter((s) => ['active', 'past_due', 'pending'].includes(s.status)).reduce((n, s) => n + reserveMb(s), 0);
   }
 
   freeMb() {
@@ -231,7 +261,23 @@ class Billing {
     return false;
   }
 
+  serversOf(s) {
+    return this.hooks.serversOf(s) || [];
+  }
+
+  /** Can this subscription take one more server of this kind? Monthly plans: always. Bundles: up to their slots. */
+  slotError(s, kind, exceptServerId = null) {
+    if (!s.slots) return null;
+    const used = this.serversOf(s).filter((x) => x.id !== exceptServerId);
+    const proxy = kind === 'proxy';
+    const have = used.filter((x) => (x.kind === 'proxy') === proxy).length;
+    const max = proxy ? s.slots.proxies : s.slots.servers;
+    if (have >= max) return `Your ${s.planName} plan includes ${max} ${proxy ? `prox${max === 1 ? 'y' : 'ies'}` : `server${max === 1 ? '' : 's'}`} and ${max === 1 ? 'it is' : 'all are'} in use. Delete one first.`;
+    return null;
+  }
+
   publicSub(s) {
+    const servers = this.serversOf(s);
     return {
       id: s.id,
       planId: s.planId,
@@ -244,7 +290,13 @@ class Billing {
       status: s.status,
       usable: this.usable(s),
       free: !!s.free,
-      serverId: s.serverId || null,
+      servers,
+      serverCount: servers.length,
+      oneTime: !!s.oneTime,
+      slots: s.slots || null,
+      slotsUsed: s.slots ? { servers: servers.filter((x) => x.kind !== 'proxy').length, proxies: servers.filter((x) => x.kind === 'proxy').length } : null,
+      proxyRamMb: s.proxyRamMb || null,
+      prioritySupport: !!s.prioritySupport,
       renewsAt: s.periodEnd || null,
       freeUntil: s.freeUntil || null,
       freeLength: !s.free ? null : s.freeDays !== undefined ? durationText(s.freeDays) : s.freeUntil ? null : 'lifetime',
@@ -252,7 +304,7 @@ class Billing {
       cancelAtPeriodEnd: !!s.cancelAtPeriodEnd,
       pastDueSince: s.pastDueSince || null,
       canceledAt: s.canceledAt || null,
-      deleteAt: s.canceledAt && s.serverId ? s.canceledAt + DELETE_AFTER_DAYS * 86400000 : null,
+      deleteAt: s.canceledAt && servers.length ? s.canceledAt + DELETE_AFTER_DAYS * 86400000 : null,
       createdAt: s.createdAt,
     };
   }
@@ -269,8 +321,8 @@ class Billing {
       priceCents: plan.priceCents,
       currency: CURRENCY,
       status: 'pending',
-      serverId: null,
       createdAt: Date.now(),
+      ...bundleFields(plan),
       ...extra,
     };
     this.subs.push(s);
@@ -281,15 +333,42 @@ class Billing {
   async checkout(user, planId, origin) {
     const plan = this.plan(planId);
     if (!plan || !plan.active) throw httpError(404, 'That plan is not available.');
-    if (this.freeMb() < plan.ramMb + OVERHEAD_MB) throw httpError(409, `${plan.name} is sold out right now. Try a smaller plan or check back soon.`, 'SOLD_OUT');
+    if (this.freeMb() < reserveMb(plan)) throw httpError(409, `${plan.name} is sold out right now. Try a smaller plan or check back soon.`, 'SOLD_OUT');
     if (this.mode === 'off') throw httpError(400, 'Payments are not set up yet. Please check back soon.');
     // Abandoned checkouts don't hold capacity forever.
     this.subs = this.subs.filter((s) => !(s.status === 'pending' && Date.now() - s.createdAt > 86400000));
     const s = this.newSub(user, plan);
     if (this.mode === 'demo') {
-      this.activate(s, { periodEnd: Date.now() + 30 * 86400000 });
+      this.activate(s, plan.oneTime ? {} : { periodEnd: Date.now() + 30 * 86400000 });
       await this.save();
       return { url: `${origin}/dashboard?billing=success`, demo: true };
+    }
+    if (plan.oneTime) {
+      // Paid once: a normal payment, not a subscription.
+      const session = await stripe('POST', '/checkout/sessions', {
+        mode: 'payment',
+        success_url: `${origin}/dashboard?billing=success`,
+        cancel_url: `${origin}/dashboard?billing=canceled`,
+        client_reference_id: s.id,
+        customer: user.stripeCustomerId || undefined,
+        customer_email: user.stripeCustomerId ? undefined : user.email || undefined,
+        customer_creation: user.stripeCustomerId ? undefined : 'always',
+        metadata: { subId: s.id, userId: user.id, planId: plan.id },
+        payment_intent_data: { metadata: { subId: s.id, userId: user.id, planId: plan.id } },
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency: CURRENCY,
+              unit_amount: plan.priceCents,
+              product_data: { name: `Tree Host ${plan.name}: ${plan.slots ? `${plan.slots.servers} servers + ${plan.slots.proxies} proxies, ` : ''}paid once` },
+            },
+          },
+        ],
+      });
+      s.checkoutSession = session.id;
+      await this.save();
+      return { url: session.url };
     }
     const session = await stripe('POST', '/checkout/sessions', {
       mode: 'subscription',
@@ -334,7 +413,7 @@ class Billing {
       this.hooks.notify('billing', s, `bought a ${s.planName} server`);
       if (this.hooks.sendEmail) this.hooks.sendEmail('planActive', this.hooks.userById(s.userId), s).catch(() => {});
     }
-    if (was === 'past_due' && s.serverId) this.hooks.unsuspend(s);
+    if (was === 'past_due' && this.serversOf(s).length) this.hooks.unsuspend(s);
   }
 
   /**
@@ -453,16 +532,14 @@ class Billing {
     if (s.status === 'canceled') return;
     s.status = 'canceled';
     s.canceledAt = Date.now();
-    if (s.serverId) this.hooks.suspend(s, 'canceled');
+    if (this.serversOf(s).length) this.hooks.suspend(s, 'canceled');
   }
 
   attachServer(subId, userId, serverId) {
     const s = this.sub(subId);
     if (!s || s.userId !== userId) throw httpError(404, 'Plan not found. Buy a plan first.');
     if (!this.usable(s)) throw httpError(402, 'This plan is not active. Check Billing.');
-    if (s.serverId) throw httpError(400, 'This plan already has a server. Delete that server first, or buy another plan.');
-    s.serverId = serverId;
-    this.save().catch(() => {});
+    void serverId; // servers point at their plan (cfg.subscriptionId); a plan can have any number (bundles: up to their slots)
     return s;
   }
 
@@ -484,6 +561,18 @@ class Billing {
       case 'checkout.session.completed': {
         const s = this.sub(o.client_reference_id || (o.metadata && o.metadata.subId));
         if (!s) break;
+        if (o.mode === 'payment') {
+          // A one-time purchase (lifetime): paid in full, never renews.
+          s.paymentIntent = o.payment_intent || null;
+          s.stripeCustomerId = o.customer || null;
+          const buyer = users.userById(s.userId);
+          if (buyer && o.customer && !buyer.stripeCustomerId) {
+            buyer.stripeCustomerId = o.customer;
+            await users.save();
+          }
+          if (o.payment_status === 'paid') this.activate(s, {});
+          break;
+        }
         s.stripeSubscriptionId = o.subscription;
         s.stripeCustomerId = o.customer;
         const user = users.userById(s.userId);
@@ -521,6 +610,15 @@ class Billing {
       case 'invoice.paid': {
         const s = this.findByStripe(invoiceSub(o));
         if (s && s.status !== 'canceled') this.activate(s);
+        break;
+      }
+      case 'charge.refunded': {
+        // A refunded one-time purchase ends its plan.
+        const s = o.payment_intent ? this.subs.find((x) => x.paymentIntent === o.payment_intent) : null;
+        if (s && o.refunded && s.status !== 'canceled') {
+          this.markCanceled(s);
+          this.hooks.notify('billing', s, `${s.planName} purchase was refunded, so the plan ended`);
+        }
         break;
       }
       case 'invoice.payment_failed': {
@@ -570,13 +668,11 @@ class Billing {
       }
     }
     for (const s of this.subs) {
-      if (!s.serverId) continue;
+      const servers = this.serversOf(s);
+      if (!servers.length) continue;
       if (!this.usable(s)) this.hooks.suspend(s, s.status === 'canceled' ? 'canceled' : 'unpaid');
       if (s.status === 'canceled' && s.canceledAt && Date.now() - s.canceledAt > DELETE_AFTER_DAYS * 86400000) {
-        const id = s.serverId;
-        s.serverId = null;
-        await this.save();
-        await this.hooks.deleteServer(id, s).catch(() => {});
+        for (const x of servers) await this.hooks.deleteServer(x.id, s).catch(() => {});
       }
     }
   }
@@ -584,7 +680,12 @@ class Billing {
   adminSummary() {
     const active = this.subs.filter((s) => s.status === 'active' || s.status === 'past_due');
     const mrr = {};
-    for (const s of active) if (!s.free) mrr[s.currency] = (mrr[s.currency] || 0) + s.priceCents;
+    const oneTime = {};
+    for (const s of active) {
+      if (s.free) continue;
+      if (s.oneTime) oneTime[s.currency] = (oneTime[s.currency] || 0) + s.priceCents;
+      else mrr[s.currency] = (mrr[s.currency] || 0) + s.priceCents;
+    }
     return {
       mode: this.mode,
       currency: CURRENCY,
@@ -595,6 +696,8 @@ class Billing {
       activeCount: active.length,
       pastDueCount: active.filter((s) => s.status === 'past_due').length,
       mrr,
+      oneTime,
+      lifetimeCount: active.filter((s) => s.oneTime).length,
       graceDays: GRACE_DAYS,
       deleteAfterDays: DELETE_AFTER_DAYS,
       webhookReady: !!WEBHOOK_SECRET,
@@ -602,4 +705,4 @@ class Billing {
   }
 }
 
-module.exports = { Billing, OVERHEAD_MB, durationText };
+module.exports = { Billing, OVERHEAD_MB, durationText, reserveMb };

@@ -166,11 +166,12 @@ const build = (guild, ch, role, data = {}) => ({
     embeds: [
       base(guild)
         .setTitle('💰 Plans')
-        .setDescription('One plan = one server. Every feature is in every plan. No setup fees, cancel any time.\n*Launching soon at treehost.online.*')
+        .setDescription('Unlimited servers on every plan, each with the full RAM. Every feature is in every plan. No setup fees, cancel any time.\n*Launching soon at treehost.online.*')
         .addFields(
           { name: '🌱 Sapling: $5/month', value: '2 GB RAM · 1 CPU core · 15 GB NVMe\nSmall survival worlds, about 1-5 players', inline: true },
           { name: '🌳 Oak: $9/month', value: '4 GB RAM · 2 CPU cores · 30 GB NVMe\nFriends servers and light modpacks, about 5-20 players', inline: true },
           { name: '🌲 Redwood: $16/month', value: '8 GB RAM · 3 CPU cores · 60 GB NVMe\nCommunities and bigger modpacks, about 20-60 players', inline: true },
+          { name: '♾️ Lifetime: $500 once', value: '4 servers of any type and version (4 GB each) · 2 proxies · priority support · no monthly bills' },
           { name: 'Every plan includes', value: 'Any server type and version · live console · one-click plugins · file manager · manual and automatic backups · restart after a crash · isolated server' },
         ),
     ],

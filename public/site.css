@@ -257,3 +257,9 @@ section { padding: 88px 0; position: relative; }
 @media (min-width: 1800px) { body { zoom: 1.1; } }
 @media (min-width: 2300px) { body { zoom: 1.25; } }
 @media (min-width: 3000px) { body { zoom: 1.5; } }
+
+.plan.lifetime { grid-column: 1 / -1; border-color: rgba(232,194,122,.7); background: linear-gradient(135deg, rgba(232,194,122,.12), var(--panel) 55%); }
+.plan.lifetime .tag { background: #e8c27a; }
+.plan.lifetime h3 { color: #f0cf8c; }
+.lifetime-body { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: center; }
+@media (max-width: 760px) { .lifetime-body { grid-template-columns: 1fr; } }

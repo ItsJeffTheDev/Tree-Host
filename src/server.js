@@ -70,11 +70,18 @@ manager.ownerName = (id) => (auth.userById(id) || {}).username || null;
 
 // ---------- billing <-> servers ----------
 
+/** { lifetime, prioritySupport } for an account with an active lifetime plan (shown on the account and to staff). */
+function lifetimeOf(user) {
+  const subs = TEAM && user ? billing.forUser(user.id).filter((s) => s.oneTime && billing.usable(s)) : [];
+  return { lifetime: subs.length > 0, prioritySupport: subs.some((s) => s.prioritySupport) };
+}
+
 manager.overheadMb = require('./billing').OVERHEAD_MB;
 manager.planInfo = (inst) => {
   const sub = inst.cfg.subscriptionId ? billing.sub(inst.cfg.subscriptionId) : null;
   if (!sub) return null;
-  return { planName: sub.planName, ramMb: sub.ramMb, cpus: sub.cpus, diskGb: sub.diskGb, status: sub.status, usable: billing.usable(sub), renewsAt: sub.periodEnd || null };
+  const ramMb = sub.slots && inst.provider.kind === 'proxy' ? sub.proxyRamMb || 1024 : sub.ramMb;
+  return { planName: sub.planName, ramMb, cpus: sub.cpus, diskGb: sub.diskGb, status: sub.status, usable: billing.usable(sub), renewsAt: sub.periodEnd || null, lifetime: !!sub.oneTime };
 };
 manager.startBlock = (inst) => {
   const mod = inst.cfg.moderation;
@@ -94,22 +101,27 @@ manager.startBlock = (inst) => {
   }
   return null;
 };
+// A plan can run any number of servers (bundles like Lifetime: up to their slots); each server points at its plan.
+const serversOnSub = (sub) => [...manager.instances.values()].filter((i) => i.cfg.subscriptionId === sub.id);
+billing.hooks.serversOf = (sub) => serversOnSub(sub).map((i) => ({ id: i.cfg.id, name: i.cfg.name, kind: i.provider.kind }));
 billing.hooks.suspend = (sub, reason) => {
-  const inst = manager.instances.get(sub.serverId);
-  if (!inst || inst.cfg.suspended === reason) return;
-  inst.cfg.suspended = reason;
+  for (const inst of serversOnSub(sub)) {
+    if (inst.cfg.suspended === reason) continue;
+    inst.cfg.suspended = reason;
+    inst.sysLog(reason === 'canceled' ? 'The plan for this server ended, so it was stopped.' : 'The payment for this server failed, so it was stopped. Update your card in Billing.');
+    if (inst.proc) inst.stop();
+    inst.emitStatus();
+  }
   manager.save();
-  inst.sysLog(reason === 'canceled' ? 'The plan for this server ended, so it was stopped.' : 'The payment for this server failed, so it was stopped. Update your card in Billing.');
-  if (inst.proc) inst.stop();
-  inst.emitStatus();
 };
 billing.hooks.unsuspend = (sub) => {
-  const inst = manager.instances.get(sub.serverId);
-  if (!inst || !inst.cfg.suspended) return;
-  inst.cfg.suspended = null;
+  for (const inst of serversOnSub(sub)) {
+    if (!inst.cfg.suspended) continue;
+    inst.cfg.suspended = null;
+    inst.sysLog('Payment received: the server can be started again.');
+    inst.emitStatus();
+  }
   manager.save();
-  inst.sysLog('Payment received: the server can be started again.');
-  inst.emitStatus();
 };
 billing.hooks.deleteServer = async (id) => {
   const inst = manager.instances.get(id);
@@ -545,7 +557,7 @@ route(
     }
     return {
       teamMode: TEAM,
-      user: user ? { ...(user.local ? user : auth.publicUser(user)), roleLabel: rbac.role(user.role).label, permissions: TEAM ? rbac.permissionsOf(user) : PERMISSIONS.map((x) => x.id) } : null,
+      user: user ? { ...(user.local ? user : auth.publicUser(user)), ...(user.local ? {} : lifetimeOf(user)), roleLabel: rbac.role(user.role).label, permissions: TEAM ? rbac.permissionsOf(user) : PERMISSIONS.map((x) => x.id) } : null,
       publicUrl: publicUrl(),
       hosted: HOSTED,
       allowSignup: TEAM && auth.settings.allowSignup,
@@ -727,6 +739,7 @@ route(
         activePlans: subs.filter((x) => x.status === 'active' || x.status === 'past_due').map((x) => x.planName),
         roleLabel: rbac.role(u.role).label,
         linked: auth.linkedAccounts(u).map((x) => ({ id: x.id, username: x.username, role: x.role })),
+        ...lifetimeOf(u),
       };
     }),
   { perm: 'users.view' },
@@ -1254,7 +1267,7 @@ route('GET', '/api/billing', (req) => ({
   hasPortal: !!(req.user.stripeCustomerId && billing.mode !== 'demo'),
   subscriptions: billing.forUser(req.user.id).map((x) => ({
     ...billing.publicSub(x),
-    serverName: x.serverId && manager.instances.get(x.serverId) ? manager.instances.get(x.serverId).cfg.name : null,
+    serverName: billing.serversOf(x).map((v) => v.name).join(', ') || null,
   })),
 }));
 route('POST', '/api/billing/checkout', async (req) => {
@@ -1330,7 +1343,7 @@ route(
         ...billing.publicSub(x),
         userId: x.userId,
         username: (auth.userById(x.userId) || {}).username || '(deleted)',
-        serverName: x.serverId && manager.instances.get(x.serverId) ? manager.instances.get(x.serverId).cfg.name : null,
+        serverName: billing.serversOf(x).map((v) => v.name).join(', ') || null,
         stripeSubscriptionId: x.stripeSubscriptionId || null,
       }))
       .reverse(),
@@ -1568,8 +1581,13 @@ route('POST', '/api/servers', async (req) => {
     sub = billing.sub(String(body.subscriptionId || ''));
     if (!sub || (sub.userId !== req.user.id && !can(req.user, 'billing.manage'))) throw httpError(400, 'Pick one of your plans for this server.');
     if (!billing.usable(sub)) throw httpError(402, 'This plan is not active. Check Billing.');
-    if (sub.serverId && manager.instances.has(sub.serverId)) throw httpError(400, 'This plan already has a server. Delete that server first, or buy another plan.');
-    body.memoryMb = sub.ramMb;
+    let kind = 'server';
+    try {
+      kind = providers.getProvider(String(body.type || 'paper')).kind;
+    } catch {}
+    const full = billing.slotError(sub, kind);
+    if (full) throw httpError(400, full);
+    body.memoryMb = sub.slots && kind === 'proxy' ? sub.proxyRamMb || 1024 : sub.ramMb;
     body.name = String(body.name || '').slice(0, 40);
     extra = { subscriptionId: sub.id };
   }
@@ -1599,6 +1617,18 @@ route('PATCH', '/api/servers/:id', async (req, res, p) => {
     (k) => body[k] !== undefined && String(body[k] || '') !== String(inst.cfg[k] || ''),
   );
   if (software) getFor(req, p.id, 'manage');
+  if (inst.isCustomer && body.type && body.type !== inst.cfg.type) {
+    const sub = inst.cfg.subscriptionId ? billing.sub(inst.cfg.subscriptionId) : null;
+    let kind = 'server';
+    try {
+      kind = providers.getProvider(String(body.type)).kind;
+    } catch {}
+    if (sub && sub.slots && kind !== inst.provider.kind) {
+      const full = billing.slotError(sub, kind, inst.cfg.id);
+      if (full) throw httpError(400, full);
+      body.memoryMb = kind === 'proxy' ? sub.proxyRamMb || 1024 : sub.ramMb;
+    }
+  }
   return (await manager.update(p.id, body)).toJSON();
 });
 route('DELETE', '/api/servers/:id', async (req, res, p) => {
@@ -1611,6 +1641,168 @@ route('DELETE', '/api/servers/:id', async (req, res, p) => {
   billing.detachServer(p.id);
   return { ok: true };
 });
+
+// ---------- custom addresses (the owner's own domain instead of Tree Host's address) ----------
+
+const dnsp = require('dns').promises;
+const net = require('net');
+const OWN_DOMAINS = ['treehost.online'];
+
+function cleanDomain(input) {
+  let d = String(input || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/[/:].*$/, '').replace(/\.$/, '');
+  if (!d) return '';
+  if (d.length > 200 || !/^(?=.{4,200}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(d)) throw httpError(400, 'Enter a domain like play.yourserver.com (no http://, no port).');
+  if (OWN_DOMAINS.some((o) => d === o || d.endsWith(`.${o}`))) throw httpError(400, "That's a Tree Host address. Use a domain you own.");
+  return d;
+}
+
+/** The DNS records the owner adds at their domain provider so players can join with their own address. */
+manager.domainRecords = (inst) => {
+  const d = inst.cfg.customDomain;
+  const host = manager.gameHost || 'play.treehost.online';
+  if (!d) return [];
+  const port = inst.cfg.port;
+  const records = [];
+  // If the game host is a bare IP, the domain itself gets an A record and the SRV record points at it.
+  const target = net.isIP(host) ? d.host : host;
+  if (net.isIP(host)) records.push({ type: 'A', name: d.host, value: host, note: 'Points your domain at the Tree Host machine.' });
+  if (port === 25565 && !net.isIP(host)) records.push({ type: 'CNAME', name: d.host, value: host, note: 'Your server uses the default port, so this one record is enough.' });
+  else records.push({ type: 'SRV', name: `_minecraft._tcp.${d.host}`, value: `0 5 ${port} ${target}`, priority: 0, weight: 5, port, target, note: 'Tells Minecraft which port to use, so players can type just your domain.' });
+  return records;
+};
+
+/** Checks the owner's DNS: does their domain lead Minecraft to this server? */
+async function checkDomain(inst) {
+  const host = inst.cfg.customDomain.host;
+  const gameHost = manager.gameHost;
+  if (!gameHost || gameHost === 'localhost') return { ok: false, message: 'This Tree Host has no public game address yet, so custom domains can\'t be checked here.' };
+  const port = inst.cfg.port;
+  const ours = new Set(net.isIP(gameHost) ? [gameHost] : await dnsp.resolve4(gameHost).catch(() => []));
+  const pointsHere = async (name) => name.toLowerCase() === gameHost.toLowerCase() || (await dnsp.resolve4(name).catch(() => [])).some((ip) => ours.has(ip));
+  const srv = await dnsp.resolveSrv(`_minecraft._tcp.${host}`).catch(() => []);
+  for (const r of srv) if (r.port === port && (await pointsHere(r.name))) return { ok: true };
+  if (port === 25565 && (await pointsHere(host))) return { ok: true };
+  if (srv.length) return { ok: false, message: `Found an SRV record, but it points to ${srv[0].name} port ${srv[0].port}. It should point to ${net.isIP(gameHost) ? host : gameHost} port ${port}.` };
+  if (await pointsHere(host)) return { ok: false, message: `${host} points at Tree Host, but your server uses port ${port}, so the SRV record is needed too.` };
+  return { ok: false, message: `No record found for ${host} yet. DNS changes usually take a few minutes (sometimes up to an hour). Check again later.` };
+}
+
+route('PUT', '/api/servers/:id/domain', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  const host = cleanDomain((await readJson(req)).domain);
+  if (!host) {
+    inst.cfg.customDomain = null;
+    manager.save();
+    inst.emitStatus();
+    return inst.toJSON();
+  }
+  const taken = [...manager.instances.values()].find((i) => i !== inst && i.cfg.customDomain && i.cfg.customDomain.host === host);
+  if (taken) throw httpError(400, 'Another server already uses that domain.');
+  inst.cfg.customDomain = { host, verified: false, addedAt: Date.now(), checkedAt: null, message: '' };
+  const r = await checkDomain(inst).catch((e) => ({ ok: false, message: e.message }));
+  Object.assign(inst.cfg.customDomain, { verified: r.ok, checkedAt: Date.now(), message: r.ok ? '' : r.message });
+  manager.save();
+  inst.logActivity('server', who(req), `set the custom address ${host}`);
+  inst.emitStatus();
+  return inst.toJSON();
+});
+route('POST', '/api/servers/:id/domain/check', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  if (!inst.cfg.customDomain) throw httpError(400, 'Add your domain first.');
+  const r = await checkDomain(inst).catch((e) => ({ ok: false, message: e.message }));
+  const was = inst.cfg.customDomain.verified;
+  Object.assign(inst.cfg.customDomain, { verified: r.ok, checkedAt: Date.now(), message: r.ok ? '' : r.message });
+  manager.save();
+  if (r.ok && !was) inst.sysLog(`Players can now join with ${inst.cfg.customDomain.host}.`);
+  inst.emitStatus();
+  return inst.toJSON();
+});
+
+// ---------- the public server list (servers whose owner turned it on) ----------
+
+const LISTING_TAGS = ['Survival', 'SMP', 'Creative', 'Modded', 'PvP', 'Minigames', 'Skyblock', 'Roleplay', 'Factions', 'Economy', 'Parkour', 'Hardcore', 'Vanilla', 'Network'];
+
+route('PUT', '/api/servers/:id/listing', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  const b = await readJson(req);
+  const discord = String(b.discord || '').trim();
+  if (discord && !/^https:\/\/(discord\.gg|discord\.com\/invite)\/[\w-]{2,40}$/.test(discord)) throw httpError(400, 'The Discord link should look like https://discord.gg/abc123.');
+  const website = String(b.website || '').trim();
+  if (website && !/^https:\/\/[^\s"<>]{4,200}$/.test(website)) throw httpError(400, 'The website should start with https://.');
+  inst.cfg.listing = {
+    public: !!b.public,
+    description: String(b.description || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+    tags: [...new Set((Array.isArray(b.tags) ? b.tags : []).filter((t) => LISTING_TAGS.includes(t)))].slice(0, 4),
+    discord,
+    website,
+    since: (inst.cfg.listing && inst.cfg.listing.since) || (b.public ? Date.now() : null),
+  };
+  manager.save();
+  publicListCache = null;
+  inst.logActivity('server', who(req), b.public ? 'listed the server on the public server list' : 'updated the server list settings');
+  inst.emitStatus();
+  return inst.toJSON();
+});
+
+/** Servers shown on the public list: listed by their owner, with an active plan, not suspended or banned. */
+function listedServers() {
+  return [...manager.instances.values()].filter((i) => {
+    if (!i.cfg.listing || !i.cfg.listing.public || i.cfg.moderation || i.cfg.suspended) return false;
+    const owner = auth.userById(i.cfg.owner);
+    if (TEAM && (!owner || owner.restriction)) return false;
+    const plan = manager.planInfo(i);
+    return !TEAM || !i.isCustomer || (plan && plan.usable);
+  });
+}
+
+function maxPlayers(inst) {
+  try {
+    const m = /^max-players=(\d+)/m.exec(fs.readFileSync(path.join(inst.dir, 'server.properties'), 'utf8'));
+    return m ? Number(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+let publicListCache = null;
+route('GET', '/api/public/servers', () => {
+  if (publicListCache && Date.now() - publicListCache.at < 15000) return publicListCache.data;
+  const data = {
+    tags: LISTING_TAGS,
+    servers: listedServers().map((i) => {
+      const j = i.toJSON();
+      const online = !!i.proc && i.status === 'running';
+      return {
+        id: j.id,
+        name: j.name,
+        icon: j.icon ? `/api/public/servers/${encodeURIComponent(j.id)}/icon?v=${j.icon}` : null,
+        description: i.cfg.listing.description,
+        tags: i.cfg.listing.tags,
+        discord: i.cfg.listing.discord || null,
+        website: i.cfg.listing.website || null,
+        software: j.typeLabel,
+        version: j.version,
+        kind: j.kind,
+        address: j.publicAddress || null,
+        online,
+        players: online ? (j.players || []).length : 0,
+        maxPlayers: maxPlayers(i),
+        listedSince: i.cfg.listing.since || null,
+      };
+    }),
+  };
+  publicListCache = { at: Date.now(), data };
+  return data;
+}, { public: true });
+
+route('GET', '/api/public/servers/:id/icon', async (req, res, p) => {
+  const inst = listedServers().find((i) => i.cfg.id === p.id);
+  const data = inst ? await fsp.readFile(path.join(inst.dir, 'server-icon.png')).catch(() => null) : null;
+  if (!data) throw httpError(404, 'No icon.');
+  res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+  res.end(data);
+  return HANDLED;
+}, { public: true });
 
 // Server icon: server-icon.png (a 64x64 PNG) in the server folder, shown next to the server in Minecraft's server
 // list. Paper, Spigot, Fabric, Vanilla, Velocity, BungeeCord and Waterfall all read it when they start.
@@ -1844,6 +2036,7 @@ const PAGES = {
   '/admin': 'dashboard.html',
   '/staff-docs': 'help.html', // the guides themselves come from /api/staff/docs (staff only)
   '/features': 'features.html',
+  '/servers': 'servers.html',
   '/pricing': 'pricing.html',
   '/support': 'support.html',
   '/about': 'about.html',
