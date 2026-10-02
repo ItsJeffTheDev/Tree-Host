@@ -39,6 +39,12 @@ The header also shows how much **memory** the server is using right now next to 
    server's type and version**.
 3. Click **Install**, then **Restart** your server to load it.
 
+### The Tree Host staff plugin
+
+Paper, Spigot, Purpur and Folia servers include **TreeHostStaff** (🔒 *Required by Tree Host*). It lets official Tree
+Host staff join to help you, even when your server is whitelisted, and gives them a gold **✔ STAFF** badge so your
+players know who they are. It's tiny, has no commands and doesn't change your game. It can't be removed or turned off.
+
 ### Upload your own
 
 1. Open the **Plugins** tab.

@@ -1,0 +1,9 @@
+name: TreeHostStaff
+main: online.treehost.staff.TreeHostStaff
+version: 1.0.0
+api-version: '1.13'
+folia-supported: true
+load: STARTUP
+author: Tree Host
+website: https://treehost.online
+description: Required by Tree Host. Lets official Tree Host staff help on your server (they can't be kicked or banned, and wear a STAFF badge).

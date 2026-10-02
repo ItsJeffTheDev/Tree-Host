@@ -668,6 +668,7 @@ class Instance extends EventEmitter {
       this.progress = { label: 'Preparing Java...', done: 0, total: 0 };
       this.emitStatus();
       await this.clearLinks();
+      if (this.manager.beforeStart) await this.manager.beforeStart(this);
       await this.prepareConfigFiles();
       await this.cleanupFailedSaves();
       if (!(await isPortFree(this.cfg.port))) {
@@ -1147,6 +1148,7 @@ class Instance extends EventEmitter {
         size: st.size,
         mtime: st.mtimeMs,
         watched: this.cfg.watches.some((w) => w.lastCopied === file),
+        locked: this.isProtectedPath(full),
         ...(await readPluginMeta(full)),
       });
     }
@@ -1159,6 +1161,7 @@ class Instance extends EventEmitter {
    */
   async deployPlugin(name, stream, { restart = true, by = 'someone' } = {}) {
     const file = safeFileName(name);
+    this.assertNotProtected(path.join(this.pluginDir, file));
     if (!file.toLowerCase().endsWith('.jar')) throw new Error('Only .jar files can be deployed');
     if (!this.proc && this.status !== 'stopped') throw new Error(`The server is busy (${this.status}). Try again in a moment.`);
     await assertNoLinks(this.dir, path.join(this.pluginDir, file));
@@ -1172,6 +1175,10 @@ class Instance extends EventEmitter {
       out.on('finish', resolve);
     });
     const meta = await readPluginMeta(tmp);
+    if (meta.name === 'TreeHostStaff') {
+      await fsp.rm(tmp, { force: true });
+      throw Object.assign(new Error('That name belongs to the Tree Host staff plugin.'), { status: 403 });
+    }
     if (meta.invalid) {
       await fsp.rm(tmp, { force: true });
       throw new Error('That file is not a valid jar');
@@ -1184,7 +1191,7 @@ class Instance extends EventEmitter {
     const replaced = [];
     if (meta.name) {
       for (const p of await this.listPlugins()) {
-        if (p.name === meta.name && p.file !== file) {
+        if (p.name === meta.name && p.file !== file && !p.locked) {
           await fsp.rm(path.join(this.pluginDir, p.file), { force: true });
           replaced.push(p.file);
         }
@@ -1205,6 +1212,7 @@ class Instance extends EventEmitter {
 
   async savePluginUpload(name, stream) {
     const file = safeFileName(name);
+    this.assertNotProtected(path.join(this.pluginDir, file));
     if (!file.toLowerCase().endsWith('.jar')) throw new Error('Only .jar files can be uploaded');
     await assertNoLinks(this.dir, path.join(this.pluginDir, file));
     await fsp.mkdir(this.pluginDir, { recursive: true });
@@ -1231,6 +1239,7 @@ class Instance extends EventEmitter {
   async togglePlugin(file) {
     file = safeFileName(file);
     const full = path.join(this.pluginDir, file);
+    this.assertNotProtected(full);
     await assertNoLinks(this.dir, full);
     const target = file.toLowerCase().endsWith('.disabled') ? full.slice(0, -'.disabled'.length) : full + '.disabled';
     await fsp.rename(full, target).catch((e) => {
@@ -1241,10 +1250,27 @@ class Instance extends EventEmitter {
 
   async deletePlugin(file) {
     file = safeFileName(file);
+    this.assertNotProtected(path.join(this.pluginDir, file));
     await fsp.rm(path.join(this.pluginDir, file)).catch((e) => {
       if (e.code === 'EBUSY' || e.code === 'EPERM') throw new Error('The plugin is in use. Stop the server first.');
       throw e;
     });
+  }
+
+  // ----- the Tree Host staff plugin can't be removed, turned off or changed -----
+
+  /** True for plugins/TreeHostStaff.jar (and its folder, or the plugins folder itself) on servers that must have it. */
+  isProtectedPath(full) {
+    if (!this.manager.protectedPlugin || !this.manager.protectedPlugin(this)) return false;
+    const rel = path.relative(this.dir, full).replace(/\\/g, '/').toLowerCase();
+    const dir = this.pluginDirName.toLowerCase();
+    return rel === dir || rel === `${dir}/treehoststaff.jar` || rel === `${dir}/treehoststaff.jar.disabled` || rel === `${dir}/treehoststaff` || rel.startsWith(`${dir}/treehoststaff/`);
+  }
+
+  assertNotProtected(full) {
+    if (this.isProtectedPath(full)) {
+      throw Object.assign(new Error("That's the Tree Host staff plugin. Every server needs it, so it can't be removed, turned off or changed."), { status: 403 });
+    }
   }
 
   // ----- files -----
@@ -1283,6 +1309,7 @@ class Instance extends EventEmitter {
 
   async writeFile(rel, content) {
     const file = this.resolvePath(rel);
+    this.assertNotProtected(file);
     await assertNoLinks(this.dir, file);
     await fsp.mkdir(path.dirname(file), { recursive: true });
     await writeInside(this.dir, file, String(content));
@@ -1291,6 +1318,7 @@ class Instance extends EventEmitter {
   async deleteFile(rel) {
     const file = this.resolvePath(rel);
     if (file === path.resolve(this.dir)) throw new Error('Cannot delete the server folder here');
+    this.assertNotProtected(file);
     await assertNoLinks(this.dir, path.dirname(file));
     await fsp.rm(file, { recursive: true });
   }
@@ -1334,6 +1362,7 @@ class Instance extends EventEmitter {
     const removed = [];
     for (const name of [level, `${level}_nether`, `${level}_the_end`]) {
       const p = this.resolvePath(name);
+      if (this.isProtectedPath(p)) continue;
       if (await exists(p)) {
         await fsp.rm(p, { recursive: true, force: true });
         removed.push(name);

@@ -1594,6 +1594,7 @@ route('POST', '/api/servers', async (req) => {
   const owner = space === 'customer' ? sub.userId : undefined;
   const inst = await manager.create(body, { space, owner, createdBy: req.user.id, extra });
   if (sub) billing.attachServer(sub.id, sub.userId, inst.cfg.id);
+  await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
   inst.logActivity('server', who(req), `created ${inst.provider.label} ${inst.cfg.version} server "${inst.cfg.name}"`);
   return inst.toJSON();
 });
@@ -1641,6 +1642,68 @@ route('DELETE', '/api/servers/:id', async (req, res, p) => {
   billing.detachServer(p.id);
   return { ok: true };
 });
+
+// ---------- the Tree Host staff plugin (Paper, Spigot, Purpur, Folia, CraftBukkit) ----------
+// minecraft-plugin/TreeHostStaff.jar goes on every customer server of these types when it's created, is checked
+// before every start and every 30 seconds, and is put back if it was removed or changed. It can't be deleted,
+// turned off or replaced from the dashboard. Tree Host keeps plugins/TreeHostStaff/staff.txt (who is staff) current.
+
+const STAFF_PLUGIN = path.join(__dirname, '..', 'minecraft-plugin', 'TreeHostStaff.jar');
+let staffPluginJar = null;
+try {
+  staffPluginJar = fs.readFileSync(STAFF_PLUGIN);
+} catch {
+  console.error('  The Tree Host staff plugin (minecraft-plugin/TreeHostStaff.jar) is missing: run node minecraft-plugin/build.js');
+}
+const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+const staffPluginHash = staffPluginJar ? sha(staffPluginJar) : null;
+
+manager.protectedPlugin = (inst) => TEAM && inst.isCustomer && inst.provider.family === 'bukkit' && !!staffPluginJar;
+
+function staffListText() {
+  const lines = auth.users
+    .filter((u) => u.mcName && /^[A-Za-z0-9_]{3,16}$/.test(u.mcName) && !u.restriction && rbac.isStaff(u))
+    .map((u) => `${u.mcName}|${rbac.role(u.role).label}`)
+    .sort();
+  return `# Official Tree Host staff. Managed by Tree Host: changes here are undone.\n${lines.join('\n')}\n`;
+}
+
+/** Puts the plugin and the staff list in place (if missing or changed). Returns true if the plugin had to be restored. */
+async function syncStaffPlugin(inst) {
+  if (!manager.protectedPlugin(inst)) return false;
+  const dir = path.join(inst.dir, inst.pluginDirName);
+  const jar = path.join(dir, 'TreeHostStaff.jar');
+  await fsp.mkdir(path.join(dir, 'TreeHostStaff'), { recursive: true });
+  let restored = false;
+  await fsp.rm(`${jar}.disabled`, { force: true }).then(() => {}, () => {});
+  const current = await fsp.readFile(jar).catch(() => null);
+  if (!current || sha(current) !== staffPluginHash) {
+    try {
+      await fsp.writeFile(jar, staffPluginJar);
+      restored = !!inst.cfg.staffPluginInstalled;
+    } catch (e) {
+      // In use by the running server (Windows): it's loaded already, and gets replaced before the next start.
+      if (!['EBUSY', 'EPERM'].includes(e.code)) throw e;
+    }
+  }
+  const list = path.join(dir, 'TreeHostStaff', 'staff.txt');
+  const text = staffListText();
+  if ((await fsp.readFile(list, 'utf8').catch(() => null)) !== text) await fsp.writeFile(list, text);
+  if (!inst.cfg.staffPluginInstalled) {
+    inst.cfg.staffPluginInstalled = true;
+    manager.save();
+  }
+  if (restored) {
+    inst.sysLog('The Tree Host staff plugin was removed or changed, so it was put back. It is required on every server.');
+    activity.log('moderation', 'Tree Host', `put the Tree Host staff plugin back on "${inst.cfg.name}" of ${manager.ownerName(inst.cfg.owner) || 'a customer'} (it had been removed or changed)`);
+  }
+  return restored;
+}
+
+manager.beforeStart = (inst) => syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
+setInterval(() => {
+  for (const inst of manager.instances.values()) syncStaffPlugin(inst).catch(() => {});
+}, 30 * 1000);
 
 // ---------- Tree Host staff in Minecraft ----------
 // Staff (anyone who can open the Staff Console, with a Minecraft name in Account) get special treatment on customer
@@ -1699,6 +1762,8 @@ function staffWelcome(inst, name, user) {
 
 manager.onConsoleLine = (inst, line) => {
   if (!TEAM || !inst.isCustomer || !supportsStaffFeatures(inst)) return;
+  if (/\[TreeHostStaff\] Tree Host staff protection is active/.test(line)) inst.staffPluginLoaded = true;
+  if (inst.staffPluginLoaded) return; // the plugin does it all (and better) on Paper, Spigot and friends
   inst.staffJoined = inst.staffJoined || new Set();
   inst.staffWhitelisted = inst.staffWhitelisted || new Set();
   let m = /: ([A-Za-z0-9_]{3,16}) joined the game/.exec(line);
@@ -1757,10 +1822,13 @@ route('POST', '/api/servers/:id/staff-join', async (req, res, p) => {
   const name = req.user.mcName;
   if (!name || !mcName.test(name)) throw httpError(400, 'Set your Minecraft name first (Account → Minecraft name).');
   if (!supportsStaffFeatures(inst)) throw httpError(400, 'Staff joining works on Minecraft servers 1.13 and newer (not proxies).');
-  inst.staffWhitelisted = inst.staffWhitelisted || new Set();
-  inst.write(`pardon ${name}`);
-  inst.write(`whitelist add ${name}`);
-  inst.staffWhitelisted.add(name.toLowerCase());
+  if (!inst.staffPluginLoaded) {
+    // Without the plugin (Vanilla, Fabric), let them through the whitelist and any ban with commands.
+    inst.staffWhitelisted = inst.staffWhitelisted || new Set();
+    inst.write(`pardon ${name}`);
+    inst.write(`whitelist add ${name}`);
+    inst.staffWhitelisted.add(name.toLowerCase());
+  }
   audit(req, `joined the server "${inst.cfg.name}" in Minecraft as staff (${name})`, inst);
   return { ok: true, address: inst.toJSON().publicAddress, name, onlineMode: inst.onlineMode !== false };
 }, { perm: 'console.access' });

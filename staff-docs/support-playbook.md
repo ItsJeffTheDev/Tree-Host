@@ -93,8 +93,12 @@ Set your Minecraft name in **Account** first. Then open the server → **🎮 Jo
   server.**
 - You wear a gold **✔ STAFF** badge before your name in chat and in the player list (hover over it in chat: *Official
   Tree Host Staff*).
-- If someone bans you, the ban is undone at once. Minecraft can't stop a kick, but everyone is asked not to kick staff,
-  and you can join again straight away.
+- **Paper, Spigot, Purpur, Folia and CraftBukkit** servers have the **Tree Host staff plugin** (put on every customer
+  server automatically; customers can't remove or turn it off, and it comes back if deleted). It lets you in past the
+  whitelist, a ban or a full server, refuses **kick and ban** commands aimed at you (including Essentials, LiteBans and
+  AdvancedBan), undoes bans, and shows the badges.
+- **Vanilla and Fabric** servers can't run plugins: there, bans on you are undone and everyone is asked not to kick
+  staff, but a kick itself can't be stopped. You can join again straight away.
 - This only works on **online-mode** servers from Minecraft **1.13** up (not proxies): that's how we know the name is
   really yours.
 

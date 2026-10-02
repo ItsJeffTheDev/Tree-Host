@@ -798,6 +798,7 @@ async function loadPlugins() {
           <tr class="${p.enabled ? '' : 'disabled'}">
             <td>
               <div class="p-name">${esc(p.name || p.file.replace(/\.jar(\.disabled)?$/i, ''))}
+                ${p.locked ? '<span class="badge lifetime-badge" title="Required by Tree Host on every server: lets official Tree Host staff help you">🔒 Required by Tree Host</span>' : ''}
                 ${p.watched ? '<span class="badge blue" title="Deployed automatically from your build folder">auto</span>' : ''}
                 ${p.format === 'paper-plugin.yml' ? '<span class="badge">paper-plugin</span>' : ''}
                 ${p.invalid ? '<span class="badge red">invalid jar</span>' : ''}
@@ -809,7 +810,9 @@ async function loadPlugins() {
             <td class="small muted">${esc(p.file)}</td>
             <td class="small muted">${fmtSize(p.size)}</td>
             <td class="actions-cell">${
-              can('plugins', s)
+              p.locked
+                ? '<span class="muted small">Can\'t be removed</span>'
+                : can('plugins', s)
                 ? `<button class="btn sm" data-ptoggle="${esc(p.file)}">${p.enabled ? 'Disable' : 'Enable'}</button>
               <button class="btn sm danger" data-pdelete="${esc(p.file)}">Delete</button>`
                 : ''
