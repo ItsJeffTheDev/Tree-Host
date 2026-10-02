@@ -14,3 +14,6 @@ promo/
 .env
 *.env
 !*.env.example
+
+# Built staging site (node tools/build-staging.js)
+/staging/

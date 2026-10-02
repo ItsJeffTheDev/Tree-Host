@@ -55,6 +55,8 @@
           <label class="d-field"><span>Message <span class="muted">(optional)</span></span>
             <input type="text" id="d-message" maxlength="140" placeholder="Keep it up!"></label>
           <label class="d-check"><input type="checkbox" id="d-listed" checked> Show my name and message on this page</label>
+          <p class="muted" id="via-link" hidden style="margin:0">Donations go through Stripe's secure donation page, where you choose the amount.
+            Thank you for helping Tree Host get to launch!</p>
           <div class="d-error" id="d-error" hidden></div>
           <button class="btn-cta block" id="d-go">Donate</button>
           <p class="small muted d-fine">One payment through Stripe; it doesn't renew. Tree Host is a business, so donations aren't
@@ -141,6 +143,15 @@
           <div><b>${esc(s.name)}</b>${s.message ? `<p>${esc(s.message)}</p>` : ''}<span class="small muted">${new Date(s.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
         </div>`).join('');
       label();
+      // Without payments on this site, the button opens the Stripe donation page, where the amount is chosen:
+      // the amount buttons, name and message would be ignored, so they're hidden.
+      const viaLink = d.mode === 'off' && !!d.fallbackUrl;
+      ['#amounts', '#custom-wrap', '#d-name', '#d-message', '#d-listed'].forEach((sel) => {
+        const el = $(sel).closest('.d-field, .d-check') || $(sel);
+        el.hidden = viaLink || (sel === '#custom-wrap' && el.hidden);
+        if (viaLink) el.style.display = 'none';
+      });
+      $('#via-link').hidden = !viaLink;
       renderReceipt(d);
     };
 
