@@ -473,6 +473,25 @@ function expect(label, got, want) {
   const cmp2 = (await call('anon', 'GET', '/api/compare')).data.competitors;
   expect('comparison saved, unsafe link and bad sizes dropped', `${cmp2.checkedAt}|${cmp2.hosts[0].url}|${JSON.stringify(cmp2.hosts[0].prices)}`, '2026-11-01||{"4096":1234}');
 
+  // search engines and AI assistants
+  const raw = async (p) => {
+    const r = await fetch(B + p);
+    return { status: r.status, text: await r.text(), robots: r.headers.get('x-robots-tag') };
+  };
+  const robots = await raw('/robots.txt');
+  expect('robots.txt welcomes crawlers and AI, keeps accounts out', robots.status === 200 && /User-agent: \*\s+Allow: \//.test(robots.text) && robots.text.includes('GPTBot') && robots.text.includes('ClaudeBot') && robots.text.includes('Disallow: /dashboard') && robots.text.includes('Sitemap:'), true);
+  const sitemap = await raw('/sitemap.xml');
+  expect('sitemap lists the public pages and guides', sitemap.text.includes(`<loc>${B}/pricing</loc>`) && sitemap.text.includes('help.html?doc=billing') && !sitemap.text.includes('dashboard'), true);
+  const llms = await raw('/llms.txt');
+  expect('llms.txt has the plans and links to the guides', /Sapling: \$\d/.test(llms.text) && llms.text.includes(`${B}/docs/billing.md`), true);
+  const pricingPage = (await raw('/pricing')).text;
+  const ld = JSON.parse(pricingPage.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
+  const product = ld['@graph'].find((x) => x['@type'] === 'Product');
+  expect('pricing page: one description, canonical and the plans as offers', `${(pricingPage.match(/name="description"/g) || []).length}|${pricingPage.includes(`rel="canonical" href="${B}/pricing"`)}|${product && product.offers.length > 0}`, '1|true|true');
+  const faqPage = (await raw('/support')).text;
+  expect('support page has the FAQ as structured data', faqPage.includes('"FAQPage"') && faqPage.includes('How do I join my server?'), true);
+  expect('the dashboard is kept out of search results', (await raw('/dashboard')).robots, 'noindex');
+
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);
   console.log('\nAudit log (newest first):');

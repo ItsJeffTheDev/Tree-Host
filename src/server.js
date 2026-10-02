@@ -3158,8 +3158,21 @@ const PAGES = {
   '/privacy': 'privacy.html',
 };
 
+const seo = require('./seo');
+const seoSite = () => ({ company: env('COMPANY', 'Tree Host'), supportEmail: EMAILS.support, discord: env('DISCORD_INVITE', '') });
+
 async function serveStatic(req, res, pathname) {
   pathname = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname;
+  // Search engines and AI assistants (the public website only)
+  if (HOSTED && ['/robots.txt', '/sitemap.xml', '/llms.txt'].includes(pathname)) {
+    const body =
+      pathname === '/robots.txt' ? seo.robotsTxt(PUBLIC_URL)
+        : pathname === '/sitemap.xml' ? seo.sitemapXml(PUBLIC_URL)
+          : seo.llmsTxt(PUBLIC_URL, { site: seoSite(), plans: billing.publicPlans() });
+    res.writeHead(200, { 'Content-Type': pathname.endsWith('.xml') ? 'application/xml; charset=utf-8' : 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
+    res.end(body);
+    return;
+  }
   // The homepage is the website; without hosting (local use) it is the dashboard.
   let rel = PAGES[pathname] || (pathname === '/' ? (HOSTED ? 'index.html' : 'dashboard.html') : decodeURIComponent(pathname.slice(1)));
   // Clean URLs for every page: /why serves why.html even without a PAGES entry.
@@ -3170,8 +3183,13 @@ async function serveStatic(req, res, pathname) {
     return;
   }
   try {
-    const data = await fsp.readFile(file);
+    let data = await fsp.readFile(file);
+    // Public pages get their search and link-preview tags; the dashboard is kept out of search results.
+    const seoPage = HOSTED && file.endsWith('.html') ? seo.pageFor(pathname === '' ? '/' : pathname) : null;
+    if (seoPage) data = Buffer.from(seo.injectSeo(data.toString('utf8'), { base: PUBLIC_URL, path: seoPage.path, site: seoSite(), plans: billing.publicPlans() }));
+    const noindex = file.endsWith('dashboard.html') || file.endsWith('404.html');
     res.writeHead(200, {
+      ...(noindex ? { 'X-Robots-Tag': 'noindex' } : {}),
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
       'Cache-Control': 'no-cache',
       'X-Frame-Options': 'DENY',

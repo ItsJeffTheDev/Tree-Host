@@ -3,12 +3,15 @@
 // Builds the staging website: only the public pages (home, menu and footer pages, legal pages, guides), as plain files
 // ready for Wasmer Edge (or any static host). No dashboard, no accounts, no servers.
 //
-//   node tools/build-staging.js [--from http://localhost:8766] [--out staging] [--discord https://discord.gg/...]
+//   node tools/build-staging.js [--url https://treehost.online] [--from http://localhost:8766] [--out staging] [--discord ...]
+//
+// --url is the address the staging site is published at (for search engines: canonical links, sitemap, llms.txt).
 //
 // The pages' data (plans, team, costs, price comparison) is copied from a running Tree Host (--from, default: the
 // test site from Start.bat), so start it first. Deploy with:  cd staging && wasmer deploy
 const fs = require('fs');
 const path = require('path');
+const seo = require('../src/seo');
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((out, a, i, all) => (a.startsWith('--') ? [...out, [a.slice(2), all[i + 1]]] : out), []),
@@ -21,6 +24,11 @@ const SITE = path.join(OUT, 'public');
 // Donations go through the existing Stripe payment link while the site is a preview.
 const DONATE_URL = args['donate-url'] || 'https://buy.stripe.com/00wcN7cfK3Jh9lEgEf0oM00';
 const DISCORD_DEFAULT = 'https://discord.gg/a37pbwajKd';
+const BASE = (args.url || 'https://treehost.online').replace(/\/$/, '');
+if (!/^https:\/\/[a-z0-9.-]+$/i.test(BASE)) {
+  console.error('--url must be the site address, like https://treehost.online');
+  process.exit(1);
+}
 
 // Clean URL -> page file. These are every page in the menu and the footer (plus the home page).
 const PAGES = {
@@ -75,20 +83,28 @@ function write(rel, data) {
 
   // ----- pages: /features is features/index.html, so clean addresses work on any static host -----
   const banner = `<script>window.TH_STAGING_DISCORD = ${JSON.stringify(discord)};</script>\n  <script src="/staging.js" defer></script>\n</body>`;
-  const prep = (html) =>
-    html
+  // Search engines and AI assistants may index the preview (every page says clearly that it's a preview).
+  const seoSite = { company: site.company, supportEmail: site.supportEmail, discord };
+  const prep = (html, pagePath) =>
+    seo
+      .injectSeo(html, { base: BASE, path: pagePath, site: seoSite, plans, prelaunch: true, slash: true })
       .replace(/<html lang="en">/, '<html lang="en" data-staging="1">')
-      .replace(/<title>([^<]*)<\/title>/, (m, t) => `<title>${t} (preview)</title>\n  <meta name="robots" content="noindex">`)
       .replace(/<\/body>/, banner);
   for (const [slug, file] of Object.entries(PAGES)) {
-    const html = prep(fs.readFileSync(path.join(PUBLIC, file), 'utf8'));
+    const html = prep(fs.readFileSync(path.join(PUBLIC, file), 'utf8'), slug ? `/${slug}` : '/');
     write(slug ? `${slug}/index.html` : 'index.html', html);
   }
-  for (const file of EXTRA_PAGES) write(file, prep(fs.readFileSync(path.join(PUBLIC, file), 'utf8')));
+  for (const file of EXTRA_PAGES) {
+    let html = prep(fs.readFileSync(path.join(PUBLIC, file), 'utf8'), `/${file}`);
+    if (file === '404.html') html = html.replace('</head>', '  <meta name="robots" content="noindex">\n</head>');
+    write(file, html);
+  }
 
   for (const a of ASSETS) fs.cpSync(path.join(PUBLIC, a), path.join(SITE, a), { recursive: true });
   fs.copyFileSync(path.join(__dirname, 'staging', 'staging.js'), path.join(SITE, 'staging.js'));
-  write('robots.txt', 'User-agent: *\nDisallow: /\n');
+  write('robots.txt', seo.robotsTxt(BASE));
+  write('sitemap.xml', seo.sitemapXml(BASE, { slash: true }));
+  write('llms.txt', seo.llmsTxt(BASE, { site: seoSite, plans, prelaunch: true, slash: true }));
 
   // Every local file a page points at must be there.
   const missing = new Set();
@@ -150,6 +166,7 @@ Try it on your PC first with \`wasmer run . --net\` and open http://localhost:80
   console.log(`Built ${count} pages in ${path.relative(ROOT, OUT) || OUT}${path.sep}`);
   console.log(`  Data copied: ${plans.plans.length} plans, ${team.members.length} team member(s), ${donations.costs.items.length} costs, ${compare.competitors.hosts.length} hosts to compare.`);
   if (missing.size) console.log(`  Warning, these files are linked but missing: ${[...missing].join(', ')}`);
+  console.log(`  Search: canonical links, sitemap and llms.txt use ${BASE} (change it with --url).`);
   console.log('  Deploy: cd staging && wasmer deploy');
 })().catch((e) => {
   console.error(e.message);
