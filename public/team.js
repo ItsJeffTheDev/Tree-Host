@@ -84,6 +84,44 @@ const FIREBASE_ERRORS = {
 };
 const fbMessage = (e) => FIREBASE_ERRORS[e && e.code] || (e && e.message) || String(e);
 
+/**
+ * Accounts whose email isn't verified yet: shows a reminder, and notices the moment the link in the email is clicked
+ * (on load and whenever this tab gets focus again), so anything tied to the email (like the Owner role) applies
+ * without signing out and in again.
+ */
+async function checkEmailVerified() {
+  const u = state.me?.user;
+  if (!u || !u.firebase || u.emailVerified) return;
+  const fb = await firebaseAuth().catch(() => null);
+  if (!fb) return;
+  await fb.auth.authStateReady();
+  const cur = fb.auth.currentUser;
+  if (!cur) return;
+  const refresh = async () => {
+    await cur.reload();
+    if (!cur.emailVerified) return false;
+    await api('POST', '/api/auth/firebase', { idToken: await cur.getIdToken(true) });
+    location.reload();
+    return true;
+  };
+  if (await refresh().catch(() => false)) return;
+  window.addEventListener('focus', () => refresh().catch(() => {}));
+  const bar = document.createElement('div');
+  bar.className = 'warn-box';
+  bar.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:60;width:min(600px,calc(100vw - 32px));box-shadow:0 8px 30px rgba(0,0,0,.4)';
+  bar.innerHTML = `<b>Verify your email.</b> We sent a link to <b>${esc(u.email)}</b> (check spam too).
+    ${u.ownerPending ? 'This is an <b>Owner</b> email: you get the Owner role as soon as it is verified.' : ''}
+    <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn sm primary" data-v="done">I've clicked the link</button>
+    <button class="btn sm" data-v="send">Send the link again</button><button class="btn sm" data-v="hide">Later</button></div>`;
+  document.body.appendChild(bar);
+  bar.addEventListener('click', (e) => {
+    const v = e.target.dataset && e.target.dataset.v;
+    if (v === 'hide') bar.remove();
+    if (v === 'send') fb.sendEmailVerification(cur).then(() => toast(`Sent to ${u.email}`), (err) => toast(fbMessage(err), 'error'));
+    if (v === 'done') refresh().then((ok) => ok || toast("It's not verified yet: open the link in the email first.", 'error'), (err) => toast(err.message, 'error'));
+  });
+}
+
 /** Firebase sign-in screens: sign in, sign up, Google, forgot password and support-staff invites. */
 function showFirebaseAuth(forceMode) {
   const params = new URLSearchParams(location.search);

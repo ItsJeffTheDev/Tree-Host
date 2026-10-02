@@ -143,6 +143,9 @@ class Auth {
       createdAt: u.createdAt,
       disabled: !!u.disabled,
       lastLogin: u.lastLogin || null,
+      emailVerified: u.firebaseUid ? !!u.emailVerified : true,
+      // An Owner email that isn't verified yet: it becomes Owner as soon as the email is verified.
+      ownerPending: !!u.email && this.adminEmails.has(u.email) && u.role !== 'owner',
     };
   }
 
@@ -410,6 +413,7 @@ class Auth {
       if (user.disabled) throw httpError(403, 'This account has been suspended. Contact support.', 'DISABLED');
       if (id.email && user.email !== id.email) user.email = id.email;
       if (ownerEmail && user.role !== 'owner') user.role = 'owner';
+      user.emailVerified = !!(id.emailVerified || id.provider === 'google.com');
       user.lastLogin = Date.now();
       await this.save();
       return { user, token: await this.createSession(user) };
@@ -442,6 +446,7 @@ class Auth {
       username: String(body.username),
       email: id.email,
       firebaseUid: id.uid,
+      emailVerified: !!(id.emailVerified || id.provider === 'google.com'),
       role,
       mcName,
       tokens: [],

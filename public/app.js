@@ -1591,6 +1591,7 @@ async function init() {
     showAuth();
     return;
   }
+  checkEmailVerified();
   if (location.pathname.replace(/\/$/, '') === '/admin') {
     initConsole();
     return;
