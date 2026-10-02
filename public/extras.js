@@ -360,3 +360,85 @@ async function renderNotifications(root) {
     c.addEventListener('change', () => attempt(() => api('PUT', '/api/team/notifications', { kinds: { [c.dataset.kind]: c.checked } }))),
   );
 }
+
+// ---------- modpack browser (Modrinth, Fabric) ----------
+
+async function openModpacks() {
+  const b = await api('GET', '/api/billing').catch((e) => (toast(e.message, 'error'), null));
+  if (!b) return;
+  const plans = b.subscriptions.filter((x) => x.usable && planHasRoom(x));
+  if (!plans.length) return openPlans();
+  const { root, close } = openModal(`
+    <h2>${ic('box')} Install a modpack</h2>
+    <p class="hint" style="margin-top:-8px">Fabric modpacks from Modrinth. Tree Host sets up the right Minecraft version and loader and installs every mod for you.</p>
+    <input type="search" id="mp-q" placeholder="Search modpacks, e.g. Fabulously Optimized, Cobblemon, Better MC..." autocomplete="off">
+    <div id="mp-results" class="stack" style="gap:8px;margin-top:10px"><div class="muted">Loading popular modpacks...</div></div>
+    <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+  const box = $('#mp-results', root);
+  const search = async () => {
+    const q = $('#mp-q', root).value.trim();
+    const hits = await api('GET', `/api/modpacks/search?q=${encodeURIComponent(q)}`).catch((e) => (box.innerHTML = `<div class="warn-box">${esc(e.message)}</div>`, null));
+    if (!hits) return;
+    box.innerHTML = hits.length
+      ? hits.map((h) => `<div class="mp-hit">
+          ${h.icon ? `<img src="${esc(h.icon)}" alt="" loading="lazy">` : `<div class="mr-noicon">${ic('box')}</div>`}
+          <div class="mp-info"><b>${esc(h.title)}</b> <span class="muted small">by ${esc(h.author)} · ${ic('download')} ${fmtCount(h.downloads)}${h.gameVersions.length ? ` · ${esc(h.gameVersions.join(', '))}` : ''}</span>
+            <div class="small muted">${esc(h.description)}</div></div>
+          <button class="btn sm primary" data-pick="${esc(h.id)}" data-title="${esc(h.title)}">Choose</button>
+        </div>`).join('')
+      : '<p class="muted">No Fabric modpacks found.</p>';
+    $$('[data-pick]', box).forEach((btn) => btn.addEventListener('click', () => {
+      close();
+      pickModpackVersion(btn.dataset.pick, btn.dataset.title, plans);
+    }));
+  };
+  let t;
+  $('#mp-q', root).addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(search, 300);
+  });
+  search();
+}
+
+async function pickModpackVersion(projectId, title, plans) {
+  const versions = await api('GET', `/api/modpacks/${encodeURIComponent(projectId)}/versions`).catch((e) => (toast(e.message, 'error'), null));
+  if (!versions) return;
+  if (!versions.length) return toast(`${title} has no Fabric versions Tree Host can install.`, 'error');
+  const { root, close } = openModal(`
+    <h2>${ic('box')} ${esc(title)}</h2>
+    <form id="mp-form" class="stack">
+      <div class="grid2">
+        <label class="field">Version <select name="version">${versions.map((v) => `<option value="${esc(v.id)}">${esc(v.number)} (Minecraft ${esc(v.gameVersions.join(', '))})${v.type !== 'release' ? ` · ${esc(v.type)}` : ''}</option>`).join('')}</select></label>
+        <label class="field">Server name <input type="text" name="name" maxlength="40" value="${esc(title).slice(0, 40)}"></label>
+      </div>
+      <label class="field">Plan <select name="plan">${plans.map((x) => `<option value="${esc(x.id)}" data-ram="${x.ramMb}">${esc(x.planName)}: ${fmtMem(x.ramMb)}${x.serverCount ? ` · ${x.serverCount} server${x.serverCount === 1 ? '' : 's'} already` : ''}</option>`).join('')}</select></label>
+      <div class="warn-box hidden" id="mp-ram">Modpacks usually need at least 4 GB of memory. This plan may be too small.</div>
+      <label class="check"><input type="checkbox" name="eula" required> <span>I agree to the <a href="https://aka.ms/MinecraftEULA" target="_blank" rel="noopener">Minecraft EULA</a></span></label>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" id="mp-go">${ic('download')} Install modpack</button></div>
+    </form>`);
+  const form = $('#mp-form', root);
+  const ramCheck = () => $('#mp-ram', root).classList.toggle('hidden', Number(form.plan.selectedOptions[0].dataset.ram) >= 4096);
+  form.plan.addEventListener('change', ramCheck);
+  ramCheck();
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    attempt(async () => {
+      const go = $('#mp-go', root);
+      go.disabled = true;
+      go.textContent = 'Reading the modpack...';
+      try {
+        const s = await api('POST', '/api/servers', { modpack: { versionId: form.version.value }, name: form.name.value, subscriptionId: form.plan.value, eula: form.eula.checked, onlineMode: true });
+        close();
+        toast(`Creating ${s.name}: the mods download in the background (watch the console).`);
+        state.servers.set(s.id, s);
+        state.tab = 'console';
+        select(s.id);
+      } finally {
+        if (document.body.contains(go)) {
+          go.disabled = false;
+          go.innerHTML = `${ic('download')} Install modpack`;
+        }
+      }
+    });
+  });
+}

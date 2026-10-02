@@ -130,6 +130,12 @@ Memory, CPU, disk and the port come from your plan and can't be changed in Setti
 
 ---
 
+## Modpacks
+
+**+ New server → Install a modpack instead** lets you search Fabric modpacks from Modrinth (popular ones show first).
+Pick one, choose the version and your plan, and Tree Host creates a Fabric server with the right Minecraft version and
+loader and downloads every mod for you (watch it in the console). Modpacks usually need at least 4 GB of memory.
+
 ## Share your server with friends
 
 **Settings → People with access** → type a friend's Tree Host username or email and pick a role:

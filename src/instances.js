@@ -324,6 +324,7 @@ class Instance extends EventEmitter {
       moderation: c.moderation || null,
       icon: c.iconAt || null,
       motd: c.motd || null,
+      modpack: c.modpack || null,
       diagnosis: this.diagnosis || null,
       bedrock: !!c.bedrock,
       sleep: c.sleep || null,

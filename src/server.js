@@ -1593,6 +1593,13 @@ route('POST', '/api/servers', async (req) => {
   const space = TEAM ? 'customer' : undefined;
   let extra = {};
   let sub = null;
+  // From a modpack: the pack decides the type (Fabric), Minecraft version and loader.
+  let pack = null;
+  if (body.modpack && body.modpack.versionId) {
+    pack = await readModpack(String(body.modpack.versionId));
+    Object.assign(body, { type: 'fabric', version: pack.minecraft, build: pack.loader });
+    if (!body.name) body.name = pack.title;
+  }
   if (space === 'customer') {
     // A customer server uses one paid plan: its memory, CPU and disk come from the plan.
     if (!body.eula) throw httpError(400, 'Please accept the Minecraft EULA.');
@@ -1614,6 +1621,11 @@ route('POST', '/api/servers', async (req) => {
   const inst = await manager.create(body, { space, owner, createdBy: req.user.id, extra });
   if (sub) billing.attachServer(sub.id, sub.userId, inst.cfg.id);
   await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
+  if (pack) {
+    inst.cfg.modpack = { title: pack.title, slug: pack.slug, version: pack.versionNumber, versionId: pack.versionId, icon: pack.icon };
+    manager.save();
+    installModpackFiles(inst, pack).catch((e) => inst.sysLog(`Modpack install failed: ${e.message}`));
+  }
   inst.logActivity('server', who(req), `created ${inst.provider.label} ${inst.cfg.version} server "${inst.cfg.name}"`);
   return inst.toJSON();
 });
@@ -2352,6 +2364,102 @@ route('POST', '/api/servers/:id/world', async (req, res, p) => {
     await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+// ---------- modpacks from Modrinth (Fabric), installed in one click ----------
+// A .mrpack is a zip with modrinth.index.json (Minecraft + loader versions, and the mod files to download) plus
+// overrides/ and server-overrides/ folders (configs). We make a Fabric server of the right version, download every
+// file the server needs (checked against its SHA-1), and copy the overrides in.
+
+const { readZipEntries } = require('./util');
+const MODRINTH = 'https://api.modrinth.com/v2';
+const MR_HEADERS = { 'User-Agent': 'TreeHost/1.0 (treehost.online)' };
+// Hosts the .mrpack format allows files to come from.
+const PACK_HOSTS = ['cdn.modrinth.com', 'github.com', 'raw.githubusercontent.com', 'gitlab.com', 'objects.githubusercontent.com'];
+
+async function mrJson(url) {
+  const res = await fetch(url, { headers: MR_HEADERS, signal: AbortSignal.timeout(20000) });
+  if (!res.ok) throw httpError(502, `Modrinth didn't answer (${res.status}). Try again in a moment.`);
+  return res.json();
+}
+
+route('GET', '/api/modpacks/search', async (req, res, p, q) => {
+  const facets = JSON.stringify([['project_type:modpack'], ['categories:fabric'], ['server_side:required', 'server_side:optional']]);
+  const d = await mrJson(`${MODRINTH}/search?limit=20&index=${q.get('q') ? 'relevance' : 'downloads'}&query=${encodeURIComponent(q.get('q') || '')}&facets=${encodeURIComponent(facets)}`);
+  return d.hits.map((h) => ({
+    id: h.project_id, slug: h.slug, title: h.title, description: h.description, icon: h.icon_url || null, author: h.author,
+    downloads: h.downloads, gameVersions: (h.versions || []).slice(-3).reverse(),
+  }));
+});
+
+route('GET', '/api/modpacks/:id/versions', async (req, res, p) => {
+  const list = await mrJson(`${MODRINTH}/project/${encodeURIComponent(p.id)}/version?loaders=${encodeURIComponent('["fabric"]')}`);
+  // Only builds that are really Fabric (some packs tag NeoForge/Forge/Quilt builds as Fabric too).
+  const fabricOnly = list.filter((v) => (v.loaders || []).includes('fabric') && !(v.loaders || []).some((l) => /forge|quilt/i.test(l)) && !/neo ?forge|\bforge\b|quilt/i.test(`${v.name} ${v.version_number}`));
+  return fabricOnly.slice(0, 30).map((v) => ({ id: v.id, name: v.name, number: v.version_number, gameVersions: v.game_versions, published: v.date_published, type: v.version_type }));
+});
+
+/** Downloads and reads a modpack version: what to create, and the files to fetch. */
+async function readModpack(versionId) {
+  const v = await mrJson(`${MODRINTH}/version/${encodeURIComponent(versionId)}`);
+  const file = (v.files || []).find((f) => f.primary && f.filename.endsWith('.mrpack')) || (v.files || []).find((f) => f.filename.endsWith('.mrpack'));
+  if (!file) throw httpError(400, "That modpack version has no .mrpack file, so it can't be installed automatically.");
+  const project = await mrJson(`${MODRINTH}/project/${encodeURIComponent(v.project_id)}`);
+  const tmp = path.join(DATA, 'cache', `modpack-${crypto.randomBytes(5).toString('hex')}.mrpack`);
+  await fsp.mkdir(path.dirname(tmp), { recursive: true });
+  const res = await fetch(file.url, { headers: MR_HEADERS, signal: AbortSignal.timeout(300000) });
+  if (!res.ok) throw httpError(502, `Could not download the modpack (${res.status}).`);
+  await fsp.writeFile(tmp, Buffer.from(await res.arrayBuffer()));
+  const entries = await readZipEntries(tmp, ['modrinth.index.json']);
+  if (!entries['modrinth.index.json']) throw httpError(400, "That file isn't a Modrinth modpack.");
+  const index = JSON.parse(entries['modrinth.index.json'].toString('utf8'));
+  const deps = index.dependencies || {};
+  if (!deps['fabric-loader']) throw httpError(400, `This modpack uses ${Object.keys(deps).filter((k) => k !== 'minecraft').join(', ') || 'another loader'}. Tree Host installs Fabric modpacks for now.`);
+  return { tmp, index, minecraft: deps.minecraft, loader: deps['fabric-loader'], title: project.title, slug: project.slug, icon: project.icon_url || null, versionNumber: v.version_number, versionId: v.id };
+}
+
+/** Puts a modpack's files on a server (runs in the background after the server is created). */
+async function installModpackFiles(inst, pack) {
+  const files = (pack.index.files || []).filter((f) => !f.env || f.env.server !== 'unsupported');
+  inst.sysLog(`Installing the modpack ${pack.title} ${pack.versionNumber}: ${files.length} files...`);
+  let done = 0;
+  let total = 0;
+  for (const f of files) {
+    const dest = path.resolve(inst.dir, f.path);
+    if (!dest.startsWith(path.resolve(inst.dir) + path.sep)) throw new Error(`Unsafe path in the modpack: ${f.path}`);
+    const url = (f.downloads || []).find((u) => {
+      try {
+        return PACK_HOSTS.includes(new URL(u).hostname);
+      } catch {
+        return false;
+      }
+    });
+    if (!url) {
+      inst.sysLog(`Skipped ${f.path}: it isn't hosted on a trusted site.`);
+      continue;
+    }
+    const r = await fetch(url, { headers: MR_HEADERS, signal: AbortSignal.timeout(180000) });
+    if (!r.ok) throw new Error(`Could not download ${path.basename(f.path)} (${r.status}).`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (f.hashes && f.hashes.sha1 && crypto.createHash('sha1').update(buf).digest('hex') !== f.hashes.sha1) throw new Error(`${path.basename(f.path)} didn't match its checksum.`);
+    total += buf.length;
+    if (total > 4 * 1024 ** 3) throw new Error('The modpack is too big (over 4 GB).');
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    await fsp.writeFile(dest, buf);
+    done++;
+    if (done % 10 === 0 || done === files.length) inst.sysLog(`Modpack: ${done} of ${files.length} files`);
+  }
+  // Configs and other files the pack ships (overrides/ for everyone, server-overrides/ for servers).
+  const tmpDir = `${pack.tmp}-x`;
+  await extractZip(pack.tmp, tmpDir);
+  for (const sub of ['overrides', 'server-overrides']) {
+    const from = path.join(tmpDir, sub);
+    if (await fsp.stat(from).then(() => true, () => false)) await fsp.cp(from, inst.dir, { recursive: true, force: true });
+  }
+  await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  await fsp.rm(pack.tmp, { force: true }).catch(() => {});
+  inst.sysLog(`Modpack ${pack.title} installed (${done} files). Press Start to play.`);
+  inst.logActivity('deploy', 'Tree Host', `installed the modpack ${pack.title} ${pack.versionNumber}`);
+}
 
 // ---------- Bedrock crossplay: Geyser + Floodgate, installed in one click ----------
 

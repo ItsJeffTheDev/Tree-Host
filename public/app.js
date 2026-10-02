@@ -1592,7 +1592,7 @@ function sleepCardHtml(s) {
     <h3>${ic('moon')} Sleep when empty <span class="muted small" style="font-weight:400">(start again when someone joins)</span></h3>
     <label class="check"><input type="checkbox" name="sleepOn" ${sl.enabled ? 'checked' : ''} ${edit ? '' : 'disabled'}>
       <span>When nobody has been online for <select name="sleepMin" style="width:auto" ${edit ? '' : 'disabled'}>${[5, 10, 15, 30, 60, 120].map((m) => `<option value="${m}" ${sl.minutes === m ? 'selected' : ''}>${m < 60 ? `${m} minutes` : `${m / 60} hour${m === 60 ? '' : 's'}`}</option>`).join('')}</select>, the server goes to sleep.</span></label>
-    <p class="hint" style="margin:0">While it sleeps, the server list shows <b>${ic('moon')} Sleeping · Join to wake it up!</b> The first player to join wakes it (it takes about 30 seconds), then everyone joins normally. Your world and settings stay exactly as they are.</p>
+    <p class="hint" style="margin:0">While it sleeps, the server list shows <b>Zz Sleeping · Join to wake it up!</b> The first player to join wakes it (it takes about 30 seconds), then everyone joins normally. Your world and settings stay exactly as they are.</p>
     ${s.sleeping ? '<div class="small"><span class="badge blue">' + ic('moon') + ' Sleeping now</span> Press Start, or just join, to wake it.</div>' : ''}
   </div>`;
 }
@@ -2201,6 +2201,7 @@ async function openNewServer() {
   root.innerHTML = `
     <div class="modal-bg" id="modal-bg">
       <form class="modal" id="new-form" autocomplete="off">
+        ${forCustomer ? `<button type="button" class="btn sm" id="nv-modpack" style="float:right">${ic('box')} Install a modpack instead</button>` : ''}
         <h2>${forCustomer ? 'Create your server' : isTeam() ? (state.space === 'solo' ? 'New solo server <span class="muted small" style="font-weight:400">(private to you)</span>' : 'New team server <span class="muted small" style="font-weight:400">(shared with everyone)</span>') : 'New test server'}</h2>
         <div class="section-title">Server software</div>
         <div class="type-grid">
@@ -2276,6 +2277,10 @@ async function openNewServer() {
   document.addEventListener('keydown', onKey);
   $('#modal-bg').addEventListener('mousedown', (e) => e.target.id === 'modal-bg' && close());
   $('#nv-cancel').addEventListener('click', close);
+  if ($('#nv-modpack')) $('#nv-modpack').addEventListener('click', () => {
+    close();
+    openModpacks();
+  });
 
   const autoName = () => {
     if (nameTouched) return;

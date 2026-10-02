@@ -518,3 +518,9 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .ic.xl { width: 2.4em; height: 2.4em; }
 .ic.accent { color: var(--accent); }
 .ic.gold { color: #e8c27a; }
+
+/* ---------- modpack browser ---------- */
+.mp-hit { display: flex; gap: 12px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.mp-hit img, .mp-hit .mr-noicon { width: 48px; height: 48px; border-radius: 10px; flex: 0 0 48px; object-fit: cover; }
+.mp-info { flex: 1; min-width: 0; }
+.mp-info .small { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
