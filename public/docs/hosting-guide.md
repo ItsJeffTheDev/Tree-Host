@@ -231,8 +231,21 @@ Password reset emails come from Firebase. Tree Host itself only emails customers
 3. **API keys → Create** and put it in `RESEND_API_KEY`. Keep `MAIL_FROM=Tree Host <no-reply@treehost.online>`.
 4. Restart Tree Host.
 
-> **Tip:** for a support inbox like `support@treehost.online`, use your domain seller's email forwarding or a mail
-> service, and put the address in `TREEHOST_SUPPORT_EMAIL` so it appears on the website.
+> **Important:** your mailboxes (below) already use the domain's **MX** records. Resend's records go on a
+> `send` subdomain, so add them **next to** your existing records; never replace the main MX records, or your
+> inboxes stop receiving mail.
+
+### Tree Host's inboxes
+
+| Address | Used for | Setting |
+|---|---|---|
+| `support@treehost.online` | Website contact, Terms/Privacy, Help, Reply-To on general emails | `TREEHOST_SUPPORT_EMAIL` |
+| `billing@treehost.online` | Billing questions on the website, Reply-To on payment emails | `TREEHOST_BILLING_EMAIL` |
+| `promotion@treehost.online` | Creators and partnerships, Reply-To on free-server code emails | `TREEHOST_PROMO_EMAIL` |
+| `daniel@treehost.online` | The Owner account (sign in with it to get the Owner role) | `TREEHOST_ADMIN_EMAILS` |
+
+These are the defaults, so they work without changing anything. Emails are sent **from** `no-reply@treehost.online`
+(`MAIL_FROM`); replies go to the right inbox automatically.
 
 ---
 

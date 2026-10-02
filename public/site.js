@@ -78,10 +78,13 @@
     .then((r) => r.json())
     .then((site) => {
       document.querySelectorAll('[data-company]').forEach((el) => (el.textContent = site.company));
+      // data-email="" (support), "billing" or "promo": fills in the right inbox
+      const inbox = { '': site.supportEmail, support: site.supportEmail, billing: site.billingEmail, promo: site.promoEmail };
       document.querySelectorAll('[data-email]').forEach((el) => {
-        if (site.supportEmail) {
-          el.textContent = site.supportEmail;
-          if (el.tagName === 'A') el.href = `mailto:${site.supportEmail}`;
+        const addr = inbox[el.dataset.email] || site.supportEmail;
+        if (addr) {
+          el.textContent = addr;
+          if (el.tagName === 'A') el.href = `mailto:${addr}`;
         }
       });
       if (site.discord) {

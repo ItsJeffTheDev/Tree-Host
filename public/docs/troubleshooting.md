@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Common problems and how to fix them. Still stuck? Contact support with your server's name and what you see in the console.
+Common problems and how to fix them. Still stuck? Email [support@treehost.online](mailto:support@treehost.online) with your server's name and what you see in the console.
 
 ---
 
@@ -53,7 +53,7 @@ Minecraft version. Plugins from **🔎 Browse plugins** are already filtered for
 ## Account and billing
 
 **I forgot my password**
-Click **Forgot your password?** on the sign-in page and follow the email. No email? Check spam, then contact support.
+Click **Forgot your password?** on the sign-in page and follow the email. No email? Check spam, then email [support@treehost.online](mailto:support@treehost.online).
 
 **I paid but my plan isn't active**
 It usually takes a few seconds. Refresh the page. If it still says nothing after a few minutes, contact support with

@@ -35,6 +35,12 @@ const NO_OPEN = process.argv.includes('--no-open') || HOSTED;
 const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
 const SESSION_COOKIE = 'th_session';
 const MAX_CUSTOMER_BACKUPS = Number(env('MAX_BACKUPS')) || 5;
+// Inboxes shown on the website and used as Reply-To on emails.
+const EMAILS = {
+  support: env('SUPPORT_EMAIL', 'support@treehost.online'),
+  billing: env('BILLING_EMAIL', 'billing@treehost.online'),
+  promo: env('PROMO_EMAIL', 'promotion@treehost.online'),
+};
 // In personal mode everyone who can reach the dashboard is the PC's owner.
 const LOCAL_ADMIN = { id: 'local', username: 'you', role: 'owner', local: true };
 
@@ -106,7 +112,8 @@ billing.hooks.deleteServer = async (id) => {
 billing.hooks.userById = (id) => auth.userById(id);
 billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || 'A customer', text);
 billing.hooks.email = (user, subject, paragraphs) =>
-  mail.send(user.email, subject, paragraphs, PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null);
+  mail.send(user.email, subject, [...paragraphs, `Questions about billing? Just reply to this email or write to ${EMAILS.billing}.`],
+    PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null, { replyTo: EMAILS.billing });
 
 // ---------- tiny router ----------
 
@@ -644,7 +651,9 @@ route(
   '/api/site',
   () => ({
     company: env('COMPANY', 'Tree Host'),
-    supportEmail: env('SUPPORT_EMAIL', ''),
+    supportEmail: EMAILS.support,
+    billingEmail: EMAILS.billing,
+    promoEmail: EMAILS.promo,
     jurisdiction: env('JURISDICTION', ''),
     discord: env('DISCORD_INVITE', ''),
     location: env('LOCATION', ''),
@@ -700,7 +709,7 @@ route('POST', '/api/admin/promos', async (req) => {
     await mail.send(target.email, 'A free Tree Host server for you', [
       `Hi ${target.username}, you've been given a free ${c.planName} plan on Tree Host${c.days ? ` for ${c.length}` : ' for life'}!`,
       `Your code is ${c.code}. It only works for your account: open Billing, choose "Have a code?", and paste it.`,
-    ], PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null).then(() => (c.emailed = true)).catch(() => (c.emailed = false));
+    ], PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null, { replyTo: EMAILS.promo }).then(() => (c.emailed = true)).catch(() => (c.emailed = false));
   }
   return c;
 }, { perm: 'promos.manage' });

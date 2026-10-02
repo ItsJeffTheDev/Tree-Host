@@ -25,6 +25,8 @@ if exist "%~dp0test-site.env" (
 )
 
 set "TREEHOST_PUBLIC_URL=http://localhost:8766"
+rem The Owner account (sign in with this email, verified, to get the Owner role)
+if not defined TREEHOST_ADMIN_EMAILS set "TREEHOST_ADMIN_EMAILS=daniel@treehost.online"
 set "TREEHOST_DATA=%~dp0test-site-data"
 if not defined TREEHOST_GAME_HOST set "TREEHOST_GAME_HOST=localhost"
 

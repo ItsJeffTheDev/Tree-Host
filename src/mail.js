@@ -2,14 +2,16 @@
 // Sends emails (password resets, payment problems) through Resend's HTTP API (https://resend.com, free tier).
 // Without RESEND_API_KEY, emails are not sent; admins can still give people a temporary password.
 const KEY = process.env.RESEND_API_KEY || '';
-const FROM = process.env.MAIL_FROM || 'Tree Host <no-reply@example.com>';
+const FROM = process.env.MAIL_FROM || 'Tree Host <no-reply@treehost.online>';
+// Where replies go: billing emails to the billing inbox, everything else to support.
+const SUPPORT = process.env.TREEHOST_SUPPORT_EMAIL || 'support@treehost.online';
 
 const enabled = () => !!KEY;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-/** paragraphs: plain-text strings; button: { text, url } (optional). */
-async function send(to, subject, paragraphs, button) {
+/** paragraphs: plain-text strings; button: { text, url } (optional); replyTo: the inbox replies go to (default: support). */
+async function send(to, subject, paragraphs, button, { replyTo } = {}) {
   if (!KEY || !to) return false;
   const html = `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:auto;color:#1c2420">
     <h2 style="color:#2c9a5c;margin-bottom:8px">🌳 Tree Host</h2>
@@ -20,7 +22,7 @@ async function send(to, subject, paragraphs, button) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: FROM, to: [to], subject, html, text }),
+    body: JSON.stringify({ from: FROM, to: [to], reply_to: replyTo || SUPPORT, subject, html, text }),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Email failed: ${res.status} ${(await res.text()).slice(0, 200)}`);

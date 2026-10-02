@@ -1,7 +1,7 @@
 'use strict';
 // The pinned info messages. `npm run setup` posts each one once, then edits it in place on later runs.
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { BRAND, SITE, DONATE_URL, YOUTUBE_URL } = require('./config');
+const { BRAND, SITE, DONATE_URL, YOUTUBE_URL, EMAILS } = require('./config');
 
 const FOOTER = { text: 'Tree Host · treehost.online' };
 
@@ -155,7 +155,8 @@ const build = (guild, ch, role, data = {}) => ({
           { name: 'Which server types?', value: 'Paper, Purpur, Folia, Spigot, CraftBukkit, Vanilla, Fabric, Velocity, Waterfall and BungeeCord, any version. The right Java version is picked for you.' },
           { name: 'How much does it cost?', value: `Plans start at $5 a month. See ${ch('plans')}.` },
           { name: 'What do I get?', value: 'A live console in your browser, one-click plugins from Modrinth, a file manager, backups, and your own server address.' },
-          { name: 'How do I get help?', value: `Open a private ticket in ${ch('getHelp')}, or ask in ${ch('helpChat')}.` },
+          { name: 'How do I get help?', value: `Open a private ticket in ${ch('getHelp')}, ask in ${ch('helpChat')}, or email **${EMAILS.support}**. Billing questions: **${EMAILS.billing}**.` },
+          { name: "I'm a creator. Can I feature Tree Host?", value: `Yes, please! We give creators footage, scripts and a free server. Email **${EMAILS.promo}** or open a ticket.` },
           { name: 'How can I support Tree Host?', value: `See ${ch('launchFund')}, or share our videos!` },
         ),
     ],
@@ -205,7 +206,7 @@ const build = (guild, ch, role, data = {}) => ({
         .setDescription(
           'Press **Open a ticket** to get a private channel with the Tree Host team.\n\n' +
             '**Please include:** your server name, what you expected, what happened, and any error from the console.\n\n' +
-            `For quick questions, try ${ch('helpChat')} first.\n` +
+            `For quick questions, try ${ch('helpChat')} first. Prefer email? **${EMAILS.support}** (billing: **${EMAILS.billing}**).\n` +
             '🔒 Staff will **never** ask for your password.',
         ),
     ],

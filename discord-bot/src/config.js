@@ -6,6 +6,7 @@ const BRAND = 0x46c37b;
 const SITE = 'https://treehost.online';
 const DONATE_URL = 'https://buy.stripe.com/00wcN7cfK3Jh9lEgEf0oM00';
 const YOUTUBE_URL = 'https://www.youtube.com/@TreeHost';
+const EMAILS = { support: 'support@treehost.online', billing: 'billing@treehost.online', promo: 'promotion@treehost.online' };
 // DISBOARD's bot (the server listing you /bump). Setup lets it see #bump; the bot reminds people 2 hours after a bump.
 const DISBOARD_BOT_ID = '302050872383242240';
 const BUMP_COOLDOWN_MS = 2 * 60 * 60 * 1000;
@@ -190,4 +191,4 @@ const AUTOMOD = [
   },
 ];
 
-module.exports = { BOT_PROFILE, STATUSES, BRAND, SITE, DONATE_URL, YOUTUBE_URL, DISBOARD_BOT_ID, BUMP_COOLDOWN_MS, ROLES, STAFF, EVERYONE_PERMISSIONS, CATEGORIES, SERVER, AUTOMOD };
+module.exports = { BOT_PROFILE, STATUSES, BRAND, SITE, DONATE_URL, YOUTUBE_URL, EMAILS, DISBOARD_BOT_ID, BUMP_COOLDOWN_MS, ROLES, STAFF, EVERYONE_PERMISSIONS, CATEGORIES, SERVER, AUTOMOD };

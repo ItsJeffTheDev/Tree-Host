@@ -47,11 +47,11 @@ and **14 days later the server and its backups are deleted**.
 ## Moving to a bigger plan
 
 1. Buy the bigger plan in **Billing**.
-2. Contact support: we'll move your world and plugins to the new plan's server.
+2. Email [billing@treehost.online](mailto:billing@treehost.online): we'll move your world and plugins to the new plan's server.
 3. Cancel the old plan in **Payment method & invoices**.
 
 ---
 
 ## Refunds
 
-See the [Terms of Service](/terms). If something went wrong, contact support and we'll sort it out.
+See the [Terms of Service](/terms). If something went wrong, email [billing@treehost.online](mailto:billing@treehost.online) and we'll sort it out.

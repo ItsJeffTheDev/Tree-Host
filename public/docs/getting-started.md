@@ -76,4 +76,4 @@ At the top of your server's page is the **Join address**, for example `play.tree
 - **Back up your world:** the **Backups** tab. Turn on automatic backups while you're there.
 - **Billing and canceling:** see [Billing](billing.md).
 
-Something not working? See [Troubleshooting](troubleshooting.md) or contact support.
+Something not working? See [Troubleshooting](troubleshooting.md) or email [support@treehost.online](mailto:support@treehost.online).
