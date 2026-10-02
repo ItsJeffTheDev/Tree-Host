@@ -10,6 +10,7 @@ const CONSOLE_SECTIONS = [
   { id: 'billing', label: '💳 Billing', perm: 'billing.view', render: (b) => adminBilling(b) },
   { id: 'plans', label: '📦 Plans', perm: 'billing.manage', render: (b) => adminPlans(b) },
   { id: 'promos', label: '🎟️ Promo codes', perm: 'promos.manage', render: (b) => adminPromos(b) },
+  { id: 'actions', label: '🛡️ Actions taken', perm: 'moderation.view', render: (b, sub) => consoleActions(b, sub) },
   { id: 'roles', label: '🔐 Roles & permissions', perm: 'console.access', render: consoleRoles },
   { id: 'audit', label: '🧾 Audit log', perm: 'audit.view', render: consoleAudit },
   { id: 'system', label: '⚙️ System', perm: 'system.view', render: consoleSystem },
@@ -38,12 +39,12 @@ function initConsole() {
   renderUserBox();
   const show = () => {
     $('#modal-root').innerHTML = ''; // a dialog from the previous section must not stay open over this one
-    const id = location.hash.slice(1);
+    const [id, sub] = location.hash.slice(1).split('/'); // e.g. #actions/TH-000012
     const sec = sections.find((s) => s.id === id) || sections[0];
     $$('[data-sec]', side).forEach((a) => a.classList.toggle('active', a.dataset.sec === sec.id));
     const main = $('#main');
     main.innerHTML = `<div class="console-page"><h1 class="console-title">${sec.label.replace(/^\S+\s/, '')}</h1><div id="console-body"><div class="muted">Loading...</div></div></div>`;
-    sec.render($('#console-body')).catch((e) => ($('#console-body').innerHTML = `<div class="warn-box">${esc(e.message)}</div>`));
+    sec.render($('#console-body'), sub).catch((e) => ($('#console-body').innerHTML = `<div class="warn-box">${esc(e.message)}</div>`));
   };
   window.addEventListener('hashchange', show);
   show();
@@ -91,12 +92,13 @@ async function consoleServers(body) {
   let q = '';
   let filter = 'all';
   const statusBadge = (s) =>
-    s.suspended ? '<span class="badge red">suspended</span>'
+    s.moderation ? restrictionBadge(s.moderation)
+      : s.suspended ? '<span class="badge red">not paid</span>'
       : s.running ? `<span class="badge green">${esc(s.status || 'running')}</span>`
         : '<span class="badge">stopped</span>';
   const draw = () => {
     const rows = list
-      .filter((s) => filter === 'all' || (filter === 'running' ? s.running : filter === 'suspended' ? s.suspended : !s.running))
+      .filter((s) => filter === 'all' || (filter === 'running' ? s.running : filter === 'suspended' ? s.suspended || s.moderation : !s.running))
       .filter((s) => !q || [s.name, s.owner && s.owner.username, s.owner && s.owner.email, s.type, s.version, s.id].some((x) => String(x || '').toLowerCase().includes(q)));
     $('#srv-list', body).innerHTML = rows.length
       ? `<table><thead><tr><th>Server</th><th>Owner</th><th>Plan</th><th>Status</th><th>Memory</th><th></th></tr></thead><tbody>${rows
@@ -107,7 +109,8 @@ async function consoleServers(body) {
             <td>${statusBadge(s)}</td>
             <td class="small">${s.memUsedMb ? `${fmtMem(s.memUsedMb)} / ` : ''}${s.memoryMb ? fmtMem(s.memoryMb) : '-'}</td>
             <td class="actions-cell">
-              ${hasPerm('servers.operate') && !s.suspended ? `<button class="btn sm" data-act="${s.running ? 'stop' : 'start'}" data-id="${esc(s.id)}">${s.running ? 'Stop' : 'Start'}</button>` : ''}
+              ${hasPerm('servers.operate') && !s.suspended && !s.moderation ? `<button class="btn sm" data-act="${s.running ? 'stop' : 'start'}" data-id="${esc(s.id)}">${s.running ? 'Stop' : 'Start'}</button>` : ''}
+              ${s.owner && s.owner.id !== state.me.user.id && canTakeAction('server') ? `<button class="btn sm" data-take-srv="${esc(s.id)}" title="Warn, suspend, ban or delete">🛡️ Action</button>` : ''}
               <button class="btn sm primary" data-open="${esc(s.id)}">Open</button></td>
           </tr>`)
           .join('')}</tbody></table>`
@@ -117,6 +120,10 @@ async function consoleServers(body) {
       localStorage.setItem('mcpt.selected', b.dataset.open);
       localStorage.setItem('hh.space', 'all');
       location.href = '/dashboard';
+    }));
+    $$('[data-take-srv]', body).forEach((b) => b.addEventListener('click', () => {
+      const s = list.find((x) => x.id === b.dataset.takeSrv);
+      openTakeAction({ target: 'server', server: { id: s.id, name: s.name, ownerName: s.owner.username }, user: s.owner, onDone: () => consoleServers(body) });
     }));
     $$('[data-act]', body).forEach((b) => b.addEventListener('click', () => attempt(async () => {
       await api('POST', `/api/servers/${b.dataset.id}/${b.dataset.act}`);

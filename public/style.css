@@ -387,3 +387,32 @@ details.menu > summary::-webkit-details-marker { display: none; }
 @media (min-width: 1800px) { :root { --z: 1.1; } body { zoom: 1.1; } }
 @media (min-width: 2300px) { :root { --z: 1.25; } body { zoom: 1.25; } }
 @media (min-width: 3000px) { :root { --z: 1.5; } body { zoom: 1.5; } }
+
+/* ---------- moderation: take action, actions taken, inbox, suspended/banned page ---------- */
+.ta-type { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 13px; }
+.ta-type:has(input:checked) { border-color: var(--accent); background: rgba(70,195,123,.1); }
+.ta-type input { accent-color: var(--accent); margin: 0; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 13px; }
+.kv > span { color: var(--muted); }
+.kv > b { font-weight: 600; overflow-wrap: anywhere; }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-card { border-color: rgba(217,164,65,.45); background: rgba(217,164,65,.06); }
+.ev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.ev-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; background: var(--panel-2); min-width: 0; }
+.ev-item img { width: 100%; height: 120px; object-fit: cover; border-radius: 5px; display: block; }
+.ev-item b { overflow-wrap: anywhere; }
+.ev-text .pre { max-height: 120px; overflow-y: auto; }
+.ev-text .btn { align-self: flex-start; }
+.inbox-item { margin-bottom: 0; }
+.inbox-item.unread { border-left: 3px solid var(--accent); }
+#inbox-count { margin-left: 4px; padding: 0 6px; font-size: 11px; }
+.restricted-page { width: 100%; max-width: 720px; margin: 0 auto; padding: 40px 16px 60px; overflow-y: auto; }
+.restricted-card { padding: 26px; }
+.restricted-card h1 { margin: 6px 0 8px; font-size: 26px; }
+.restricted-card .lead { color: var(--muted); margin: 0; }
+.restricted-icon { font-size: 40px; }
+@media (max-width: 600px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; }
+  .kv > b { margin-bottom: 6px; }
+}
+.app.app-restricted { display: block; overflow-y: auto; }

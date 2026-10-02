@@ -708,7 +708,7 @@ async function adminPeople(body) {
     $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
       .map(
         (u) => `<tr>
-          <td><b>${esc(u.username)}</b>${u.disabled ? ' <span class="badge red">suspended</span>' : ''}
+          <td><b>${esc(u.username)}</b>${restrictionBadge(u.restriction)}
             <div class="small muted">${esc(u.email) || 'no email'} · joined ${new Date(u.createdAt).toLocaleDateString()}${u.lastLogin ? ` · last seen ${new Date(u.lastLogin).toLocaleDateString()}` : ''}</div></td>
           <td>${
             u.id !== me.id && canRoles && outranks(u)
@@ -727,8 +727,9 @@ async function adminPeople(body) {
                   ? `<button class="btn sm" data-reset="${esc(u.email)}">Send password reset email</button>`
                   : `<button class="btn sm" data-temp="${esc(u.id)}">Temporary password</button>`
                 : '',
-              manage ? `<button class="btn sm" data-dis="${esc(u.id)}" data-val="${u.disabled ? '0' : '1'}">${u.disabled ? 'Unsuspend' : 'Suspend'}</button>` : '',
-              manage ? `<button class="btn sm danger" data-udel="${esc(u.id)}">Delete account</button>` : '',
+              hasPerm('messages.send') ? `<button class="btn sm" data-msg="${esc(u.id)}">✉️ Send message</button>` : '',
+              outranks(u) && canTakeAction('account') ? `<button class="btn sm" data-take="${esc(u.id)}">🛡️ Take action (warn, suspend, ban, delete)</button>` : '',
+              u.restriction && !u.restriction.actionId && hasPerm('moderation.act') && outranks(u) ? `<button class="btn sm" data-legacy="${esc(u.id)}">Lift old suspension</button>` : '',
             ].join('');
             return items ? `<details class="menu"><summary class="btn sm">More</summary><div class="menu-body">${items}</div></details>` : '';
           })()}</td></tr>`,
@@ -772,24 +773,21 @@ async function adminPeople(body) {
         });
       }),
     );
-    $$('[data-dis]', body).forEach((b) =>
+    $$('[data-take]', body).forEach((b) =>
       b.addEventListener('click', () => {
-        const on = b.dataset.val === '1';
-        if (on && !confirm('Suspend this account? They are signed out and their servers are stopped.')) return;
-        attempt(async () => {
-          await api('PUT', `/api/team/users/${b.dataset.dis}/disabled`, { disabled: on });
-          reload();
-        });
+        const u = all.find((x) => x.id === b.dataset.take);
+        openTakeAction({ target: 'account', user: u, onDone: reload });
       }),
     );
-    $$('[data-udel]', body).forEach((b) =>
-      b.addEventListener('click', () => {
-        if (!confirm('Delete this account and all of its servers? This cannot be undone.')) return;
+    $$('[data-msg]', body).forEach((b) => b.addEventListener('click', () => openSendMessage(all.find((x) => x.id === b.dataset.msg))));
+    $$('[data-legacy]', body).forEach((b) =>
+      b.addEventListener('click', () =>
         attempt(async () => {
-          await api('DELETE', `/api/team/users/${b.dataset.udel}`);
+          await api('POST', `/api/team/users/${b.dataset.legacy}/lift-legacy`);
+          toast('Suspension lifted');
           reload();
-        });
-      }),
+        }),
+      ),
     );
   };
   body.innerHTML = `

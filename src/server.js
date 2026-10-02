@@ -19,6 +19,7 @@ const { keepAwake } = require('./keepawake');
 const providers = require('./providers');
 const java = require('./java');
 const { Activity } = require('./activity');
+const { Moderation, TYPES, REASONS } = require('./moderation');
 const backups = require('./backups');
 const modrinth = require('./modrinth');
 
@@ -49,6 +50,7 @@ const auth = new Auth();
 const rbac = new Rbac();
 const billing = new Billing();
 const activity = new Activity();
+const moderation = new Moderation();
 manager.teamMode = TEAM;
 // A test site on this PC (http://localhost...) may run customer servers without Docker; the real site never does.
 if (HOSTED && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/')) manager.allowUnsafe = true;
@@ -73,6 +75,10 @@ manager.planInfo = (inst) => {
   return { planName: sub.planName, ramMb: sub.ramMb, cpus: sub.cpus, diskGb: sub.diskGb, status: sub.status, usable: billing.usable(sub), renewsAt: sub.periodEnd || null };
 };
 manager.startBlock = (inst) => {
+  const mod = inst.cfg.moderation;
+  if (mod) return `this server is ${mod.type} by Tree Host staff (action ${mod.actionId}). See your inbox for why and to appeal.`;
+  const owner = inst.cfg.owner ? auth.userById(inst.cfg.owner) : null;
+  if (owner && owner.restriction) return `the account that owns this server is ${owner.restriction.type}.`;
   if (!inst.isCustomer) return null;
   const sub = inst.cfg.subscriptionId ? billing.sub(inst.cfg.subscriptionId) : null;
   if (!sub) return 'this server has no plan. Contact support.';
@@ -308,6 +314,10 @@ function getFor(req, id, action = 'view') {
   if (!canView(req.user, inst)) throw httpError(404, 'Server not found');
   const denied = permissionError(req.user, action, inst);
   if (denied) throw httpError(403, denied);
+  // A suspended or banned server is read-only for its owner (staff can still look into it).
+  if (TEAM && action !== 'view' && inst.cfg.moderation && !rbac.isStaff(req.user)) {
+    throw httpError(423, `This server is ${inst.cfg.moderation.type} (action ${inst.cfg.moderation.actionId}). See your inbox for why and to appeal.`, 'SERVER_RESTRICTED');
+  }
   return inst;
 }
 
@@ -359,6 +369,7 @@ function canSeeEvent(user, e) {
   if (!TEAM) return true;
   if (!user) return false;
   if (e.kind === 'audit') return can(user, 'audit.view');
+  if (e.kind === 'moderation') return can(user, 'moderation.view');
   if (e.kind === 'people' || e.kind === 'billing') return can(user, 'activity.viewAll');
   if (e.owner && e.owner === user.id) return true;
   return can(user, 'servers.viewAll') || can(user, 'activity.viewAll');
@@ -545,21 +556,6 @@ route(
   { perm: 'users.view' },
 );
 route(
-  'PUT',
-  '/api/team/users/:uid/disabled',
-  async (req, res, p) => {
-    if (p.uid === req.user.id) throw httpError(400, 'You cannot suspend yourself.');
-    requireOutranks(req, p.uid);
-    const { disabled } = await readJson(req);
-    const u = await auth.setDisabled(p.uid, disabled);
-    if (disabled) for (const inst of manager.instances.values()) if (inst.cfg.owner === u.id && inst.proc) inst.stop();
-    activity.log('people', who(req), `${disabled ? 'suspended' : 'unsuspended'} the account ${u.username}`);
-    audit(req, `${disabled ? 'suspended' : 'unsuspended'} the account ${u.username}`);
-    return auth.publicUser(u);
-  },
-  { perm: 'users.manage' },
-);
-route(
   'POST',
   '/api/team/users/:uid/temp-password',
   async (req, res, p) => {
@@ -605,24 +601,368 @@ route('PUT', '/api/team/settings', async (req) => {
   return r;
 }, { perm: 'settings.manage' });
 route('GET', '/api/team/settings', () => auth.settings, { perm: 'settings.manage' });
-route(
-  'DELETE',
-  '/api/team/users/:uid',
-  async (req, res, p) => {
-    if (p.uid === req.user.id) throw httpError(400, 'You cannot remove yourself.');
-    requireOutranks(req, p.uid);
-    const u = auth.userById(p.uid);
-    if (u && billing.forUser(u.id).some((x) => x.status === 'active' || x.status === 'past_due')) {
-      throw httpError(400, 'This person still has an active plan. Cancel it in Billing first (or suspend the account instead).');
+// ---------- moderation: warnings, suspensions, bans, deletions, appeals, inbox (see moderation.js) ----------
+
+const ACTION_PERM = { warn: 'moderation.act', suspend: 'moderation.act', ban: 'moderation.ban' };
+const deletePerm = (target) => (target === 'server' ? 'servers.destroy' : 'users.manage');
+const permFor = (type, target) => (type === 'delete' ? deletePerm(target) : ACTION_PERM[type]);
+const fmtDate = (t) => new Date(t).toUTCString().replace(/:\d\d GMT$/, ' UTC');
+
+/** What the customer looked like when the action was taken (kept even if the account is deleted later). */
+function customerSnapshot(u) {
+  if (!u) return {};
+  return {
+    id: u.id, username: u.username, email: u.email || '', role: u.role, roleLabel: rbac.role(u.role).label,
+    createdAt: u.createdAt, lastLogin: u.lastLogin || null, firebase: !!u.firebaseUid, mcName: u.mcName || '',
+    plans: billing.forUser(u.id).filter((x) => x.status === 'active' || x.status === 'past_due').map((x) => `${x.planName}${x.free ? ' (free)' : ''}`),
+    servers: [...manager.instances.values()].filter((i) => i.cfg.owner === u.id).map((i) => ({ id: i.cfg.id, name: i.cfg.name, type: i.provider.label, version: i.cfg.version })),
+    previous: moderation.forUser(u.id).map((a) => `${a.id} (${a.type})`),
+  };
+}
+
+function serverSnapshot(inst) {
+  const plan = manager.planInfo(inst);
+  return {
+    id: inst.cfg.id, name: inst.cfg.name, type: inst.provider.label, version: inst.cfg.version, createdAt: inst.cfg.createdAt || null,
+    plan: plan ? plan.planName : '', address: inst.cfg.publicAddress || inst.cfg.autoAddress || '',
+  };
+}
+
+const consoleLog = (inst, lines = 500) => inst.logs.slice(-lines).map((l) => l.t).join('\n');
+
+/** The strongest active suspension/ban for an account or server, or null. */
+function activeRestriction(match) {
+  const active = [...moderation.actions.values()].filter((a) => a.status === 'active' && match(a));
+  const pick = active.find((a) => a.type === 'ban') || active.find((a) => a.type === 'suspend');
+  return pick ? { type: pick.type === 'ban' ? 'banned' : 'suspended', actionId: pick.id, until: pick.type === 'ban' ? null : pick.until } : null;
+}
+
+/** Brings an account's restriction in line with its active actions (stops its servers when restricted). */
+async function refreshAccount(userId) {
+  const u = auth.userById(userId);
+  if (!u) return;
+  const r = activeRestriction((a) => a.target === 'account' && a.customer.id === userId);
+  if (!r && u.restriction && !u.restriction.actionId) return; // an old-style suspension: lifted from People
+  if (JSON.stringify(r) === JSON.stringify(u.restriction ? { type: u.restriction.type, actionId: u.restriction.actionId, until: u.restriction.until } : null)) return;
+  await auth.setRestriction(userId, r);
+  if (r) for (const inst of manager.instances.values()) if (inst.cfg.owner === userId && inst.proc) inst.stop();
+}
+
+/** Same for a server. */
+function refreshServer(serverId) {
+  const inst = manager.instances.get(serverId);
+  if (!inst) return;
+  const r = activeRestriction((a) => a.target === 'server' && a.server && a.server.id === serverId);
+  inst.cfg.moderation = r;
+  manager.save();
+  if (r && inst.proc) inst.stop();
+  inst.emitStatus();
+}
+
+/** Tells the customer: a message in their Tree Host inbox and (optionally) an email. */
+async function tellCustomer(a, user, { title, paragraphs, email = true, inbox = true, button = true }) {
+  if (!user) return;
+  if (inbox) {
+    await moderation.message(user.id, { title, body: paragraphs.join('\n\n'), actionId: a ? a.id : null, kind: a ? 'action' : 'message' });
+    if (a) a.notified.inbox = true;
+  }
+  if (email && user.email && mail.enabled()) {
+    await mail.send(user.email, title, paragraphs, button && PUBLIC_URL ? { text: 'Open your inbox', url: `${PUBLIC_URL}/dashboard?inbox` } : null, { replyTo: EMAILS.support })
+      .then(() => a && (a.notified.email = true))
+      .catch((e) => console.error(`[moderation] email to ${user.email} failed: ${e.message}`));
+  }
+  if (a) await moderation.save();
+}
+
+function actionNotice(a) {
+  const what = a.target === 'server' ? `your server "${a.server.name}"` : 'your Tree Host account';
+  const title = {
+    warn: a.target === 'server' ? `A warning about your server "${a.server.name}"` : 'A warning about your Tree Host account',
+    suspend: `We've suspended ${what}`,
+    ban: `We've banned ${what}`,
+    delete: a.target === 'server' ? `We've deleted your server "${a.server.name}"` : "We've deleted your Tree Host account",
+  }[a.type];
+  const effect = {
+    warn: 'No action has been taken on your account this time, but please make sure it does not happen again.',
+    suspend: a.target === 'server'
+      ? `The server is stopped and can't be started${a.until ? ` until ${fmtDate(a.until)}` : ' until the suspension is lifted'}. Your files are kept.`
+      : `You can't use your servers${a.until ? ` until ${fmtDate(a.until)}` : ' until the suspension is lifted'}. Your servers and files are kept.`,
+    ban: a.target === 'server'
+      ? "The server is stopped and can't be started again."
+      : "You can't use Tree Host any more. Your plans have been canceled.",
+    delete: a.target === 'server' ? 'The server and its files have been removed.' : 'Your account, its servers and files have been removed.',
+  }[a.type];
+  const appeal = !a.appealable
+    ? 'This decision is final.'
+    : a.type === 'delete' && a.target === 'account'
+      ? `If you think this is a mistake, reply to this email within 30 days and mention the action number.`
+      : 'If you think this is a mistake, you can appeal: open your Tree Host inbox and press "Appeal", or reply to this email. Mention the action number.';
+  return { title, paragraphs: [a.message, effect, `Reason: ${REASONS[a.reason]}. Action number: ${a.id}.`, appeal] };
+}
+
+route('GET', '/api/admin/actions', (req, res, p, q) => ({
+  actions: moderation.search({ q: q.get('q') || '', type: q.get('type') || '', status: q.get('status') || '', appeal: q.get('appeal') || '' }),
+  pendingAppeals: [...moderation.actions.values()].filter((a) => a.appeal && a.appeal.status === 'pending').length,
+  types: TYPES,
+  reasons: REASONS,
+}), { perm: 'moderation.view' });
+
+route('GET', '/api/admin/actions.csv', (req, res) => {
+  const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = [['Action', 'Type', 'Target', 'Status', 'Reason', 'Customer', 'Email', 'Server', 'Taken by', 'Taken at (UTC)', 'Ends (UTC)', 'Appeal', 'Evidence']];
+  for (const a of moderation.search()) {
+    rows.push([a.id, a.typeLabel, a.target, a.status, a.reasonLabel, a.customer.username, a.customer.email, a.server ? a.server.name : '', a.by,
+      new Date(a.createdAt).toISOString(), a.until ? new Date(a.until).toISOString() : '', a.appeal || '', a.evidence]);
+  }
+  audit(req, 'exported the list of actions taken (CSV)');
+  res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="tree-host-actions-${new Date().toISOString().slice(0, 10)}.csv"`, 'Cache-Control': 'no-store' });
+  res.end(`﻿${rows.map((r) => r.map(cell).join(',')).join('\r\n')}\r\n`);
+  return HANDLED;
+}, { perm: 'moderation.view' });
+
+route('GET', '/api/admin/actions/:aid', (req, res, p) => moderation.full(moderation.get(p.aid)), { perm: 'moderation.view' });
+
+route('GET', '/api/admin/actions/:aid/report.pdf', async (req, res, p, q) => {
+  const a = moderation.get(p.aid);
+  const pdf = await moderation.report(a, `${req.user.username} (${rbac.role(req.user.role).label})`);
+  audit(req, `${q.get('download') ? 'downloaded' : 'viewed'} the PDF report for ${a.id}`);
+  res.writeHead(200, {
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `${q.get('download') ? 'attachment' : 'inline'}; filename="Tree-Host-${a.id}.pdf"`,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(pdf);
+  return HANDLED;
+}, { perm: 'moderation.view' });
+
+route('GET', '/api/admin/actions/:aid/evidence/:eid', async (req, res, p) => {
+  const { ev, data } = await moderation.evidenceFile(moderation.get(p.aid), p.eid);
+  res.writeHead(200, {
+    'Content-Type': ev.kind === 'image' ? 'image/jpeg' : 'text/plain; charset=utf-8',
+    'Content-Disposition': `inline; filename="${ev.name.replace(/"/g, '')}"`,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(data);
+  return HANDLED;
+}, { perm: 'moderation.view' });
+
+/**
+ * Takes an action. Body: { target: 'account'|'server', userId | serverId, type, reason, message, notes, days (suspensions,
+ * 0 = until lifted), appealable, email, includeLog, evidence: [{ kind, name, data | text }] }
+ */
+route('POST', '/api/admin/actions', async (req) => {
+  const b = await readJson(req, 40 * 1024 * 1024);
+  const target = b.target === 'server' ? 'server' : 'account';
+  if (!['warn', 'suspend', 'ban', 'delete'].includes(b.type)) throw httpError(400, 'Pick what to do: warning, suspension, ban or deletion.');
+  requirePerm(req, permFor(b.type, target));
+  let inst = null;
+  let user;
+  if (target === 'server') {
+    inst = manager.get(b.serverId);
+    if (!inst) throw httpError(404, 'Server not found');
+    user = auth.userById(inst.cfg.owner);
+  } else {
+    user = auth.userById(b.userId);
+    if (!user) throw httpError(404, 'Account not found');
+  }
+  if (user && user.id === req.user.id) throw httpError(400, "You can't take action on your own account or servers. Ask another staff member.");
+  if (user) requireOutranks(req, user.id);
+  if (user && user.role === 'owner' && target === 'account' && b.type !== 'warn') throw httpError(400, 'Owners cannot be suspended, banned or deleted. Change their role first.');
+  const days = Math.max(0, Math.min(3650, Math.round(Number(b.days) || 0)));
+  const evidence = Array.isArray(b.evidence) ? b.evidence.slice(0, 20) : [];
+
+  const a = await moderation.create({
+    type: b.type, target, reason: b.reason, message: b.message, notes: b.notes, appealable: b.appealable !== false,
+    until: b.type === 'suspend' && days ? Date.now() + days * 86400000 : null,
+    by: { id: req.user.id, username: req.user.username, role: req.user.role, roleLabel: rbac.role(req.user.role).label },
+    customer: customerSnapshot(user),
+    server: inst ? serverSnapshot(inst) : null,
+  });
+  // Evidence: what staff attached, plus the console log(s) when asked (the proof is kept even if the server goes).
+  for (const item of evidence) await moderation.addEvidence(a, item, req.user.username).catch((e) => moderation.note(a, 'Tree Host', `Evidence "${item.name}" was not saved: ${e.message}`));
+  if (b.includeLog !== false) {
+    const servers = inst ? [inst] : [...manager.instances.values()].filter((i) => user && i.cfg.owner === user.id);
+    for (const s of servers) {
+      const log = consoleLog(s);
+      if (log.trim()) await moderation.addEvidence(a, { kind: 'log', name: `Console log of ${s.cfg.name} (last 500 lines).txt`, text: log }, 'Tree Host (automatic)');
     }
-    for (const inst of [...manager.instances.values()]) if (inst.cfg.owner === p.uid && inst.isCustomer) await manager.remove(inst.cfg.id);
-    await auth.removeUser(p.uid);
-    if (u && u.firebaseUid) await firebase.deleteAuthUser(u.firebaseUid).catch(() => {});
-    if (u) audit(req, `deleted the account ${u.username}`);
-    return { ok: true };
-  },
-  { perm: 'users.manage' },
-);
+  }
+
+  // Do it.
+  const notice = actionNotice(a);
+  if (a.type === 'suspend' || a.type === 'ban') {
+    if (target === 'server') refreshServer(inst.cfg.id);
+    else {
+      if (a.type === 'ban') {
+        for (const sub of billing.forUser(user.id).filter((x) => x.status === 'active' || x.status === 'past_due')) {
+          await billing.cancel(sub.id, `${req.user.username} (ban ${a.id})`).catch((e) => moderation.note(a, 'Tree Host', `Could not cancel plan ${sub.planName}: ${e.message}`));
+        }
+      }
+      await refreshAccount(user.id);
+    }
+    if (inst) inst.sysLog(`This server was ${a.type === 'ban' ? 'banned' : 'suspended'} by Tree Host staff (action ${a.id}).`);
+  }
+  if (a.type === 'delete' && target === 'server') {
+    inst.logActivity('server', who(req), `deleted server "${inst.cfg.name}" (action ${a.id})`);
+    await manager.remove(inst.cfg.id);
+    billing.detachServer(inst.cfg.id);
+  }
+  if (a.type === 'delete' && target === 'account') {
+    for (const sub of billing.forUser(user.id).filter((x) => x.status === 'active' || x.status === 'past_due')) {
+      await billing.cancel(sub.id, `${req.user.username} (deletion ${a.id})`);
+    }
+    // Tell them first: the inbox goes with the account, so only the email remains.
+    await tellCustomer(a, user, { ...notice, inbox: false, email: b.email !== false, button: false });
+    for (const s of [...manager.instances.values()]) if (s.cfg.owner === user.id && s.isCustomer) await manager.remove(s.cfg.id);
+    await auth.removeUser(user.id);
+    await moderation.dropInbox(user.id);
+    if (user.firebaseUid) await firebase.deleteAuthUser(user.firebaseUid).catch(() => {});
+  } else {
+    await tellCustomer(a, user, { ...notice, email: b.email !== false });
+  }
+
+  const subject = target === 'server' ? `the server "${a.server.name}"${user ? ` of ${user.username}` : ''}` : `the account ${a.customer.username}`;
+  moderation.note(a, 'Tree Host', `Customer told by ${[a.notified.inbox && 'inbox', a.notified.email && 'email'].filter(Boolean).join(' and ') || 'nothing (no email address or email is off)'}`);
+  await moderation.save();
+  audit(req, `${{ warn: 'warned', suspend: 'suspended', ban: 'banned', delete: 'deleted' }[a.type]} ${subject} (${a.id}: ${REASONS[a.reason]})`, inst && a.type !== 'delete' ? inst : null);
+  return moderation.full(a);
+}, { perm: 'console.access' });
+
+route('POST', '/api/admin/actions/:aid/evidence', async (req, res, p) => {
+  const a = moderation.get(p.aid);
+  const b = await readJson(req, 40 * 1024 * 1024);
+  for (const item of (Array.isArray(b.evidence) ? b.evidence : []).slice(0, 20)) await moderation.addEvidence(a, item, req.user.username);
+  moderation.note(a, req.user.username, 'Added evidence');
+  await moderation.save();
+  audit(req, `added evidence to ${a.id}`);
+  return moderation.full(a);
+}, { perm: 'moderation.act' });
+
+route('POST', '/api/admin/actions/:aid/lift', async (req, res, p) => {
+  const a = moderation.get(p.aid);
+  requirePerm(req, a.type === 'ban' ? 'moderation.ban' : 'moderation.act');
+  const { reason } = await readJson(req);
+  if (String(reason || '').trim().length < 5) throw httpError(400, 'Write why it is being lifted.');
+  await moderation.lift(a, req.user, reason);
+  if (a.target === 'server') refreshServer(a.server.id);
+  else await refreshAccount(a.customer.id);
+  const user = auth.userById(a.customer.id);
+  await tellCustomer(a, user, {
+    title: a.target === 'server' ? `Your server "${a.server.name}" can be used again` : 'Your Tree Host account can be used again',
+    paragraphs: [`We've lifted the ${a.type === 'ban' ? 'ban' : 'suspension'} (action ${a.id}).`, String(reason).trim(), 'Thanks for your patience.'],
+  });
+  audit(req, `lifted ${a.id} (${a.type} of ${a.target === 'server' ? `"${a.server.name}"` : a.customer.username})`);
+  return moderation.full(a);
+}, { perm: 'console.access' });
+
+route('POST', '/api/admin/actions/:aid/appeal', async (req, res, p) => {
+  const a = moderation.get(p.aid);
+  const { decision, response } = await readJson(req);
+  if (!a.appeal || a.appeal.status !== 'pending') throw httpError(400, 'There is no appeal waiting for this action.');
+  if (!['accept', 'deny'].includes(decision)) throw httpError(400, 'Accept or deny the appeal.');
+  if (String(response || '').trim().length < 5) throw httpError(400, 'Write an answer for the customer.');
+  a.appeal.status = decision === 'accept' ? 'accepted' : 'denied';
+  a.appeal.response = String(response).trim().slice(0, 4000);
+  a.appeal.decidedBy = req.user.username;
+  a.appeal.decidedAt = Date.now();
+  moderation.note(a, req.user.username, `Appeal ${a.appeal.status}`);
+  if (decision === 'accept' && a.status === 'active') {
+    await moderation.lift(a, req.user, `Appeal accepted: ${a.appeal.response}`);
+    if (a.target === 'server') refreshServer(a.server.id);
+    else await refreshAccount(a.customer.id);
+  }
+  await moderation.save();
+  await tellCustomer(a, auth.userById(a.customer.id), {
+    title: `Your appeal for ${a.id} was ${a.appeal.status}`,
+    paragraphs: [
+      decision === 'accept'
+        ? `Good news: we've accepted your appeal${a.type === 'suspend' || a.type === 'ban' ? ' and lifted the action' : ''}.`
+        : "We've looked at your appeal carefully and the decision stays.",
+      a.appeal.response,
+      `Action number: ${a.id}.`,
+    ],
+  });
+  audit(req, `${a.appeal.status} the appeal for ${a.id}`);
+  return moderation.full(a);
+}, { perm: 'moderation.appeals' });
+
+// Old-style suspensions (from before actions had numbers) are lifted from People.
+route('POST', '/api/team/users/:uid/lift-legacy', async (req, res, p) => {
+  requireOutranks(req, p.uid);
+  const u = auth.userById(p.uid);
+  if (!u || !u.restriction || u.restriction.actionId) throw httpError(400, 'This account has no old-style suspension.');
+  await auth.setRestriction(u.id, null);
+  audit(req, `lifted the old suspension of ${u.username}`);
+  return auth.publicUser(u);
+}, { perm: 'moderation.act' });
+
+// Staff message to a customer's inbox (and email).
+route('POST', '/api/admin/messages', async (req) => {
+  const b = await readJson(req);
+  const u = auth.userById(b.userId);
+  if (!u) throw httpError(404, 'Account not found');
+  const title = String(b.title || '').trim();
+  const body = String(b.body || '').trim();
+  if (title.length < 3 || body.length < 5) throw httpError(400, 'Write a subject and a message.');
+  await tellCustomer(null, u, { title, paragraphs: [...body.split(/\n{2,}/), `From ${req.user.username}, Tree Host ${rbac.role(req.user.role).label}`], email: b.email !== false });
+  audit(req, `sent a message to ${u.username}: "${title.slice(0, 80)}"`);
+  return { ok: true };
+}, { perm: 'messages.send' });
+
+// ----- the customer's side: their inbox, their actions, appeals (allowed while suspended or banned) -----
+
+route('GET', '/api/inbox', (req) => {
+  if (!TEAM) return { messages: [], unread: 0 };
+  const messages = moderation.inbox(req.user.id);
+  return { messages, unread: messages.filter((m) => !m.read).length };
+}, { restrictedOk: true });
+
+route('POST', '/api/inbox/read', async (req) => {
+  if (TEAM) await moderation.markRead(req.user.id, (await readJson(req)).id || null);
+  return { ok: true };
+}, { restrictedOk: true });
+
+route('GET', '/api/moderation/mine', (req) => {
+  if (!TEAM) return { restriction: null, actions: [] };
+  const u = req.user;
+  const actions = moderation.forUser(u.id).map((a) => moderation.forCustomer(a));
+  const r = u.restriction ? { ...u.restriction, action: actions.find((a) => a.id === u.restriction.actionId) || null } : null;
+  return { restriction: r, actions, supportEmail: EMAILS.support };
+}, { restrictedOk: true });
+
+route('POST', '/api/moderation/:aid/appeal', async (req, res, p) => {
+  const a = moderation.find(p.aid);
+  if (!a || a.customer.id !== req.user.id) throw httpError(404, 'Action not found.');
+  if (!moderation.forCustomer(a).appealable) throw httpError(400, a.appeal ? 'You have already appealed this.' : 'This action cannot be appealed.');
+  const text = String((await readJson(req)).text || '').trim();
+  if (text.length < 20) throw httpError(400, 'Tell us why you think this was a mistake (at least 20 characters).');
+  a.appeal = { text: text.slice(0, 4000), at: Date.now(), status: 'pending' };
+  moderation.note(a, req.user.username, 'Appeal sent');
+  await moderation.save();
+  activity.log('moderation', req.user.username, `appealed ${a.id} (${TYPES[a.type].toLowerCase()} of ${a.target === 'server' ? `"${a.server.name}"` : 'their account'})`);
+  await moderation.message(req.user.id, { title: `We got your appeal for ${a.id}`, body: "Thanks. A member of our team will look at it and you'll get the answer here and by email.", actionId: a.id, kind: 'appeal' });
+  if (mail.enabled()) {
+    mail.send(EMAILS.support, `New appeal for ${a.id} from ${req.user.username}`, [`${req.user.username} appealed ${a.id} (${TYPES[a.type]} of the ${a.target}).`, text, 'Decide it in the Staff Console → Actions taken.'],
+      PUBLIC_URL ? { text: 'Open the action', url: `${PUBLIC_URL}/admin#actions/${a.id}` } : null).catch(() => {});
+  }
+  return moderation.forCustomer(a);
+}, { restrictedOk: true });
+
+// Suspensions end by themselves on their end date.
+async function expireActions() {
+  if (!TEAM) return;
+  for (const a of moderation.expired()) {
+    await moderation.lift(a, { username: 'Tree Host' }, 'The end date passed', 'expired');
+    if (a.target === 'server') refreshServer(a.server.id);
+    else await refreshAccount(a.customer.id);
+    await tellCustomer(a, auth.userById(a.customer.id), {
+      title: a.target === 'server' ? `Your server "${a.server.name}" can be used again` : 'Your suspension has ended',
+      paragraphs: [`The suspension (action ${a.id}) ended on ${fmtDate(a.until)}. Welcome back, and please keep to the rules.`],
+    });
+  }
+}
 
 // ---------- activity feed & Discord notifications ----------
 
@@ -815,7 +1155,7 @@ route('GET', '/api/admin/servers', (req) => [...manager.instances.values()].map(
   const owner = auth.userById(i.cfg.owner);
   return {
     id: j.id, name: j.name, type: j.typeLabel || j.type, version: j.version, port: j.port, status: j.status,
-    running: !!i.proc, suspended: i.cfg.suspended || null, players: (j.players || []).length,
+    running: !!i.proc, suspended: i.cfg.suspended || null, moderation: i.cfg.moderation || null, players: (j.players || []).length,
     memUsedMb: i.memUsedMb || null, memoryMb: Number(i.cfg.memoryMb) || null, diskUsedMb: i.diskUsedMb || null,
     owner: owner ? { id: owner.id, username: owner.username, email: can(req.user, 'users.view') ? owner.email : undefined } : null,
     plan: manager.planInfo(i),
@@ -957,6 +1297,9 @@ route('PATCH', '/api/servers/:id', async (req, res, p) => {
 });
 route('DELETE', '/api/servers/:id', async (req, res, p) => {
   const inst = getFor(req, p.id, 'manage');
+  if (TEAM && inst.isCustomer && inst.cfg.owner && inst.cfg.owner !== req.user.id) {
+    throw httpError(400, "To delete a customer's server, use 'Take action' → Delete: they get the reason and there is a report.", 'USE_ACTION');
+  }
   inst.logActivity('server', who(req), `deleted server "${inst.cfg.name}"`);
   await manager.remove(p.id);
   billing.detachServer(p.id);
@@ -1224,6 +1567,9 @@ const server = http.createServer(async (req, res) => {
       if (!r.opts.public) {
         req.user = authenticate(req);
         if (!req.user) throw httpError(401, 'Please sign in.', 'AUTH');
+        if (req.user.restriction && !r.opts.restrictedOk) {
+          throw httpError(403, `Your account is ${req.user.restriction.type}. Open the dashboard to see why and to appeal.`, 'RESTRICTED');
+        }
         if (r.opts.perm) requirePerm(req, r.opts.perm);
       }
       const result = await r.handler(req, res, params, url.searchParams);
@@ -1251,6 +1597,8 @@ async function main() {
     // Local test sites (http://localhost...) make the first account the admin; real sites use TREEHOST_ADMIN_EMAILS.
     auth.allowFirstAdmin = !auth.adminEmails.size && (!HOSTED || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/'));
     await billing.init();
+    await moderation.init();
+    setInterval(() => expireActions().catch((e) => console.error(`Moderation check failed: ${e.message}`)), 60 * 1000);
     setInterval(() => billing.tick().catch((e) => console.error(`Billing check failed: ${e.message}`)), 5 * 60 * 1000);
     manager.defaultOwner = () => (auth.firstAdmin() || {}).id || null;
   }

@@ -34,6 +34,11 @@ The Owner can change the Admin, Developer and Support columns in **Staff Console
 | See billing | ✓ | ✓ | | ✓ |
 | Manage billing (cancel plans, free plans, prices, capacity) | ✓ | ✓ | | |
 | Manage promo codes | ✓ | ✓ | | |
+| See actions taken (and PDF reports) | ✓ | ✓ | ✓ | ✓ |
+| Warn and suspend (accounts and servers) | ✓ | ✓ | | ✓ |
+| Ban | ✓ | ✓ | | |
+| Decide appeals | ✓ | ✓ | | |
+| Message customers | ✓ | ✓ | | ✓ |
 | See all activity (sign-ups, payments) | ✓ | ✓ | | |
 | See the audit log | ✓ | ✓ | ✓ | |
 | See system info | ✓ | ✓ | ✓ | |
@@ -70,10 +75,10 @@ Changes in **Roles & permissions** apply instantly to everyone with that role, w
 - **Invite:** Staff Console → People → **Invite staff**, pick the role, and send the one-time link (valid 7 days).
 - **Promote an existing account:** Staff Console → People → the role dropdown next to their name.
 
-## Suspending or removing someone
+## Suspending, banning or removing someone
 
-Staff Console → People → **More** next to their name:
+Staff Console → People → **More → 🛡️ Take action**: warn, suspend, ban or delete, always with a reason, a message to
+the customer and evidence. Every action gets a number and a PDF report in **Actions taken**. See the
+[Support playbook](support-playbook.md#5-rule-breakers-taking-action).
 
-- **Suspend**: signs them out, stops their servers and blocks sign-in. Their data is kept. Use **Unsuspend** to undo.
-- **Temporary password**: for people locked out without email access. Send it privately.
-- **Delete account**: removes the account and its servers. Cancel any active plan first (Staff Console → Billing).
+- **Temporary password** (People → More): for people locked out without email access. Send it privately.

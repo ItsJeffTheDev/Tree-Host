@@ -19,6 +19,11 @@ const PERMISSIONS = [
   { id: 'users.roles', group: 'People', label: 'Change roles and invite staff', description: 'Only up to your own role: nobody can hand out more access than they have.' },
   { id: 'billing.view', group: 'Billing', label: 'See billing', description: 'Revenue, every subscription, capacity.' },
   { id: 'billing.manage', group: 'Billing', label: 'Manage billing', description: 'Cancel subscriptions, give free plans, edit plans and prices, set capacity.' },
+  { id: 'moderation.view', group: 'Moderation', label: 'See actions taken', description: 'The Actions Taken page: every warning, suspension, ban and deletion, its evidence and PDF report.' },
+  { id: 'moderation.act', group: 'Moderation', label: 'Warn and suspend', description: 'Warn or suspend accounts and servers (with a reason and evidence), add evidence, lift suspensions.' },
+  { id: 'moderation.ban', group: 'Moderation', label: 'Ban', description: 'Ban accounts and servers, and lift bans.' },
+  { id: 'moderation.appeals', group: 'Moderation', label: 'Decide appeals', description: 'Accept or deny appeals from customers.' },
+  { id: 'messages.send', group: 'Moderation', label: 'Message customers', description: "Send a message to someone's Tree Host inbox (and email)." },
   { id: 'promos.manage', group: 'Billing', label: 'Manage promo codes', description: 'Create and disable codes for free plans (creators, partners, giveaways).' },
   { id: 'activity.viewAll', group: 'Platform', label: 'See all activity', description: 'Including sign-ups and payments, not just server events.' },
   { id: 'audit.view', group: 'Platform', label: 'See the audit log', description: 'Every staff action: who did what, when.' },
@@ -27,6 +32,9 @@ const PERMISSIONS = [
   { id: 'roles.manage', group: 'Platform', label: 'Edit roles', description: 'Change what each role can do (this page).' },
 ];
 const PERMISSION_IDS = new Set(PERMISSIONS.map((p) => p.id));
+// The permissions that existed before roles remembered which ones they knew (for adding new ones on upgrade).
+const FIRST_PERMISSIONS = ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'servers.destroy', 'servers.host', 'users.view', 'users.manage',
+  'users.roles', 'billing.view', 'billing.manage', 'promos.manage', 'activity.viewAll', 'audit.view', 'system.view', 'settings.manage', 'roles.manage'];
 
 /**
  * Roles from most to least access. `level` decides who may manage whom: you can only assign roles below your
@@ -40,11 +48,11 @@ const DEFAULT_ROLES = [
   },
   {
     id: 'developer', label: 'Developer', level: 60, description: 'Builds and fixes Tree Host: servers, host settings, system info. No money or people management.',
-    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'servers.destroy', 'servers.host', 'users.view', 'audit.view', 'system.view'],
+    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'servers.destroy', 'servers.host', 'users.view', 'audit.view', 'system.view', 'moderation.view'],
   },
   {
     id: 'staff', label: 'Support', level: 40, description: "Helps customers: sees and fixes any server, sees accounts and plans, can't delete anything.",
-    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'users.view', 'billing.view'],
+    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'users.view', 'billing.view', 'moderation.view', 'moderation.act', 'messages.send'],
   },
   { id: 'customer', label: 'Customer', level: 0, locked: true, description: 'Everyone who signs up. Manages only their own servers.' },
 ];
@@ -57,14 +65,22 @@ class Rbac {
   /** Loads role permissions saved from the Staff Console (Firebase), on top of the defaults. */
   async init() {
     const saved = (await store.load('roles')) || {};
+    // Permissions added after the roles were saved get their default setting (saved roles list what they knew).
+    const known = new Set(saved._known ? Object.values(saved._known) : FIRST_PERMISSIONS);
+    let added = false;
     for (const r of this.roles) {
       const s = saved[r.id];
-      if (s && !r.locked && s.permissions) r.permissions = Object.values(s.permissions).filter((p) => PERMISSION_IDS.has(p));
+      if (!s || r.locked || !s.permissions) continue;
+      const def = DEFAULT_ROLES.find((d) => d.id === r.id).permissions || [];
+      const fresh = def.filter((p) => !known.has(p));
+      r.permissions = [...new Set([...Object.values(s.permissions).filter((p) => PERMISSION_IDS.has(p)), ...fresh])];
+      if (fresh.length) added = true;
     }
+    if (added || (Object.keys(saved).length && !saved._known)) await this.save();
   }
 
   save() {
-    const out = {};
+    const out = { _known: [...PERMISSION_IDS] };
     for (const r of this.roles) if (!r.locked) out[r.id] = { permissions: r.permissions };
     return store.save('roles', out);
   }
@@ -83,14 +99,14 @@ class Rbac {
 
   /** Everything this user may do (Owner: all). */
   permissionsOf(user) {
-    if (!user) return [];
+    if (!user || user.restriction) return [];
     if (user.role === 'owner') return [...PERMISSION_IDS];
     return [...this.role(user.role).permissions];
   }
 
   can(user, permission) {
     if (!PERMISSION_IDS.has(permission)) throw new Error(`Unknown permission "${permission}"`);
-    if (!user || user.disabled) return false;
+    if (!user || user.disabled || user.restriction) return false; // suspended or banned staff lose their powers
     if (user.role === 'owner') return true;
     return this.role(user.role).permissions.includes(permission);
   }

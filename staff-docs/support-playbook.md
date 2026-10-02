@@ -96,15 +96,48 @@ Always put the reason in the note: it goes in the audit log.
 
 ---
 
-## 5. Rule breakers
+## 5. Rule breakers: taking action
 
-The rules are in the [Terms of Service](/terms) (section 3). For a clear break (crypto mining, attacks, illegal content):
+The rules are in the [Terms of Service](/terms) (section 3). Every warning, suspension, ban and deletion goes through
+**🛡️ Take action**, so the customer always gets a reason and we always have a numbered report.
 
-1. **Stop the server** and make a backup (evidence).
-2. Tell an Admin, with the server name and what you saw.
-3. Admins decide: **Suspend** (People → More) signs them out, stops their servers and keeps the data.
+**Where:** Staff Console → People → **More → Take action** (accounts), Staff Console → Servers → **🛡️ Action**, or
+**🛡️ Take action** on a customer's server page.
 
-Don't argue with the customer, and don't delete anything yourself.
+| Action | What happens | Who can |
+|---|---|---|
+| ⚠️ **Warn** | They get the message. Nothing else changes. | Support and up |
+| ⏸️ **Suspend** | Server: stopped and can't start. Account: locked out of every server (which stop), but they can sign in to see why and appeal. Plans keep billing. Pick 1 day to 90 days, or until lifted. Ends by itself. | Support and up |
+| ⛔ **Ban** | Like a suspension, with no end date. Banning an **account** also cancels its plans (no automatic refund). | Admins |
+| 🗑️ **Delete** | Removes the server, or the account with its servers (plans canceled). Can't be undone. | Admins and Developers (servers), Admins (accounts) |
+
+**Filling it in:**
+
+1. **Reason:** pick the closest one.
+2. **Message to the customer:** what they did and what happens now. They see this word for word, so keep it calm and factual.
+3. **Staff notes:** ticket numbers, who reported it, what you checked. Never shown to the customer.
+4. **Evidence:** attach screenshots (they go into the PDF report) and text/log files. Leave **Save the console log** on:
+   the last 500 lines of the server console are saved, even if the server is deleted later.
+5. **They can appeal:** leave it on unless it's clear-cut (e.g. illegal content).
+
+The customer is told in their **📬 Inbox** and by email, with the **action number** (like `TH-000012`).
+
+**Actions taken** (Staff Console) lists everything. Look up an action number to see the reason, the evidence, who took
+it and when, a snapshot of the customer, the appeal and the timeline. **📄 View PDF report** or **⬇ Download PDF** gives
+the full report to keep or send to the Owner. **Export all (CSV)** gives the whole list. Opening or downloading a
+report is written to the audit log.
+
+**Appeals:** customers press **Appeal** in their inbox (or on the suspended/banned page). It shows up as "Appeal waiting"
+in Actions taken, and support@ gets an email. **Admins** accept (this lifts it) or deny, with an answer the customer
+sees. Each action can be appealed once.
+
+**Lifting early:** open the action → **Lift**, with a reason (the customer sees it).
+
+> **Important:** Never take action on your own account or servers, and don't take action on a friend's. You can't
+> act on people with a role equal to or above yours.
+
+To just talk to someone, use **People → More → ✉️ Send message**: it goes to their inbox (and email), signed with
+your name.
 
 ---
 

@@ -16,9 +16,10 @@ const NOTIFY_KINDS = {
   server: 'A server is created or deleted',
   people: 'Someone signs up or joins the staff',
   billing: 'A plan is bought, a payment fails or a plan ends',
+  moderation: 'A customer appeals a staff action',
 };
 
-const COLORS = { crash: 0xe5534b, deploy: 0x4a9eff, start: 0x34c77b, stop: 0x8b939e, claim: 0x46c37b, backup: 0xa970ff, server: 0x46c37b, people: 0x34c77b, billing: 0xf5b50a };
+const COLORS = { crash: 0xe5534b, deploy: 0x4a9eff, start: 0x34c77b, stop: 0x8b939e, claim: 0x46c37b, backup: 0xa970ff, server: 0x46c37b, people: 0x34c77b, billing: 0xf5b50a, moderation: 0xe5534b };
 
 class Activity {
   constructor() {

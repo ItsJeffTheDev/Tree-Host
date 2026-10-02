@@ -74,13 +74,29 @@ function expect(label, got, want) {
   expect('admin cannot invite admin', (await call('admin1', 'POST', '/api/team/invites', { role: 'admin' })).status, 403);
   expect('last owner cannot be demoted', (await call('owner1', 'PUT', `/api/team/users/${id('owner1')}/role`, { role: 'admin' })).status, 400);
 
-  // suspensions: only people below you
-  expect('admin suspends a customer', (await call('admin1', 'PUT', `/api/team/users/${id('cust2')}/disabled`, { disabled: true })).status, 200);
-  expect('admin unsuspends', (await call('admin1', 'PUT', `/api/team/users/${id('cust2')}/disabled`, { disabled: false })).status, 200);
-  // suspending signs someone out everywhere: sign cust2 back in
-  await call('cust2', 'POST', '/api/auth/login', { username: 'cust2', password: 'TreeHost-test-123' });
-  expect('admin cannot suspend the owner', (await call('admin1', 'PUT', `/api/team/users/${id('owner1')}/disabled`, { disabled: true })).status, 403);
-  expect('support cannot suspend', (await call('support1', 'PUT', `/api/team/users/${id('cust2')}/disabled`, { disabled: true })).status, 403);
+  // moderation: suspensions, bans, warnings, appeals (only on people below you)
+  const act = (who, body) => call(who, 'POST', '/api/admin/actions', { reason: 'abuse', message: 'Test action: please follow the rules.', notes: 'secret staff note', ...body });
+  const sus = await act('admin1', { target: 'account', userId: id('cust2'), type: 'suspend', days: 1 });
+  expect('admin suspends a customer', sus.status, 200);
+  expect('action has a number', /^TH-\d{6}$/.test(sus.data.id), true);
+  expect('suspended customer is locked out', (await call('cust2', 'GET', '/api/servers')).status, 403);
+  const mine = await call('cust2', 'GET', '/api/moderation/mine');
+  expect('...but sees why', mine.data.restriction && mine.data.restriction.action.id, sus.data.id);
+  expect('...without staff notes', JSON.stringify(mine.data).includes('secret staff note'), false);
+  expect('...and has an inbox message', (await call('cust2', 'GET', '/api/inbox')).data.unread >= 1, true);
+  expect('customer appeals', (await call('cust2', 'POST', `/api/moderation/${sus.data.id}/appeal`, { text: 'This was a misunderstanding, I promise.' })).status, 200);
+  expect('support cannot decide appeals', (await call('support1', 'POST', `/api/admin/actions/${sus.data.id}/appeal`, { decision: 'accept', response: 'ok then' })).status, 403);
+  expect('admin accepts the appeal', (await call('admin1', 'POST', `/api/admin/actions/${sus.data.id}/appeal`, { decision: 'accept', response: 'Thanks, lifted.' })).status, 200);
+  expect('customer is back in', (await call('cust2', 'GET', '/api/servers')).status, 200);
+  expect('admin cannot suspend the owner', (await act('admin1', { target: 'account', userId: id('owner1'), type: 'suspend' })).status, 403);
+  expect('support can warn', (await act('support1', { target: 'account', userId: id('cust2'), type: 'warn' })).status, 200);
+  expect('support cannot ban', (await act('support1', { target: 'account', userId: id('cust2'), type: 'ban' })).status, 403);
+  expect('support cannot delete accounts', (await act('support1', { target: 'account', userId: id('cust2'), type: 'delete' })).status, 403);
+  expect('developer cannot suspend', (await act('dev1', { target: 'account', userId: id('cust2'), type: 'suspend' })).status, 403);
+  expect('a reason message is required', (await act('admin1', { target: 'account', userId: id('cust2'), type: 'warn', message: 'no' })).status, 400);
+  await matrix('GET actions taken', 'GET', '/api/admin/actions', undefined, [200, 200, 200, 200, 403]);
+  await matrix('GET a PDF report', 'GET', `/api/admin/actions/${sus.data.id}/report.pdf`, undefined, [200, 200, 200, 200, 403]);
+  expect('PDF is a PDF', (await (await fetch(`${B}/api/admin/actions/${sus.data.id}/report.pdf`, { headers: { Cookie: jar.owner1 } })).text()).startsWith('%PDF-'), true);
 
   // a customer's server: who can see / operate / destroy it
   await call('cust1', 'POST', '/api/billing/checkout', { planId: 'sapling' });
@@ -102,9 +118,15 @@ function expect(label, got, want) {
     await call('owner1', 'PUT', '/api/admin/roles/staff', { permissions: staffPerms });
     expect('developer can kill it (servers.operate)', (await call('dev1', 'POST', `/api/servers/${sid}/kill`)).status, 200);
     for (let i = 0; i < 20 && (await call('dev1', 'GET', `/api/servers/${sid}`)).data.status !== 'stopped'; i++) await new Promise((r) => setTimeout(r, 500));
-    const del = await call('dev1', 'DELETE', `/api/servers/${sid}`);
+    expect("staff can't delete a customer's server without a reason", (await call('dev1', 'DELETE', `/api/servers/${sid}`)).status, 400);
+    const susSrv = await act('support1', { target: 'server', serverId: sid, type: 'suspend', days: 3 });
+    expect('support suspends the server', susSrv.status, 200);
+    expect('customer cannot start a suspended server', (await call('cust1', 'POST', `/api/servers/${sid}/start`)).status, [402, 423]);
+    expect('support lifts it', (await call('support1', 'POST', `/api/admin/actions/${susSrv.data.id}/lift`, { reason: 'Checked, all fine.' })).status, 200);
+    const del = await act('dev1', { target: 'server', serverId: sid, type: 'delete' });
     if (del.status !== 200) console.log('   delete said:', JSON.stringify(del.data));
-    expect('developer can delete (servers.destroy)', del.status, 200);
+    expect('developer can delete it with a reason (servers.destroy)', del.status, 200);
+    expect('the server is gone', (await call('cust1', 'GET', `/api/servers/${sid}`)).status, 404);
   }
 
   // one-time codes that only work for one account

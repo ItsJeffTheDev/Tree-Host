@@ -275,6 +275,7 @@ class Instance extends EventEmitter {
       claim: this.activeClaim(),
       isolated: this.isolated,
       suspended: c.suspended || null,
+      moderation: c.moderation || null,
       subscriptionId: c.subscriptionId || null,
       plan: this.manager.planInfo(this),
       diskUsedMb: this.diskUsedMb || null,

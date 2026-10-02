@@ -98,6 +98,12 @@ class Auth {
     for (const u of this.users) {
       if (u.role === 'dev' || u.role === 'tester') (u.role = 'staff'), (migrated = true);
       if (u.role === 'pending') (u.role = 'customer'), (migrated = true);
+      // Old-style suspensions become restrictions (people can sign in to see why and appeal).
+      if (u.disabled) {
+        u.restriction = { type: 'suspended', actionId: null, until: null, at: Date.now() };
+        delete u.disabled;
+        migrated = true;
+      }
     }
     // Role-based access: there must always be an Owner. Emails in TREEHOST_ADMIN_EMAILS are Owners; if there is
     // none yet, the earliest admin becomes the Owner.
@@ -141,7 +147,8 @@ class Auth {
       role: u.role,
       mcName: u.mcName || '',
       createdAt: u.createdAt,
-      disabled: !!u.disabled,
+      disabled: !!u.restriction,
+      restriction: u.restriction || null,
       lastLogin: u.lastLogin || null,
       emailVerified: u.firebaseUid ? !!u.emailVerified : true,
       // An Owner email that isn't verified yet: it becomes Owner as soon as the email is verified.
@@ -151,7 +158,7 @@ class Auth {
 
   /** Minecraft names of support staff and admins (only used by the local personal mode). */
   mcNames() {
-    return this.users.filter((u) => isStaff(u) && !u.disabled).map((u) => u.mcName).filter(Boolean);
+    return this.users.filter((u) => isStaff(u) && !u.disabled && !u.restriction).map((u) => u.mcName).filter(Boolean);
   }
 
   userById(id) {
@@ -309,15 +316,20 @@ class Auth {
     return user;
   }
 
-  /** Suspends or re-enables an account (suspended accounts are signed out everywhere). */
-  async setDisabled(id, disabled) {
+  /**
+   * Suspends or bans an account (restriction: { type: 'suspended'|'banned', actionId, until }), or lifts it (null).
+   * Restricted people can still sign in, but only see why, their inbox and the appeal form (checked in server.js).
+   */
+  async setRestriction(id, restriction) {
     const user = this.userById(id);
     if (!user) throw httpError(404, 'User not found');
-    if (isOwner(user) && disabled) throw httpError(400, 'Owners cannot be suspended. Change their role first.');
-    user.disabled = !!disabled;
-    if (disabled) this.dropSessions(id);
+    if (isOwner(user) && restriction) throw httpError(400, 'Owners cannot be suspended or banned. Change their role first.');
+    if (restriction) {
+      user.restriction = { ...restriction, at: Date.now() };
+    } else {
+      delete user.restriction;
+    }
     await this.save();
-    await this.saveSessions();
     return user;
   }
 
@@ -503,7 +515,7 @@ class Auth {
     if (!token || !/^(th|mcpt)_/.test(token)) return null;
     const hash = sha256(token);
     for (const u of this.users) {
-      if (u.disabled) continue;
+      if (u.disabled || u.restriction) continue;
       const t = u.tokens.find((x) => x.hash === hash);
       if (t) {
         t.lastUsed = Date.now();

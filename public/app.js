@@ -21,6 +21,10 @@ async function api(method, url, body) {
     showAuth();
     throw new Error('Please sign in.');
   }
+  if (res.status === 403 && data.code === 'RESTRICTED' && !state.restrictedShown) {
+    state.restrictedShown = true;
+    location.reload(); // the account was just suspended or banned: show why
+  }
   if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { code: data.code });
   return data;
 }
@@ -291,6 +295,7 @@ function renderHeader() {
                  ${isCustomer() ? '<a href="#" id="hdr-billing">Open Billing</a> to fix it.' : ''}</div>`
             : ''
         }
+        ${serverModerationBox(s)}
         <div class="meta">
           <span><b>${esc(s.typeLabel)}</b> ${esc(s.version)} ${buildText ? `<span class="muted">(${esc(buildText)})</span>` : ''}</span>
           <span title="Memory the server is using right now / the most it may use">RAM <b>${s.memUsedMb ? `${fmtMem(s.memUsedMb)} / ` : ''}${fmtMem(s.memoryMb)}</b></span>
@@ -340,11 +345,12 @@ function renderHeader() {
           : ''
       }
       <div class="actions">
-        <button class="btn primary" data-act="start" ${alive || busy || s.suspended ? 'disabled' : ''}>▶ Start</button>
+        <button class="btn primary" data-act="start" ${alive || busy || s.suspended || s.moderation ? 'disabled' : ''}>▶ Start</button>
         <button class="btn" data-act="restart" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>⟳ Restart</button>
         <button class="btn" data-act="stop" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>■ Stop</button>
         <button class="btn danger" data-act="kill" ${!alive ? 'disabled' : ''} title="Force kill the Java process">Kill</button>
         ${hostFeatures() ? '<button class="btn" data-act="open-folder" title="Open the server folder">📁 Folder</button>' : ''}
+        ${isTeam() && s.owner && s.owner !== state.me.user.id && canTakeAction('server') ? '<button class="btn" id="btn-take-action" title="Warn, suspend, ban or delete this server, with a reason and evidence">🛡️ Take action</button>' : ''}
       </div>
     </div>
     ${s.notes ? `<div class="srv-notes"><span class="muted small">📝 Notes</span> ${esc(s.notes)}</div>` : ''}
@@ -353,6 +359,11 @@ function renderHeader() {
     b.addEventListener('click', () => attempt(() => api('POST', `/api/servers/${s.id}/${b.dataset.act}`))),
   );
   if ($('#btn-play', el)) $('#btn-play', el).addEventListener('click', () => launchClient(s));
+  if ($('#btn-take-action', el)) $('#btn-take-action', el).addEventListener('click', () => openTakeAction({ target: 'server', server: { id: s.id, name: s.name, ownerName: s.ownerName }, user: { id: s.owner, username: s.ownerName } }));
+  $$('[data-mod-inbox]', el).forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    openInbox(a.dataset.modInbox);
+  }));
   if ($('#hdr-billing', el))
     $('#hdr-billing', el).addEventListener('click', (e) => {
       e.preventDefault();
@@ -1177,6 +1188,9 @@ async function renderSettings(body) {
     });
   });
   if ($('#btn-delete')) $('#btn-delete').addEventListener('click', () => {
+    if (isTeam() && s.owner && s.owner !== state.me.user.id && s.plan) {
+      return openTakeAction({ target: 'server', type: 'delete', server: { id: s.id, name: s.name, ownerName: s.ownerName }, user: { id: s.owner, username: s.ownerName } });
+    }
     if (prompt(`Type the server name to delete it permanently:\n${s.name}`) !== s.name) return;
     attempt(async () => {
       await api('DELETE', `/api/servers/${s.id}`);
@@ -1592,6 +1606,10 @@ async function init() {
     return;
   }
   checkEmailVerified();
+  if (state.me.user && state.me.user.restriction) {
+    showRestricted().catch((e) => toast(e.message, 'error'));
+    return;
+  }
   if (location.pathname.replace(/\/$/, '') === '/admin') {
     initConsole();
     return;
@@ -1610,6 +1628,19 @@ async function init() {
     openActivity();
   });
   renderActivityLink();
+  if (isTeam()) {
+    $('#inbox-link').classList.remove('hidden');
+    $('#inbox-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      openInbox().catch((err) => toast(err.message, 'error'));
+    });
+    refreshInboxBadge(!params.has('inbox'));
+    setInterval(() => refreshInboxBadge(), 60000);
+    if (params.has('inbox')) {
+      history.replaceState(null, '', location.pathname);
+      openInbox().catch((err) => toast(err.message, 'error'));
+    }
+  }
   setInterval(refreshSystem, 20000);
   try {
     state.types = await api('GET', '/api/types');
