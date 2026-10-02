@@ -169,6 +169,11 @@
       const onceTotal = once.reduce((n, c) => n + c.cents, 0);
       const onceDue = once.filter((c) => c.status !== 'paid').reduce((n, c) => n + c.cents, 0);
       const monthly = recurring.reduce((n, c) => n + (c.period === 'year' ? c.cents / 12 : c.cents), 0);
+      // Break-even: every monthly cost x 12, plus yearly costs; the first year also has the one-time costs.
+      const monthCents = recurring.filter((c) => c.period === 'month').reduce((n, c) => n + c.cents, 0);
+      const yearCents = recurring.filter((c) => c.period === 'year').reduce((n, c) => n + c.cents, 0);
+      const perYear = monthCents * 12 + yearCents;
+      const firstYear = onceTotal + perYear;
       // Stripe keeps about 2.9% + 30 cents of each card payment made through the website.
       const fees = Math.round(d.siteCents * 0.029 + d.siteCount * 30);
       const net = Math.max(0, d.raisedCents - fees);
@@ -185,6 +190,7 @@
       const line = (c, cover) => `
         <div class="r-line">
           <div class="r-row"><span class="r-name">${esc(c.name)}</span><span class="r-dots"></span><span class="r-amt">${money(c.cents)}${PER[c.period]}</span></div>
+          ${c.period === 'month' ? `<div class="r-row r-small r-x12"><span>${money(c.cents)} &times; 12 months</span><span class="r-dots"></span><span>${money(c.cents * 12)}/yr</span></div>` : ''}
           <div class="r-sub"><span>${esc(c.detail)}</span>${status(c)}</div>
           ${cover !== undefined ? `<div class="r-cover"><div class="r-cover-bar"><div style="width:${c.cents ? Math.round((cover / c.cents) * 100) : 0}%"></div></div>
             <span>${cover >= c.cents ? 'Covered by donations' : `${money(cover)} of ${money(c.cents)} from donations`}</span></div>` : ''}
@@ -197,8 +203,16 @@
         ${recurring.length ? `<div class="r-group">Ongoing</div>${recurring.map((c) => line(c)).join('')}` : ''}
         <div class="r-rule"></div>
         ${once.length ? `<div class="r-row r-total"><span>One-time total</span><span class="r-dots"></span><span>${money(onceTotal)}</span></div>` : ''}
-        ${recurring.length ? `<div class="r-row r-total"><span>Running costs</span><span class="r-dots"></span><span>${money(Math.round(monthly))}/mo</span></div>
-          <div class="r-row r-small"><span>That's per year</span><span class="r-dots"></span><span>${money(Math.round(monthly * 12))}</span></div>` : ''}
+        ${monthCents ? `<div class="r-row r-small"><span>Monthly costs ${money(monthCents)} &times; 12</span><span class="r-dots"></span><span>${money(monthCents * 12)}</span></div>` : ''}
+        ${yearCents ? `<div class="r-row r-small"><span>Yearly costs</span><span class="r-dots"></span><span>${money(yearCents)}</span></div>` : ''}
+        ${recurring.length ? `<div class="r-row r-total"><span>Running costs per year</span><span class="r-dots"></span><span>${money(perYear)}</span></div>` : ''}
+        ${recurring.length ? `
+        <div class="r-group">To break even</div>
+        ${once.length ? `<div class="r-row r-total"><span>First year (one-time + 12 months)</span><span class="r-dots"></span><span>${money(firstYear)}</span></div>` : ''}
+        <div class="r-row r-total"><span>${once.length ? 'Every year after that' : 'Every year'}</span><span class="r-dots"></span><span>${money(perYear)}</span></div>
+        <div class="r-row r-small"><span>That's at least, every month</span><span class="r-dots"></span><span>${money(Math.ceil(perYear / 12))}/mo</span></div>
+        <div class="r-cover r-break"><div class="r-cover-bar"><div style="width:${Math.min(100, Math.round((net / firstYear) * 100))}%"></div></div>
+          <span>${money(net)} of the ${money(firstYear)} ${once.length ? 'first year' : 'year'} from donations (${Math.min(100, Math.round((net / firstYear) * 100))}%)</span></div>` : ''}
         <div class="r-rule double"></div>
         <div class="r-row"><span>Donations so far</span><span class="r-dots"></span><span>${money(d.raisedCents)}</span></div>
         ${fees ? `<div class="r-row r-small"><span>Stripe's card fee (about 2.9% + 30¢ each)</span><span class="r-dots"></span><span>&minus;${money(fees)}</span></div>` : ''}

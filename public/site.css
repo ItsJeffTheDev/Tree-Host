@@ -367,10 +367,15 @@ a.costs-teaser .ic { width: 26px; height: 26px; flex: none; color: var(--accent2
 .r-row.r-total { font-weight: 800; margin: 4px 0; }
 .r-row.r-small { color: #6b6f63; font-size: 13px; margin: 2px 0; }
 .r-row > span:last-child { white-space: nowrap; }
+.r-row.r-x12 { margin-top: 2px; font-size: 12.5px; }
+.r-break { margin: 8px 0 2px; }
+.r-break .r-cover-bar { flex-basis: 160px; }
 .r-summary { margin-top: 16px; padding: 12px 14px; background: #e7f2e9; border-radius: 6px; color: #1d4d31; font-family: system-ui, sans-serif; font-size: 15px; }
 .r-foot { margin: 14px 0 0; color: #6b6f63; font-size: 12px; font-family: system-ui, sans-serif; text-align: center; }
 @media (max-width: 600px) {
   .receipt { padding: 22px 16px 36px; font-size: 13px; }
   .r-sub { flex-direction: column; gap: 4px; }
   .r-cover-bar { flex-basis: 80px; }
+  .r-break { flex-direction: column; align-items: stretch; gap: 6px; }
+  .r-break .r-cover-bar { flex-basis: auto; }
 }
