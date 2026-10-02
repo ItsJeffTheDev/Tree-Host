@@ -21,6 +21,7 @@ const providers = require('./providers');
 const java = require('./java');
 const { Activity } = require('./activity');
 const { Moderation, TYPES, REASONS } = require('./moderation');
+const MOTD = require('./motd');
 const backups = require('./backups');
 const modrinth = require('./modrinth');
 
@@ -1703,6 +1704,11 @@ async function syncStaffPlugin(inst) {
       if (!['EBUSY', 'EPERM'].includes(e.code)) throw e;
     }
   }
+  // The owner's MOTD for the plugin to show (hex colors, and a new frame every few seconds when animated).
+  const motdFile = path.join(dir, 'TreeHostStaff', 'motd.txt');
+  const m = inst.cfg.motd;
+  const motdText = m && m.frames && m.frames.length ? `#interval=${m.interval || 3}\n${m.frames.map((f) => MOTD.toSection(f)).join('\n---\n')}\n` : '';
+  if ((await fsp.readFile(motdFile, 'utf8').catch(() => null)) !== motdText) await fsp.writeFile(motdFile, motdText);
   const list = path.join(dir, 'TreeHostStaff', 'staff.txt');
   const text = staffFileFor(inst);
   if ((await fsp.readFile(list, 'utf8').catch(() => null)) !== text) await fsp.writeFile(list, text);
@@ -1958,6 +1964,22 @@ route('PUT', '/api/servers/:id/network', async (req, res, p) => {
   proxy.logActivity('server', who(req), `updated the network (${ids.length} server${ids.length === 1 ? '' : 's'})`);
   proxy.emitStatus();
   return { ok: true, restart, mode: proxy.cfg.network ? networkMode(proxy) : null };
+});
+
+// ---------- MOTD (the message under the server's name in the server list) ----------
+
+route('PUT', '/api/servers/:id/motd', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  const b = await readJson(req);
+  inst.cfg.motd = b.clear ? null : MOTD.normalize(b);
+  manager.save();
+  // Paper/Spigot servers with the Tree Host plugin show it right away; the others on their next start.
+  const live = !!inst.proc && manager.protectedPlugin(inst);
+  await syncStaffPlugin(inst).catch(() => {});
+  if (!inst.proc) await inst.prepareConfigFiles().catch(() => {});
+  inst.logActivity('server', who(req), b.clear ? 'reset the MOTD' : `changed the MOTD${inst.cfg.motd.animated ? ` (animated, ${inst.cfg.motd.frames.length} frames)` : ''}`);
+  inst.emitStatus();
+  return { ...inst.toJSON(), motdLive: live, motdAnimates: manager.protectedPlugin(inst) };
 });
 
 // ---------- custom addresses (the owner's own domain instead of Tree Host's address) ----------

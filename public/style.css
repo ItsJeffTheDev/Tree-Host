@@ -469,3 +469,15 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .net-row:has(input[name=srv]:checked) { border-color: var(--accent); background: rgba(70,195,123,.07); }
 .net-name { flex: 1; min-width: 180px; }
 .net-start { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+
+/* ---------- MOTD editor ---------- */
+.mc-entry-big { width: min(100%, 560px); }
+.mc-entry .mc-motd { white-space: normal; line-height: 1.35; }
+.motd-tools { display: flex; flex-direction: column; gap: 8px; }
+.motd-swatches, .motd-fmts { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.motd-sw { width: 24px; height: 24px; border-radius: 5px; border: 2px solid var(--border); cursor: pointer; padding: 0; }
+.motd-sw:hover { transform: scale(1.12); border-color: var(--text); }
+.motd-hex { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); margin-left: 6px; }
+.motd-hex input { width: 28px; height: 24px; padding: 0; border: none; background: none; }
+.motd-frame { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.motd-frame input { font-family: ui-monospace, Consolas, monospace; }

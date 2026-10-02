@@ -1,4 +1,5 @@
 'use strict';
+const MOTD = require('./motd');
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
@@ -321,6 +322,7 @@ class Instance extends EventEmitter {
       suspended: c.suspended || null,
       moderation: c.moderation || null,
       icon: c.iconAt || null,
+      motd: c.motd || null,
       maxPlayers: this.proc ? this.maxPlayers || null : null,
       subscriptionId: c.subscriptionId || null,
       plan: this.manager.planInfo(this),
@@ -527,7 +529,9 @@ class Instance extends EventEmitter {
       );
       const propsFile = path.join(this.dir, 'server.properties');
       const text = (await exists(propsFile)) ? await fsp.readFile(propsFile, 'utf8') : '';
-      await fsp.writeFile(propsFile, updateProperties(text, { 'server-port': port }));
+      // The owner's MOTD (classic colors here; Paper/Spigot also get hex colors and animation from the Tree Host plugin).
+      const motd = this.cfg.motd && this.cfg.motd.frames && this.cfg.motd.frames[0];
+      await fsp.writeFile(propsFile, updateProperties(text, { 'server-port': port, ...(motd ? { motd: MOTD.propertiesValue(MOTD.toClassic(motd)) } : {}) }));
       await this.applyGatewayBackend();
       await this.applyNetworkBackend();
       return;
@@ -551,6 +555,10 @@ class Instance extends EventEmitter {
           .replace(/^online-mode\s*=.*$/m, `online-mode = ${this.cfg.gateway || this.cfg.onlineMode !== false}`);
         if (this.cfg.gateway) text = this.gatewayToml(text);
         else if (this.cfg.network) text = await this.networkToml(text);
+        if (!this.cfg.gateway && this.cfg.motd && this.cfg.motd.frames[0]) {
+          const mini = MOTD.toMiniMessage(this.cfg.motd.frames[0]).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          text = text.replace(/^motd\s*=.*$/m, `motd = "${mini}"`);
+        }
         await fsp.writeFile(velocityToml, text);
       }
     } else {
@@ -561,6 +569,10 @@ class Instance extends EventEmitter {
           .replace(/^(\s*host:\s*)[^\s#]+/m, `$10.0.0.0:${port}`)
           .replace(/^online_mode:.*$/m, `online_mode: ${this.cfg.onlineMode !== false}`);
         if (this.cfg.network) text = this.networkBungee(text);
+        if (this.cfg.motd && this.cfg.motd.frames[0]) {
+          const m = this.cfg.motd.frames[0].replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+          text = text.replace(/^  motd:.*$/m, `  motd: "${m}"`);
+        }
         await fsp.writeFile(cfgYml, text);
       } else if (this.cfg.network) {
         await fsp.writeFile(cfgYml, this.networkBungee([

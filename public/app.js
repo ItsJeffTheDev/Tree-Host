@@ -995,7 +995,6 @@ async function saveFile() {
 // ---------- settings ----------
 
 const PROPS = [
-  ['motd', 'MOTD', 'text'],
   ['online-mode', 'Online mode', ['true', 'false'], 'false lets you join with any username (handy for testing with several clients)'],
   ['gamemode', 'Default gamemode', ['survival', 'creative', 'adventure', 'spectator']],
   ['difficulty', 'Difficulty', ['peaceful', 'easy', 'normal', 'hard']],
@@ -1023,6 +1022,7 @@ async function renderSettings(body) {
 
   body.innerHTML = `
     ${networkCardHtml(s)}
+    ${motdCardHtml(s)}
     ${iconCardHtml(s)}
     ${domainCardHtml(s)}
     ${listingCardHtml(s)}
@@ -1230,6 +1230,7 @@ Cancel: keep the current version.`)) return;
   });
 
   bindIconCard(s);
+  bindMotdCard(s);
   bindNetworkCard(s);
   bindDomainCard(s);
   bindListingCard(s);
@@ -1283,6 +1284,193 @@ async function bindNetworkCard(s) {
     } else toast(servers.length ? 'Network saved. It applies when the servers next start.' : 'Network cleared.');
     bindNetworkCard(s);
   }));
+}
+
+// ---------- MOTD editor (colors with & codes, hex colors, animation) ----------
+
+const MC_COLORS = {
+  0: ['#000000', 'Black'], 1: ['#0000AA', 'Dark blue'], 2: ['#00AA00', 'Dark green'], 3: ['#00AAAA', 'Dark aqua'],
+  4: ['#AA0000', 'Dark red'], 5: ['#AA00AA', 'Purple'], 6: ['#FFAA00', 'Gold'], 7: ['#AAAAAA', 'Gray'],
+  8: ['#555555', 'Dark gray'], 9: ['#5555FF', 'Blue'], a: ['#55FF55', 'Green'], b: ['#55FFFF', 'Aqua'],
+  c: ['#FF5555', 'Red'], d: ['#FF55FF', 'Pink'], e: ['#FFFF55', 'Yellow'], f: ['#FFFFFF', 'White'],
+};
+const MC_FORMATS = [['l', 'B', 'Bold', 'font-weight:800'], ['o', 'I', 'Italic', 'font-style:italic'], ['n', 'U', 'Underline', 'text-decoration:underline'],
+  ['m', 'S', 'Strikethrough', 'text-decoration:line-through'], ['k', '?', 'Obfuscated (scrambles)', ''], ['r', '↺', 'Reset formatting', '']];
+const MOTD_PRESETS = [
+  { name: 'Classic', frames: ['&a&lWelcome to {name}!\n&7Survival · Friends · Fun'] },
+  { name: 'Sunset', frames: ['&#ff5e62&lS&#ff7a5c&lu&#ff965a&ln&#ffb259&ls&#ffce5a&le&#ffe95d&lt &f{name}\n&e✦ &7Join the adventure today &e✦'] },
+  { name: 'Event', frames: ['&6&l⚡ {name} &6&l⚡\n&c&lDOUBLE XP WEEKEND &7- join now!'] },
+  { name: 'Animated', frames: ['&a&l» &f&l{name} &a&l«\n&7Now open!', '&2&l» &a&l{name} &2&l«\n&7Now &aopen&7!', '&e&l» &6&l{name} &e&l«\n&7Join &efriends&7!', '&b&l» &3&l{name} &b&l«\n&7Have &bfun&7!'], interval: 2 },
+];
+
+/** & codes -> HTML spans that look like Minecraft text. */
+function mcRender(text) {
+  let color = '#AAAAAA';
+  let fmt = {};
+  let out = '';
+  const parts = String(text || '').replace(/§/g, '&').split(/(&#[0-9a-fA-F]{6}|&[0-9a-fk-orA-FK-OR])/);
+  for (const part of parts) {
+    if (/^&#/.test(part)) {
+      color = `#${part.slice(2)}`;
+      fmt = {};
+    } else if (/^&[0-9a-fA-F]$/.test(part)) {
+      color = MC_COLORS[part[1].toLowerCase()][0];
+      fmt = {};
+    } else if (/^&[k-oK-O]$/.test(part)) fmt[part[1].toLowerCase()] = true;
+    else if (/^&[rR]$/.test(part)) {
+      color = '#AAAAAA';
+      fmt = {};
+    } else if (part) {
+      for (const line of part.split('\n').map((l, i) => [l, i])) {
+        if (line[1]) out += '<br>';
+        if (!line[0]) continue;
+        const style = [`color:${color}`, fmt.l && 'font-weight:800', fmt.o && 'font-style:italic',
+          (fmt.n || fmt.m) && `text-decoration:${[fmt.n && 'underline', fmt.m && 'line-through'].filter(Boolean).join(' ')}`].filter(Boolean).join(';');
+        out += `<span style="${style}"${fmt.k ? ` class="mc-obf" data-len="${line[0].length}"` : ''}>${esc(fmt.k ? line[0].replace(/./g, '#') : line[0])}</span>`;
+      }
+    }
+  }
+  return out || '<span style="color:#AAAAAA">A Minecraft Server</span>';
+}
+
+let mcObfTimer = null;
+function startObfuscation() {
+  clearInterval(mcObfTimer);
+  const chars = 'ABCDEFGHJKLMNOPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz0123456789#$%&@';
+  mcObfTimer = setInterval(() => {
+    const els = document.querySelectorAll('.mc-obf');
+    if (!els.length) return clearInterval(mcObfTimer);
+    els.forEach((el) => (el.textContent = Array.from({ length: Number(el.dataset.len) }, () => chars[(Math.random() * chars.length) | 0]).join('')));
+  }, 80);
+}
+
+function motdCardHtml(s) {
+  const edit = can('settings', s);
+  const pluginServer = s.family === 'bukkit' && s.space === 'customer';
+  return `<div class="card stack" id="motd-card">
+    <h3>MOTD <span class="muted small" style="font-weight:400">(the message under your server's name in the server list)</span></h3>
+    <div class="mc-entry mc-entry-big" title="How it looks in Minecraft → Multiplayer">
+      ${s.icon ? `<img class="mc-icon" src="${iconUrl(s)}" alt="">` : '<div class="mc-icon mc-icon-empty">?</div>'}
+      <div class="mc-text"><div class="mc-name">${esc(s.name)}</div><div class="mc-motd" id="motd-preview"></div></div>
+      <div class="mc-ping">▮▮▮▮▮</div>
+    </div>
+    ${edit ? `
+    <div class="motd-tools">
+      <div class="motd-swatches">${Object.entries(MC_COLORS).map(([c, [hex, label]]) => `<button type="button" class="motd-sw" data-code="&${c}" title="${label} (&${c})" style="background:${hex}"></button>`).join('')}
+        <label class="motd-hex" title="Any color (Minecraft 1.16+)"><input type="color" id="motd-hex" value="#46c37b"> Hex</label></div>
+      <div class="motd-fmts">${MC_FORMATS.map(([c, t, label, st]) => `<button type="button" class="btn sm" data-code="&${c}" title="${label} (&${c})" style="${st}">${t}</button>`).join('')}
+        <select id="motd-preset" style="width:auto"><option value="">Templates…</option>${MOTD_PRESETS.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join('')}</select></div>
+    </div>
+    <div id="motd-frames" class="stack" style="gap:10px"></div>
+    <div class="row" style="flex-wrap:wrap;align-items:center">
+      <button type="button" class="btn sm" id="motd-add">+ Add animation frame</button>
+      <label class="small muted" id="motd-int-wrap">Change every <select id="motd-interval" style="width:auto">${[1, 2, 3, 4, 5, 8, 10].map((n) => `<option value="${n}">${n} s</option>`).join('')}</select></label>
+      <span class="small muted">${pluginServer ? 'Animation and hex colors show live, no restart needed.' : s.kind === 'proxy' ? 'Proxies show the first frame (no animation). Restart to apply.' : 'This server type shows the first frame with classic colors. Animation and hex colors need Paper, Purpur or Spigot. Restart to apply.'}</span>
+    </div>
+    <p class="small muted" style="margin:0">Type <b>&</b> codes or use the buttons: <b>&6</b> gold, <b>&l</b> bold, <b>&#ff8800</b> any color, <b>&r</b> reset. Use <b>{name}</b> for the server's name. Players see a new frame each time they refresh their server list.</p>
+    <div class="row"><button type="button" class="btn primary" id="motd-save">Save MOTD</button><button type="button" class="btn" id="motd-reset">Reset to default</button></div>` : ''}
+  </div>`;
+}
+
+function bindMotdCard(s) {
+  const card = $('#motd-card');
+  if (!card) return;
+  let frames = (s.motd && s.motd.frames && s.motd.frames.length ? s.motd.frames : [`${s.name}\n&7hosted by &aTree Host`]).map((f) => f.split('\n'));
+  let interval = (s.motd && s.motd.interval) || 3;
+  let focused = null;
+  let shown = 0;
+  const fill = (t) => t.replace(/\{name\}/g, s.name);
+  const preview = () => {
+    const el = $('#motd-preview');
+    if (!el) return;
+    el.innerHTML = mcRender(fill((frames[shown % frames.length] || []).join('\n')));
+    startObfuscation();
+  };
+  const drawFrames = () => {
+    const box = $('#motd-frames');
+    if (!box) return preview();
+    box.innerHTML = frames
+      .map((f, i) => `<div class="motd-frame">
+        ${frames.length > 1 ? `<div class="small muted" style="display:flex;justify-content:space-between">Frame ${i + 1}<a href="#" data-rm-frame="${i}">Remove</a></div>` : ''}
+        <input type="text" data-frame="${i}" data-line="0" maxlength="120" placeholder="Line 1" value="${esc(f[0] || '')}">
+        <input type="text" data-frame="${i}" data-line="1" maxlength="120" placeholder="Line 2 (optional)" value="${esc(f[1] || '')}">
+      </div>`)
+      .join('');
+    $('#motd-int-wrap').classList.toggle('hidden', frames.length < 2);
+    $('#motd-interval').value = String(interval);
+    $$('[data-frame]', box).forEach((inp) => {
+      inp.addEventListener('input', () => {
+        frames[inp.dataset.frame][inp.dataset.line] = inp.value;
+        shown = Number(inp.dataset.frame);
+        preview();
+      });
+      inp.addEventListener('focus', () => {
+        focused = inp;
+        shown = Number(inp.dataset.frame);
+        preview();
+      });
+    });
+    $$('[data-rm-frame]', box).forEach((a) => a.addEventListener('click', (e) => {
+      e.preventDefault();
+      frames.splice(Number(a.dataset.rmFrame), 1);
+      drawFrames();
+    }));
+    preview();
+  };
+  const insert = (code) => {
+    const inp = focused || $('[data-frame="0"][data-line="0"]', card);
+    if (!inp) return;
+    const [a, b] = [inp.selectionStart ?? inp.value.length, inp.selectionEnd ?? inp.value.length];
+    inp.value = inp.value.slice(0, a) + code + inp.value.slice(b);
+    inp.focus();
+    inp.setSelectionRange(a + code.length, a + code.length);
+    inp.dispatchEvent(new Event('input'));
+  };
+  $$('[data-code]', card).forEach((b) => b.addEventListener('mousedown', (e) => {
+    e.preventDefault(); // keep the cursor in the text box
+    insert(b.dataset.code);
+  }));
+  const hex = $('#motd-hex');
+  if (hex) hex.addEventListener('change', () => insert(`&${hex.value.toLowerCase()}`));
+  const preset = $('#motd-preset');
+  if (preset) preset.addEventListener('change', () => {
+    const p = MOTD_PRESETS[preset.value];
+    if (!p) return;
+    frames = p.frames.map((f) => f.split('\n'));
+    interval = p.interval || interval;
+    preset.value = '';
+    drawFrames();
+  });
+  const add = $('#motd-add');
+  if (add) add.addEventListener('click', () => {
+    if (frames.length >= 10) return toast('Up to 10 frames.', 'error');
+    frames.push([...frames[frames.length - 1]]);
+    drawFrames();
+  });
+  const intSel = $('#motd-interval');
+  if (intSel) intSel.addEventListener('change', () => (interval = Number(intSel.value)));
+  const save = $('#motd-save');
+  if (save) save.addEventListener('click', () => attempt(async () => {
+    const r = await api('PUT', `/api/servers/${s.id}/motd`, { frames: frames.map((f) => fill(f.filter((l, i) => i === 0 || l).join('\n'))), interval });
+    toast(r.motdLive ? 'MOTD saved: refresh your server list to see it.' : r.proc || s.pid ? 'MOTD saved. Restart the server to apply it.' : 'MOTD saved.');
+  }));
+  const reset = $('#motd-reset');
+  if (reset) reset.addEventListener('click', () => attempt(async () => {
+    await api('PUT', `/api/servers/${s.id}/motd`, { clear: true });
+    frames = [[s.name, '&7hosted by &aTree Host']];
+    drawFrames();
+    toast('MOTD reset.');
+  }));
+  drawFrames();
+  // The preview plays the animation.
+  clearInterval(card._anim);
+  card._anim = setInterval(() => {
+    if (!document.body.contains(card)) return clearInterval(card._anim);
+    if (frames.length > 1 && !(focused && document.activeElement === focused)) {
+      shown = (shown + 1) % frames.length;
+      preview();
+    }
+  }, interval * 1000);
 }
 
 // ---------- custom address (the owner's own domain) ----------
@@ -1423,7 +1611,7 @@ function iconCardHtml(s) {
         ${s.icon ? `<img class="mc-icon" src="${iconUrl(s)}" alt="Server icon">` : '<div class="mc-icon mc-icon-empty">?</div>'}
         <div class="mc-text">
           <div class="mc-name">${esc(s.name)}</div>
-          <div class="mc-motd">${esc(s.typeLabel)} ${esc(s.version)} on Tree Host</div>
+          <div class="mc-motd">${s.motd && s.motd.frames ? mcRender(s.motd.frames[0]) : `${esc(s.typeLabel)} ${esc(s.version)} on Tree Host`}</div>
         </div>
         <div class="mc-ping">▮▮▮▮▮</div>
       </div>

@@ -183,6 +183,12 @@ function expect(label, got, want) {
     expect('...with only known tags', mine && mine.tags.join(), 'SMP,Survival');
     expect('...and no owner details', mine && 'owner' in mine, false);
     expect('bad Discord links are refused', (await call('cust1', 'PUT', `/api/servers/${sid}/listing`, { public: true, discord: 'https://evil.example/x' })).status, 400);
+    // MOTD with colors and animation
+    const motd = await call('cust1', 'PUT', `/api/servers/${sid}/motd`, { frames: ['&6&lHello\n&7world', '&#ff8800Frame 2'], interval: 2 });
+    expect('MOTD with colors and frames saved', motd.status === 200 && motd.data.motd.animated, true);
+    expect('an empty MOTD is refused', (await call('cust1', 'PUT', `/api/servers/${sid}/motd`, { frames: ['&6'] })).status, 400);
+    expect("support can't change the MOTD", (await call('support1', 'PUT', `/api/servers/${sid}/motd`, { frames: ['hi'] })).status, 403);
+    expect('MOTD reset', (await call('cust1', 'PUT', `/api/servers/${sid}/motd`, { clear: true })).data.motd, null);
     // custom address
     expect('a bad domain is refused', (await call('cust1', 'PUT', `/api/servers/${sid}/domain`, { domain: 'not a domain' })).status, 400);
     expect("a Tree Host domain can't be claimed", (await call('cust1', 'PUT', `/api/servers/${sid}/domain`, { domain: 'mc.treehost.online' })).status, 400);

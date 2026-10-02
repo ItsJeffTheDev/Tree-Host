@@ -130,6 +130,19 @@ Memory, CPU, disk and the port come from your plan and can't be changed in Setti
 
 ---
 
+## MOTD (your server-list message)
+
+**Settings → MOTD** sets the two lines under your server's name in Minecraft's server list.
+
+- Click a color or style, or type **&** codes: **&6** gold, **&a** green, **&l** bold, **&o** italic, **&n** underline,
+  **&m** strikethrough, **&k** scrambled, **&r** reset. **&#ff8800** is any color you like (Minecraft 1.16+).
+- **{name}** puts in your server's name. Try the **Templates**.
+- **+ Add animation frame** makes it animated: players see the next frame each time they refresh their server list.
+- The preview shows exactly how it will look.
+
+On Paper, Purpur, Folia and Spigot, changes (and animation and hex colors) show **right away**. Other server types use
+the first frame with the classic 16 colors, after a restart.
+
 ## Proxy networks (Velocity, BungeeCord, Waterfall)
 
 A proxy lets players join one address and move between your servers with **/server name**.

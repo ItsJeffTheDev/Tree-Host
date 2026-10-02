@@ -31,6 +31,7 @@ import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.event.player.PlayerLoginEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.server.ServerCommandEvent;
+import org.bukkit.event.server.ServerListPingEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.Team;
@@ -63,6 +64,10 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
 
     private volatile Map<String, String> staff = Collections.emptyMap(); // lower-case name -> role label
     private volatile boolean proxyTrusted; // Tree Host put this server behind its owner's proxy, which checks accounts
+    private volatile String[] motdFrames = new String[0]; // the owner's MOTD (several frames = animated)
+    private volatile int motdInterval = 3;
+    private File motdFile;
+    private long motdModified = -2;
     private File staffFile;
     private long lastModified = -2;
     private Timer timer;
@@ -72,15 +77,18 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         staffFile = new File(getDataFolder(), "staff.txt");
+        motdFile = new File(getDataFolder(), "motd.txt");
         components = classExists("net.md_5.bungee.api.chat.TextComponent") && classExists("org.bukkit.entity.Player$Spigot");
         folia = classExists("io.papermc.paper.threadedregions.RegionizedServer");
         reload();
+        reloadMotd();
         getServer().getPluginManager().registerEvents(this, this);
         timer = new Timer("TreeHostStaff", true);
         timer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
                 reload();
+                reloadMotd();
                 runSync(TreeHostStaff.this::undoBans);
             }
         }, 5000L, 5000L);
@@ -118,6 +126,54 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         }
         staff = next;
         proxyTrusted = trust;
+    }
+
+    /** motd.txt from Tree Host: "#interval=3", then frames (1-2 lines each, section codes) separated by "---". */
+    private void reloadMotd() {
+        long m = motdFile.exists() ? motdFile.lastModified() : -1;
+        if (m == motdModified) return;
+        motdModified = m;
+        java.util.List<String> frames = new java.util.ArrayList<>();
+        int interval = 3;
+        if (m >= 0) {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(motdFile), StandardCharsets.UTF_8))) {
+                StringBuilder frame = new StringBuilder();
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.startsWith("#interval=")) {
+                        try {
+                            interval = Math.max(1, Math.min(60, Integer.parseInt(line.substring(10).trim())));
+                        } catch (NumberFormatException ignored) {
+                        }
+                        continue;
+                    }
+                    if (line.equals("---")) {
+                        if (frame.length() > 0) frames.add(frame.toString());
+                        frame.setLength(0);
+                        continue;
+                    }
+                    if (frame.length() > 0) frame.append("\n");
+                    frame.append(line);
+                }
+                if (frame.length() > 0) frames.add(frame.toString());
+            } catch (Exception e) {
+                getLogger().warning("Could not read the MOTD: " + e.getMessage());
+            }
+        }
+        motdInterval = interval;
+        motdFrames = frames.toArray(new String[0]);
+    }
+
+    /** The server list message: the owner's MOTD, a new frame every few seconds when it's animated. */
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onPing(ServerListPingEvent e) {
+        String[] frames = motdFrames;
+        if (frames.length == 0) return;
+        int i = (int) ((System.currentTimeMillis() / (motdInterval * 1000L)) % frames.length);
+        try {
+            e.setMotd(frames[i]);
+        } catch (Throwable ignored) {
+        }
     }
 
     /** Names are only trustworthy when Mojang checked them: online mode, or behind a BungeeCord/Velocity proxy. */
