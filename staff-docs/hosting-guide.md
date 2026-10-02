@@ -300,6 +300,11 @@ These are the defaults, so they work without changing anything. Emails are sent 
 - **🌳 All servers** (top of the sidebar, support and admins): every customer's server, to help with problems.
 - **Activity** and **Discord alerts** (Staff Console → Settings): new customers, payments, failed payments and crashes.
 - **Logs:** `journalctl -u tree-host -f`
+- **Donations** (Staff Console → Billing → Launch fund): set the goal, add money raised outside the website (the old Stripe
+  payment link, cash) so the total on /donate is right, and hide a public supporter message that shouldn't be there.
+  Donors who want the Discord Supporter role open a ticket; check their donation here, then use `/supporter`.
+- **Team page** (/team): every Owner, Admin and Developer appears automatically. Each sets a title and a short bio in
+  **Account → Team page** (or hides themselves); the picture is their Minecraft head, from the Minecraft name in Account.
 
 ### Monthly business check (first Monday of the month)
 

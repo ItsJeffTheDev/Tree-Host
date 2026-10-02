@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meet the Team - Tree Host</title>
+  <meta name="description" content="The people who build and run Tree Host.">
+  <link rel="icon" href="/brand/tree-host-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body data-page="team">
+  <header id="site-header"></header>
+
+  <div class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow reveal">The team</span>
+      <h1 class="reveal d1">The people behind <span class="green">Tree Host</span></h1>
+      <p class="reveal d2">Minecraft players and developers building the host we always wanted. When you contact support,
+        these are the people who make sure you get an answer.</p>
+    </div>
+  </div>
+
+  <section style="padding-top:16px">
+    <div class="wrap">
+      <div class="team-grid" id="team"><p class="muted" style="text-align:center;grid-column:1/-1">Loading the team...</p></div>
+    </div>
+  </section>
+
+  <section class="cta-band">
+    <div class="wrap reveal">
+      <h2>Want to help Tree Host grow?</h2>
+      <p>Say hi in our community, tell us what to build next, or chip in to the launch fund.</p>
+      <div class="cta-row">
+        <a href="#" class="btn-cta" data-discord data-discord-wrap hidden target="_blank" rel="noopener"><svg class="ic" aria-hidden="true"><use href="/icons.svg#discord"/></svg> Join the Discord</a>
+        <a href="/donate" class="btn-ghost"><svg class="ic" aria-hidden="true"><use href="/icons.svg#sprout"/></svg> Donate</a>
+      </div>
+    </div>
+  </section>
+
+  <footer id="site-footer"></footer>
+  <script src="/icons.js"></script>
+  <script src="/site.js"></script>
+  <script>
+  (() => {
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const box = document.getElementById('team');
+    const since = (t) => (t ? new Date(t).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : '');
+    fetch('/api/team-page')
+      .then((r) => r.json())
+      .then(({ members }) => {
+        if (!members.length) {
+          box.innerHTML = '<p class="muted" style="text-align:center;grid-column:1/-1">The team page is being set up. Check back soon!</p>';
+          return;
+        }
+        box.innerHTML = members.map((m, i) => `
+          <article class="member reveal d${(i % 3) + 1} ${/owner/i.test(m.role) ? 'lead' : ''}">
+            <div class="member-ava">
+              ${m.mcName ? `<img src="https://mc-heads.net/avatar/${encodeURIComponent(m.mcName)}/112" alt="${esc(m.username)}'s Minecraft head" width="112" height="112" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${esc(m.username.charAt(0).toUpperCase())}'}))">` : `<span>${esc(m.username.charAt(0).toUpperCase())}</span>`}
+            </div>
+            <h3>${esc(m.username)}</h3>
+            <div class="member-role">${esc(m.role)}${m.title ? ` · ${esc(m.title)}` : ''}</div>
+            ${m.bio ? `<p>${esc(m.bio)}</p>` : ''}
+            ${m.since ? `<span class="small muted">On the team since ${esc(since(m.since))}</span>` : ''}
+          </article>`).join('');
+        box.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+      })
+      .catch(() => (box.innerHTML = '<p class="muted" style="text-align:center;grid-column:1/-1">Could not load the team. Please refresh.</p>'));
+  })();
+  </script>
+</body>
+</html>

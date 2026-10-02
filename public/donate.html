@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Donate - Tree Host</title>
+  <meta name="description" content="Support Tree Host: donations pay for the servers and the features Minecraft players ask for.">
+  <link rel="icon" href="/brand/tree-host-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body data-page="donate">
+  <header id="site-header"></header>
+
+  <div class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow reveal">Support Tree Host</span>
+      <h1 class="reveal d1">Help Tree Host <span class="green">grow</span></h1>
+      <p class="reveal d2">Tree Host is built by a small team of Minecraft players. Donations pay for the machines your worlds run on,
+        so we can keep prices low and keep building the features you ask for.</p>
+    </div>
+  </div>
+
+  <section style="padding-top:12px">
+    <div class="wrap donate-layout">
+      <div class="stack-lg">
+        <div class="card fund-card reveal" id="fund">
+          <div class="fund-top"><h3 id="fund-title">Launch fund</h3><span class="muted small" id="fund-count"></span></div>
+          <div class="fund-amount"><b id="fund-raised">$0</b><span id="fund-target"></span></div>
+          <div class="fund-bar" role="progressbar" aria-label="Raised so far" aria-valuemin="0" aria-valuemax="100" id="fund-bar-wrap"><div class="fund-fill" id="fund-fill"></div></div>
+          <p class="muted small" id="fund-note" style="margin:10px 0 0"></p>
+        </div>
+
+        <div class="card reveal d1">
+          <h3>Where your donation goes</h3>
+          <ul class="donate-uses">
+            <li><svg class="ic" aria-hidden="true"><use href="/icons.svg#server"/></svg><span><b>Faster machines.</b> Better servers and more memory, so worlds load fast and nothing is overcrowded.</span></li>
+            <li><svg class="ic" aria-hidden="true"><use href="/icons.svg#sparkle"/></svg><span><b>New features.</b> Time to build what players ask for in our Discord.</span></li>
+            <li><svg class="ic" aria-hidden="true"><use href="/icons.svg#handshake"/></svg><span><b>Fair prices.</b> Covering our costs keeps plans cheap for everyone.</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <form class="card donate-form reveal d2" id="donate-form">
+        <div id="thanks" class="thanks" hidden>
+          <div class="thanks-ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#tree"/></svg></div>
+          <h3>Thank you!</h3>
+          <p id="thanks-text">Your donation helps Tree Host grow. Stripe emails you a receipt.</p>
+          <p class="small muted" data-discord-wrap hidden>In our <a data-discord href="#" target="_blank" rel="noopener">Discord</a>? Open a ticket to get the Supporter role.</p>
+          <button type="button" class="btn-ghost" id="again">Donate again</button>
+        </div>
+        <div id="donate-body">
+          <h3>Donate</h3>
+          <div class="amounts" id="amounts" role="radiogroup" aria-label="Amount"></div>
+          <label class="d-field" id="custom-wrap" hidden><span>Your amount (USD)</span>
+            <input type="number" id="custom" min="1" max="1000" step="1" inputmode="numeric" placeholder="15"></label>
+          <label class="d-field"><span>Your name <span class="muted">(optional)</span></span>
+            <input type="text" id="d-name" maxlength="40" placeholder="Steve" autocomplete="nickname"></label>
+          <label class="d-field"><span>Message <span class="muted">(optional)</span></span>
+            <input type="text" id="d-message" maxlength="140" placeholder="Keep it up!"></label>
+          <label class="d-check"><input type="checkbox" id="d-listed" checked> Show my name and message on this page</label>
+          <div class="d-error" id="d-error" hidden></div>
+          <button class="btn-cta block" id="d-go">Donate</button>
+          <p class="small muted d-fine">One payment through Stripe; it doesn't renew. Tree Host is a business, so donations aren't
+            tax-deductible, and they don't buy a plan or anything in return. Questions? <a data-email="billing" href="#">Email billing</a>.</p>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section style="padding-top:0" id="wall-section" hidden>
+    <div class="wrap">
+      <div class="section-head reveal"><h2>Our supporters</h2><p>The people helping Tree Host grow. Thank you!</p></div>
+      <div class="supporters" id="wall"></div>
+    </div>
+  </section>
+
+  <footer id="site-footer"></footer>
+  <script src="/icons.js"></script>
+  <script src="/site.js"></script>
+  <script>
+  (() => {
+    const $ = (s) => document.querySelector(s);
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const money = (cents) => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
+    const PRESETS = [300, 500, 1000, 2500, 5000];
+    let amount = 1000;
+    let info = null;
+
+    $('#amounts').innerHTML = PRESETS.map((c) => `<button type="button" class="amount" role="radio" data-c="${c}">${money(c)}</button>`).join('')
+      + '<button type="button" class="amount" role="radio" data-c="custom">Other</button>';
+    const pick = (c) => {
+      document.querySelectorAll('.amount').forEach((b) => {
+        const on = b.dataset.c === String(c);
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', on);
+      });
+      $('#custom-wrap').hidden = c !== 'custom';
+      if (c === 'custom') {
+        $('#custom').focus();
+        amount = Math.round(Number($('#custom').value) * 100) || 0;
+      } else amount = c;
+      label();
+    };
+    const label = () => {
+      $('#d-go').textContent = info && info.mode === 'off' ? 'Donate with Stripe' : amount >= 100 ? `Donate ${money(amount)}` : 'Donate';
+    };
+    document.querySelectorAll('.amount').forEach((b) => b.addEventListener('click', () => pick(b.dataset.c === 'custom' ? 'custom' : Number(b.dataset.c))));
+    $('#custom').addEventListener('input', () => {
+      amount = Math.round(Number($('#custom').value) * 100) || 0;
+      label();
+    });
+    pick(1000);
+
+    const showError = (msg) => {
+      $('#d-error').textContent = msg;
+      $('#d-error').hidden = !msg;
+    };
+
+    const render = (d) => {
+      info = d;
+      $('#fund-title').textContent = d.title;
+      $('#fund-raised').textContent = money(d.raisedCents);
+      $('#fund-target').textContent = d.targetCents ? ` raised of ${money(d.targetCents)}` : ' raised';
+      const pct = d.targetCents ? Math.min(100, Math.round((d.raisedCents / d.targetCents) * 100)) : 0;
+      $('#fund-bar-wrap').hidden = !d.targetCents;
+      $('#fund-bar-wrap').setAttribute('aria-valuenow', pct);
+      requestAnimationFrame(() => ($('#fund-fill').style.width = `${Math.max(pct, d.raisedCents ? 2 : 0)}%`));
+      $('#fund-count').textContent = d.count ? `${d.count} supporter${d.count === 1 ? '' : 's'}` : '';
+      $('#fund-note').textContent = d.targetCents && d.raisedCents >= d.targetCents
+        ? 'Goal reached: thank you! Every extra dollar still goes straight into Tree Host.'
+        : d.targetCents ? `${pct}% of the way there.` : '';
+      $('#wall-section').hidden = !d.supporters.length;
+      $('#wall').innerHTML = d.supporters.map((s) => `
+        <div class="supporter">
+          <div class="sup-ava">${esc((s.name || '?').trim().charAt(0).toUpperCase())}</div>
+          <div><b>${esc(s.name)}</b>${s.message ? `<p>${esc(s.message)}</p>` : ''}<span class="small muted">${new Date(s.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
+        </div>`).join('');
+      label();
+    };
+    const load = () => fetch('/api/donations').then((r) => r.json()).then(render).catch(() => {});
+
+    $('#donate-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      showError('');
+      if (info && info.mode === 'off' && info.fallbackUrl) return (location.href = info.fallbackUrl);
+      if (!(amount >= 100)) return showError('Choose an amount of at least $1.');
+      const go = $('#d-go');
+      go.disabled = true;
+      go.textContent = 'Opening checkout...';
+      try {
+        const r = await fetch('/api/donations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amountCents: amount, name: $('#d-name').value, message: $('#d-message').value, listed: $('#d-listed').checked }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Something went wrong. Please try again.');
+        location.href = d.url;
+      } catch (err) {
+        showError(err.message);
+        go.disabled = false;
+        label();
+      }
+    });
+
+    const showThanks = (text) => {
+      $('#donate-body').hidden = true;
+      $('#thanks').hidden = false;
+      if (text) $('#thanks-text').textContent = text;
+    };
+    $('#again').addEventListener('click', () => {
+      $('#thanks').hidden = true;
+      $('#donate-body').hidden = false;
+    });
+
+    const params = new URLSearchParams(location.search);
+    if (params.has('thanks')) {
+      history.replaceState(null, '', '/donate');
+      const sid = params.get('session_id');
+      showThanks();
+      (sid
+        ? fetch('/api/donations/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sid }) }).then((r) => r.json())
+        : Promise.resolve({ status: 'paid' })
+      )
+        .then((r) => r.status === 'paid' && r.amountCents ? showThanks(`Your ${money(r.amountCents)} donation helps Tree Host grow. Stripe emails you a receipt.`) : null)
+        .catch(() => {})
+        .finally(load);
+    } else load();
+  })();
+  </script>
+</body>
+</html>

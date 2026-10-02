@@ -167,7 +167,7 @@ billing.hooks.deleteServer = async (id) => {
   await manager.remove(id);
 };
 billing.hooks.userById = (id) => auth.userById(id);
-billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || 'A customer', text);
+billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || sub.donorName || 'A customer', text);
 billing.hooks.email = (user, subject, paragraphs) =>
   mail.send(user.email, subject, paragraphs, PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null, { replyTo: EMAILS.billing });
 billing.hooks.sendEmail = (kind, user, sub) => (user && user.email ? sendEmail(user.email, EMAIL[kind](user, sub, siteUrl())) : Promise.resolve(false));
@@ -645,7 +645,7 @@ route(
     }
     return {
       teamMode: TEAM,
-      user: user ? { ...(user.local ? user : auth.publicUser(user)), ...(user.local ? {} : lifetimeOf(user)), roleLabel: rbac.role(user.role).label, permissions: TEAM ? rbac.permissionsOf(user) : PERMISSIONS.map((x) => x.id) } : null,
+      user: user ? { ...(user.local ? user : auth.publicUser(user)), ...(user.local ? {} : lifetimeOf(user)), roleLabel: rbac.role(user.role).label, ...(TEAM && !user.local && onTeamPage(user) ? { teamProfile: { show: true, title: '', bio: '', ...(user.teamProfile || {}) } } : {}), permissions: TEAM ? rbac.permissionsOf(user) : PERMISSIONS.map((x) => x.id) } : null,
       publicUrl: publicUrl(),
       hosted: HOSTED,
       allowSignup: TEAM && auth.settings.allowSignup,
@@ -1778,6 +1778,80 @@ route('DELETE', '/api/servers/:id', async (req, res, p) => {
   await manager.remove(p.id);
   billing.detachServer(p.id);
   return { ok: true };
+});
+
+// ---------- donations (the launch fund) ----------
+// Payments go through Stripe like plans. Without Stripe, the page links to TREEHOST_DONATE_URL (a Stripe payment link).
+const DONATE_URL = env('DONATE_URL', 'https://buy.stripe.com/00wcN7cfK3Jh9lEgEf0oM00');
+const optionalUser = (req) => {
+  try {
+    return authenticate(req) || null;
+  } catch {
+    return null;
+  }
+};
+route('GET', '/api/donations', () => ({ ...billing.donationSummary(), mode: billing.mode, fallbackUrl: billing.mode === 'off' ? DONATE_URL : null }), { public: true });
+route(
+  'POST',
+  '/api/donations',
+  async (req) => {
+    regionCheck(req, true);
+    const ip = clientIp(req);
+    auth.checkRate([`donate:${ip}`]);
+    auth.recordFailure([`donate:${ip}`]);
+    const body = await readJson(req);
+    const user = optionalUser(req);
+    return billing.donate({ ...body, userId: user && !user.local ? user.id : null }, PUBLIC_URL || publicOrigin(req));
+  },
+  { public: true },
+);
+route('POST', '/api/donations/confirm', async (req) => billing.confirmDonation((await readJson(req)).sessionId), { public: true });
+route('GET', '/api/admin/donations', () => ({
+  ...billing.donationSummary(),
+  goal: billing.settings.donationGoal || {},
+  donations: billing.donations
+    .filter((d) => d.status !== 'pending')
+    .sort((a, b) => (b.paidAt || b.createdAt) - (a.paidAt || a.createdAt))
+    .map((d) => ({ ...d, username: d.userId ? (auth.userById(d.userId) || {}).username || null : null })),
+}), { perm: 'billing.view' });
+route('PUT', '/api/admin/donation-goal', async (req) => {
+  const r = await billing.setDonationGoal(await readJson(req));
+  audit(req, 'updated the launch fund goal');
+  return r;
+}, { perm: 'billing.manage' });
+route('PUT', '/api/admin/donations/:id', async (req, res, p) => {
+  const body = await readJson(req);
+  const d = await billing.setDonationHidden(p.id, body.hidden);
+  audit(req, `${d.hidden ? 'hid' : 'showed'} a supporter message on the donate page`);
+  return d;
+}, { perm: 'billing.manage' });
+
+// ---------- the team page ----------
+// Everyone with a role at Developer level or above (Owner, Admin, Developer, and custom roles that high) is shown,
+// unless they turn it off. They set a title and a short bio in Account; the picture is their Minecraft head.
+const TEAM_PAGE_LEVEL = 60;
+const onTeamPage = (u) => !u.restriction && rbac.role(u.role).level >= TEAM_PAGE_LEVEL;
+route('GET', '/api/team-page', () => {
+  if (!TEAM) return { members: [] };
+  return {
+    members: auth.users
+      .filter((u) => onTeamPage(u) && !(u.teamProfile && u.teamProfile.show === false))
+      .map((u) => {
+        const r = rbac.role(u.role);
+        const tp = u.teamProfile || {};
+        return { username: u.username, role: r.label, level: r.level, title: tp.title || '', bio: tp.bio || '', mcName: u.mcName || '', since: u.createdAt || null };
+      })
+      .sort((a, b) => b.level - a.level || (a.since || 0) - (b.since || 0))
+      .map(({ level, ...m }) => m),
+  };
+}, { public: true });
+route('PUT', '/api/account/team-profile', async (req) => {
+  if (!onTeamPage(req.user)) throw httpError(403, 'Only Owners, Admins and Developers are on the team page.');
+  const body = await readJson(req);
+  const clean = (v, n) => String(v || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, n);
+  req.user.teamProfile = { show: body.show !== false, title: clean(body.title, 40), bio: clean(body.bio, 280) };
+  await auth.save();
+  return req.user.teamProfile;
 });
 
 // ---------- the Tree Host staff plugin (Paper, Spigot, Purpur, Folia, CraftBukkit) ----------
@@ -3061,6 +3135,8 @@ const PAGES = {
   '/servers': 'servers.html',
   '/why': 'why.html',
   '/dmca': 'dmca.html',
+  '/donate': 'donate.html',
+  '/team': 'team.html',
   '/copyright': 'dmca.html',
   '/pricing': 'pricing.html',
   '/support': 'support.html',

@@ -15,6 +15,7 @@ const DELETE_AFTER_DAYS = Number(process.env.DELETE_AFTER_DAYS) || 14; // cancel
 // Memory a server's Java process needs on top of its heap (the container limit is heap + this).
 const OVERHEAD_MB = 384;
 
+const money = (cents) => `${CURRENCY === 'usd' ? '$' : ''}${(cents / 100).toFixed(cents % 100 ? 2 : 0)}${CURRENCY === 'usd' ? '' : ` ${CURRENCY.toUpperCase()}`}`;
 const httpError = (status, message, code) => Object.assign(new Error(message), { status, code });
 
 const DEFAULT_PLANS = [
@@ -147,6 +148,7 @@ class Billing {
     this.subs = [];
     this.settings = { capacityMb: null };
     this.promos = [];
+    this.donations = [];
     this.hooks = {
       notify: () => {}, email: async () => {}, suspend: () => {}, unsuspend: () => {}, deleteServer: async () => {},
       userById: () => null,
@@ -172,6 +174,7 @@ class Billing {
     }
     this.subs = Object.values((await store.load('subscriptions')) || {});
     this.promos = Object.values((await store.load('promos')) || {});
+    this.donations = Object.values((await store.load('donations')) || {});
   }
 
   savePromos() {
@@ -654,6 +657,111 @@ class Billing {
     return s;
   }
 
+  // ----- donations (the launch fund) -----
+
+  saveDonations() {
+    return store.save('donations', this.donations);
+  }
+
+  /** What the public donate page shows: the goal, the total and the supporters who chose to be listed. */
+  donationSummary() {
+    const g = this.settings.donationGoal || {};
+    const paid = this.donations.filter((d) => d.status === 'paid');
+    return {
+      title: g.title || 'Launch fund',
+      targetCents: g.targetCents || 0,
+      raisedCents: paid.reduce((n, d) => n + d.amountCents, 0) + (g.extraCents || 0),
+      count: paid.length + (g.extraCount || 0),
+      currency: CURRENCY,
+      supporters: paid
+        .filter((d) => d.public && !d.hidden)
+        .sort((a, b) => b.paidAt - a.paidAt)
+        .slice(0, 24)
+        .map((d) => ({ name: d.name || 'Someone kind', message: d.hidden ? '' : d.message || '', at: d.paidAt })),
+    };
+  }
+
+  /** Starts a donation: Stripe Checkout (one payment), or straight to "thank you" in demo mode. */
+  async donate({ amountCents, name, message, listed, userId }, origin) {
+    const amount = Math.round(Number(amountCents));
+    if (!(amount >= 100 && amount <= 100000)) throw httpError(400, `Choose an amount between ${money(100)} and ${money(100000)}.`);
+    if (this.mode === 'off') throw httpError(400, 'Donations are not set up yet.', 'NO_PAYMENTS');
+    this.donations = this.donations.filter((d) => !(d.status === 'pending' && Date.now() - d.createdAt > 86400000));
+    const d = {
+      id: crypto.randomBytes(8).toString('hex'),
+      amountCents: amount,
+      currency: CURRENCY,
+      name: String(name || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40),
+      message: String(message || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 140),
+      public: !!listed,
+      userId: userId || null,
+      status: 'pending',
+      createdAt: Date.now(),
+    };
+    this.donations.push(d);
+    if (this.mode === 'demo') {
+      this.markDonationPaid(d, {});
+      await this.saveDonations();
+      return { url: `${origin}/donate?thanks=1`, demo: true };
+    }
+    const meta = { kind: 'donation', donationId: d.id };
+    const session = await stripe('POST', '/checkout/sessions', {
+      mode: 'payment',
+      submit_type: 'donate',
+      success_url: `${origin}/donate?thanks=1&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/donate`,
+      client_reference_id: `donation-${d.id}`,
+      expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
+      metadata: meta,
+      payment_intent_data: { metadata: meta, description: 'Donation to Tree Host' },
+      line_items: [{ quantity: 1, price_data: { currency: CURRENCY, unit_amount: amount, product_data: { name: 'Donation to Tree Host' } } }],
+    });
+    d.checkoutSession = session.id;
+    await this.saveDonations();
+    return { url: session.url };
+  }
+
+  markDonationPaid(d, o) {
+    if (d.status === 'paid') return;
+    d.status = 'paid';
+    d.paidAt = Date.now();
+    d.paymentIntent = o.payment_intent || null;
+    this.hooks.notify('billing', { userId: d.userId, donorName: d.name || 'Someone' }, `donated ${money(d.amountCents)}${d.name ? ` (as ${d.name})` : ''} to the launch fund`);
+  }
+
+  /** Back from Stripe: ask whether the donation was paid (the webhook can't reach a test site on localhost). */
+  async confirmDonation(sessionId) {
+    if (!/^cs_[A-Za-z0-9_]+$/.test(String(sessionId || ''))) throw httpError(400, 'Unknown donation.');
+    const o = await stripe('GET', `/checkout/sessions/${sessionId}`);
+    const d = o.metadata && o.metadata.kind === 'donation' ? this.donations.find((x) => x.id === o.metadata.donationId) : null;
+    if (!d) throw httpError(404, 'Unknown donation.');
+    if (o.status === 'complete' && o.payment_status === 'paid') {
+      this.markDonationPaid(d, o);
+      await this.saveDonations();
+    }
+    return { status: d.status, amountCents: d.amountCents };
+  }
+
+  async setDonationGoal({ title, targetCents, extraCents, extraCount }) {
+    const n = (v) => Math.max(0, Math.round(Number(v) || 0));
+    this.settings.donationGoal = {
+      title: String(title || '').trim().slice(0, 60) || 'Launch fund',
+      targetCents: n(targetCents),
+      extraCents: n(extraCents),
+      extraCount: n(extraCount),
+    };
+    await this.savePlans();
+    return this.donationSummary();
+  }
+
+  async setDonationHidden(id, hidden) {
+    const d = this.donations.find((x) => x.id === id);
+    if (!d) throw httpError(404, 'Donation not found');
+    d.hidden = !!hidden;
+    await this.saveDonations();
+    return d;
+  }
+
   // ----- Stripe webhook -----
 
   findByStripe(subscriptionId, meta) {
@@ -665,6 +773,14 @@ class Billing {
     const o = event.data.object;
     switch (event.type) {
       case 'checkout.session.completed':
+        if (o.metadata && o.metadata.kind === 'donation') {
+          const d = this.donations.find((x) => x.id === o.metadata.donationId);
+          if (d && o.payment_status === 'paid') {
+            this.markDonationPaid(d, o);
+            await this.saveDonations();
+          }
+          break;
+        }
         await this.completeCheckout(o, users);
         break;
       case 'customer.subscription.created':
@@ -697,7 +813,12 @@ class Billing {
         break;
       }
       case 'charge.refunded': {
-        // A refunded one-time purchase ends its plan.
+        // A refunded donation leaves the total; a refunded one-time purchase ends its plan.
+        const don = o.payment_intent && o.refunded ? this.donations.find((x) => x.paymentIntent === o.payment_intent) : null;
+        if (don && don.status === 'paid') {
+          don.status = 'refunded';
+          await this.saveDonations();
+        }
         const s = o.payment_intent ? this.subs.find((x) => x.paymentIntent === o.payment_intent) : null;
         if (s && o.refunded && s.status !== 'canceled') {
           this.markCanceled(s);

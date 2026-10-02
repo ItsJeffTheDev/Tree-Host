@@ -14,6 +14,7 @@
     ['pricing', '/pricing', 'Pricing'],
     ['support', '/support', 'Support'],
     ['about', '/about', 'About'],
+    ['donate', '/donate', 'Donate'],
   ];
   const header = document.getElementById('site-header');
   if (header) {
@@ -51,7 +52,7 @@
           <div class="footer-col"><h4>Help</h4>
             <a href="/help.html">Guides</a><a href="/support">Contact &amp; FAQ</a><a href="/help.html?doc=billing">Billing help</a><span id="ft-discord"></span></div>
           <div class="footer-col"><h4>Company</h4>
-            <a href="/about">About</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/dmca">Copyright</a></div>
+            <a href="/about">About</a><a href="/team">Meet the team</a><a href="/donate">Donate</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/dmca">Copyright</a></div>
         </div>
         <div class="footer-bottom">
           <span>© ${new Date().getFullYear()} <span data-company>Tree Host</span>. All rights reserved.</span>

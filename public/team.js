@@ -561,6 +561,21 @@ async function openAccount() {
         <b>Whitelist me</b> and <b>OP me</b> buttons on your servers.</p>
       <div><button class="btn primary">Save</button></div>
     </form>
+    ${
+      u.teamProfile
+        ? `<form id="acc-team" class="card stack">
+             <h3>${ic('users')} Team page</h3>
+             <p class="hint" style="margin:0">You're on the public <a href="/team" target="_blank">Meet the team</a> page as <b>${esc(u.username)}</b>
+               (${esc(u.roleLabel)}), with your Minecraft head as your picture${u.mcName ? '' : ' (add your Minecraft name above)'}.</p>
+             <label class="check"><input type="checkbox" name="show" ${u.teamProfile.show !== false ? 'checked' : ''}> Show me on the team page</label>
+             <label class="field">Title <span class="muted small">(optional, e.g. Founder, Lead developer)</span>
+               <input type="text" name="title" maxlength="40" value="${esc(u.teamProfile.title || '')}"></label>
+             <label class="field">About you <span class="muted small">(a sentence or two, 280 characters)</span>
+               <textarea name="bio" maxlength="280" rows="3">${esc(u.teamProfile.bio || '')}</textarea></label>
+             <div><button class="btn primary">Save</button></div>
+           </form>`
+        : ''
+    }
     <div class="card stack">
       <h3>API tokens</h3>
       <p class="hint" style="margin:0">Let your build (Gradle, Maven or curl) upload plugins to your servers. Treat them like passwords.</p>
@@ -612,11 +627,20 @@ async function openAccount() {
     e.preventDefault();
     const f = e.target.elements;
     attempt(async () => {
-      state.me.user = await api('PATCH', '/api/auth/me', { mcName: f.mcName.value.trim(), ...(u.firebase ? {} : { email: f.email.value.trim() }) });
+      state.me.user = { ...state.me.user, ...(await api('PATCH', '/api/auth/me', { mcName: f.mcName.value.trim(), ...(u.firebase ? {} : { email: f.email.value.trim() }) })) };
       renderUserBox();
       toast('Saved');
     });
   });
+  if ($('#acc-team', root))
+    $('#acc-team', root).addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = e.target.elements;
+      attempt(async () => {
+        state.me.user.teamProfile = await api('PUT', '/api/account/team-profile', { show: f.show.checked, title: f.title.value, bio: f.bio.value });
+        toast('Team page updated');
+      });
+    });
   if ($('#acc-reset', root))
     $('#acc-reset', root).addEventListener('click', () =>
       attempt(async () => {
@@ -1047,7 +1071,9 @@ async function adminBilling(body) {
           : '<p class="muted" style="margin:0">No subscriptions yet.</p>'
       }
     </div>
-    <p class="hint small">Unpaid plans keep running for ${d.graceDays} days, then the server is stopped. Servers of ended plans are deleted after ${d.deleteAfterDays} days.</p>`;
+    <p class="hint small">Unpaid plans keep running for ${d.graceDays} days, then the server is stopped. Servers of ended plans are deleted after ${d.deleteAfterDays} days.</p>
+    <div class="card stack" id="fund-card"><h3>${ic('sprout')} Launch fund (donations)</h3><div class="muted">Loading...</div></div>`;
+  adminDonations($('#fund-card', body)).catch((e) => ($('#fund-card', body).innerHTML = `<div class="warn-box">${esc(e.message)}</div>`));
   $$('[data-cancel]', body).forEach((b) =>
     b.addEventListener('click', () => {
       if (!confirm('Cancel this subscription now? Stripe stops charging, the server is stopped, and it is deleted later. No automatic refund is made.')) return;
@@ -1057,6 +1083,65 @@ async function adminBilling(body) {
         adminBilling(body);
       });
     }),
+  );
+}
+
+/** The donate page's goal, every donation, and hiding a public message that shouldn't be there. */
+async function adminDonations(card) {
+  const d = await api('GET', '/api/admin/donations');
+  const g = d.goal || {};
+  const dollars = (c) => (c ? +(c / 100).toFixed(2) : '');
+  const manage = hasPerm('billing.manage');
+  card.innerHTML = `
+    <h3>${ic('sprout')} Launch fund (donations)</h3>
+    <p class="hint" style="margin:0">Shown on <a href="/donate" target="_blank">/donate</a>: <b>${money(d.raisedCents, d.currency)}</b>${d.targetCents ? ` of ${money(d.targetCents, d.currency)}` : ''} from ${d.count} supporter${d.count === 1 ? '' : 's'}.
+      Donations made outside the website (the old Stripe link, cash, Ko-fi) can be added below so the total is right.</p>
+    ${
+      manage
+        ? `<form id="goal-form" class="row" style="flex-wrap:wrap;align-items:flex-end">
+             <label class="small">Name<br><input type="text" name="title" maxlength="60" value="${esc(g.title || 'Launch fund')}" style="width:170px"></label>
+             <label class="small">Goal ($)<br><input type="number" name="target" min="0" step="1" value="${dollars(g.targetCents)}" placeholder="none" style="width:110px"></label>
+             <label class="small">Raised elsewhere ($)<br><input type="number" name="extra" min="0" step="0.01" value="${dollars(g.extraCents)}" placeholder="0" style="width:130px"></label>
+             <label class="small">Supporters elsewhere<br><input type="number" name="extraCount" min="0" step="1" value="${g.extraCount || ''}" placeholder="0" style="width:120px"></label>
+             <button class="btn primary">Save</button></form>`
+        : ''
+    }
+    ${
+      d.donations.length
+        ? `<div style="overflow-x:auto"><table><thead><tr><th>When</th><th>Amount</th><th>Name</th><th>Message</th><th>Status</th><th></th></tr></thead><tbody>${d.donations
+            .map((x) => `<tr>
+              <td class="small">${new Date(x.paidAt || x.createdAt).toLocaleString()}</td>
+              <td>${money(x.amountCents, x.currency)}</td>
+              <td>${esc(x.name || '')}${x.username ? ` <span class="muted small">(${esc(x.username)})</span>` : ''}${x.public ? '' : ' <span class="muted small">private</span>'}</td>
+              <td class="small">${x.message ? (x.hidden ? `<s class="muted">${esc(x.message)}</s>` : esc(x.message)) : ''}</td>
+              <td><span class="badge ${x.status === 'paid' ? 'green' : ''}">${esc(x.status)}</span></td>
+              <td class="actions-cell">${manage && x.public && x.status === 'paid' ? `<button class="btn sm" data-dhide="${esc(x.id)}" data-h="${x.hidden ? '' : '1'}">${x.hidden ? 'Show on page' : 'Hide from page'}</button>` : ''}</td></tr>`)
+            .join('')}</tbody></table></div>`
+        : '<p class="muted" style="margin:0">No donations through the website yet.</p>'
+    }`;
+  const form = $('#goal-form', card);
+  if (form)
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = form.elements;
+      attempt(async () => {
+        await api('PUT', '/api/admin/donation-goal', {
+          title: f.title.value,
+          targetCents: Math.round(Number(f.target.value) * 100),
+          extraCents: Math.round(Number(f.extra.value) * 100),
+          extraCount: Number(f.extraCount.value),
+        });
+        toast('Launch fund saved');
+        adminDonations(card);
+      });
+    });
+  $$('[data-dhide]', card).forEach((b) =>
+    b.addEventListener('click', () =>
+      attempt(async () => {
+        await api('PUT', `/api/admin/donations/${b.dataset.dhide}`, { hidden: !!b.dataset.h });
+        adminDonations(card);
+      }),
+    ),
   );
 }
 

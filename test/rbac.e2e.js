@@ -423,6 +423,36 @@ function expect(label, got, want) {
   await call('cust2', 'POST', `/api/servers/${s1.id}/kill`).catch(() => {});
   await call('cust2', 'POST', `/api/servers/${s1.id}/stop`).catch(() => {});
 
+  // team page: Owner, Admin and Developer are shown; Support and customers aren't
+  const teamNames = async () => (await call('anon', 'GET', '/api/team-page')).data.members.map((m) => m.username);
+  const tn = await teamNames();
+  expect('team page shows owner, admin and developer', ['owner1', 'admin1', 'dev1'].every((u) => tn.includes(u)), true);
+  expect('team page leaves out support and customers', tn.includes('support1') || tn.includes('cust1'), false);
+  expect('team page lists the owner first', tn[0], 'owner1');
+  expect('team page has no emails', JSON.stringify((await call('anon', 'GET', '/api/team-page')).data).includes('@'), false);
+  expect('a developer sets a title and bio', (await call('dev1', 'PUT', '/api/account/team-profile', { show: true, title: 'Lead developer', bio: 'Builds <b>things</b>' })).status, 200);
+  const dm = (await call('anon', 'GET', '/api/team-page')).data.members.find((m) => m.username === 'dev1');
+  expect('...shown on the page, without HTML', dm && `${dm.title}|${dm.bio}`, 'Lead developer|Builds  b things /b');
+  await call('admin1', 'PUT', '/api/account/team-profile', { show: false });
+  expect('staff can hide themselves', (await teamNames()).includes('admin1'), false);
+  expect('customers cannot set a team profile', (await call('cust1', 'PUT', '/api/account/team-profile', { title: 'x' })).status, 403);
+
+  // donations (demo mode): the total, the supporters wall, hiding a message
+  expect('donation below $1 is refused', (await call('anon', 'POST', '/api/donations', { amountCents: 50 })).status, 400);
+  expect('a visitor donates without an account', (await call('anon', 'POST', '/api/donations', { amountCents: 1000, name: 'Alex', message: 'Good luck!', listed: true })).status, 200);
+  await call('cust1', 'POST', '/api/donations', { amountCents: 500, name: 'Secret', listed: false });
+  await call('owner1', 'PUT', '/api/admin/donation-goal', { title: 'Launch fund', targetCents: 5000, extraCents: 1500, extraCount: 2 });
+  const fund = (await call('anon', 'GET', '/api/donations')).data;
+  expect('total = donations + raised elsewhere', `${fund.raisedCents}/${fund.targetCents}/${fund.count}`, '3000/5000/4');
+  expect('only listed supporters appear', fund.supporters.map((x) => x.name).join(','), 'Alex');
+  expect('support can see donations (to help donors)', (await call('support1', 'GET', '/api/admin/donations')).status, 200);
+  expect('...but cannot change the goal', (await call('support1', 'PUT', '/api/admin/donation-goal', { targetCents: 1 })).status, 403);
+  expect('...and developers cannot see donations', (await call('dev1', 'GET', '/api/admin/donations')).status, 403);
+  const alex = (await call('owner1', 'GET', '/api/admin/donations')).data.donations.find((x) => x.name === 'Alex');
+  expect('a linked donation shows the account', (await call('owner1', 'GET', '/api/admin/donations')).data.donations.find((x) => x.name === 'Secret').username, 'cust1');
+  await call('owner1', 'PUT', `/api/admin/donations/${alex.id}`, { hidden: true });
+  expect('a hidden message leaves the wall', (await call('anon', 'GET', '/api/donations')).data.supporters.length, 0);
+
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);
   console.log('\nAudit log (newest first):');
