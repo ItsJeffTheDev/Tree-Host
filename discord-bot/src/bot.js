@@ -42,8 +42,8 @@ client.once('clientReady', async () => {
   rotateStatus();
   setInterval(rotateStatus, 2 * 60 * 1000);
   if (process.env.YOUTUBE_CHANNEL_ID) {
-    checkYoutube().catch((e) => console.error(`YouTube check failed: ${e.message}`));
-    setInterval(() => checkYoutube().catch((e) => console.error(`YouTube check failed: ${e.message}`)), 10 * 60 * 1000);
+    checkYoutubeQuietly();
+    setInterval(checkYoutubeQuietly, 10 * 60 * 1000);
   }
 });
 
@@ -173,6 +173,27 @@ async function closeTicket(i) {
 }
 
 // ---------- YouTube ----------
+/**
+ * The 10-minute check. YouTube's feed has bad spells (404/500 for an hour or two), so failures are reported at most
+ * once an hour, and once more when it works again, instead of an error every 10 minutes.
+ */
+let youtubeTrouble = null; // { since, lastLog }
+function checkYoutubeQuietly() {
+  checkYoutube()
+    .then(() => {
+      if (youtubeTrouble) console.log(`YouTube check works again (it had trouble for ${Math.round((Date.now() - youtubeTrouble.since) / 60000)} minutes).`);
+      youtubeTrouble = null;
+    })
+    .catch((e) => {
+      const now = Date.now();
+      if (!youtubeTrouble) youtubeTrouble = { since: now, lastLog: 0 };
+      if (now - youtubeTrouble.lastLog >= 60 * 60 * 1000) {
+        youtubeTrouble.lastLog = now;
+        console.log(`YouTube check: ${e.message}. This is on YouTube's side; the bot keeps checking every 10 minutes and posts anything it missed once it's back.`);
+      }
+    });
+}
+
 /** Posts new uploads to #youtube as an embed. Returns how many were posted. */
 async function checkYoutube() {
   const videos = await youtube.fetchVideos(process.env.YOUTUBE_CHANNEL_ID);

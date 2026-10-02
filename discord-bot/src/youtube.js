@@ -15,23 +15,81 @@ const attr = (xml, name, a) => {
   return m ? decode(m[1]) : '';
 };
 
-/** Newest first: [{ id, title, url, short, published, description, views }] */
-async function fetchVideos(channelId) {
-  const res = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`);
-  if (!res.ok) throw new Error(`YouTube feed: HTTP ${res.status}`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const UA = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TreeHostBot/1.0', 'Accept-Language': 'en' };
+
+/** Videos from one of YouTube's feeds (newest first). */
+async function fromFeed(url) {
+  const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const xml = await res.text();
   return [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(([, e]) => {
-    const url = attr(e, 'link', 'href');
+    const link = attr(e, 'link', 'href');
     return {
       id: tag(e, 'yt:videoId'),
       title: tag(e, 'title'),
-      url,
-      short: url.includes('/shorts/'),
+      url: link,
+      short: link.includes('/shorts/'),
       published: tag(e, 'published'),
       description: tag(e, 'media:description'),
       views: Number(attr(e, 'media:statistics', 'views')) || 0,
     };
   });
+}
+
+/** Last resort: the channel's Videos and Shorts pages (ids and titles; no description). */
+async function fromChannelPages(channelId) {
+  const out = [];
+  for (const [tab, short] of [['videos', false], ['shorts', true]]) {
+    const res = await fetch(`https://www.youtube.com/channel/${channelId}/${tab}`, { headers: UA, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) continue;
+    const html = await res.text();
+    const seen = new Set(out.map((v) => v.id));
+    const str = (s) => {
+      try {
+        return JSON.parse(`"${s}"`);
+      } catch {
+        return s;
+      }
+    };
+    // Each video is a "lockupViewModel" (Videos tab) or "shortsLockupViewModel" (Shorts tab) block; older pages
+    // use "videoRenderer" / "reelItemRenderer".
+    const blocks = html.split(/"(?:lockupViewModel|shortsLockupViewModel|videoRenderer|reelItemRenderer|gridVideoRenderer)":\{/).slice(1);
+    for (const b of blocks.map((x) => x.slice(0, 6000))) {
+      const id = (/"(?:contentId|videoId)":"([A-Za-z0-9_-]{11})"/.exec(b) || [])[1];
+      const title = (/"lockupMetadataViewModel":\{"title":\{"content":"((?:[^"\\]|\\.)*)"/.exec(b)
+        || /"overlayMetadata":\{"primaryText":\{"content":"((?:[^"\\]|\\.)*)"/.exec(b)
+        || /"(?:title|headline)":\{(?:"runs":\[\{"text":|"simpleText":)"((?:[^"\\]|\\.)*)"/.exec(b) || [])[1];
+      if (!id || !title || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ id, title: str(title), url: short ? `https://www.youtube.com/shorts/${id}` : `https://www.youtube.com/watch?v=${id}`, short, published: '', description: '', views: 0 });
+    }
+  }
+  if (!out.length) throw new Error('no videos found on the channel pages');
+  return out;
+}
+
+/**
+ * Newest first: [{ id, title, url, short, published, description, views }].
+ * YouTube's feed often answers 404/500 for a while, so: retry, then the uploads-playlist feed, then the channel pages.
+ */
+async function fetchVideos(channelId) {
+  const errors = [];
+  const tries = [
+    () => fromFeed(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`),
+    () => fromFeed(`https://www.youtube.com/feeds/videos.xml?playlist_id=UU${channelId.slice(2)}`),
+    () => fromFeed(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`),
+    () => fromChannelPages(channelId),
+  ];
+  for (const [i, attempt] of tries.entries()) {
+    try {
+      return await attempt();
+    } catch (e) {
+      errors.push(e.message);
+      if (i < tries.length - 1) await sleep(2000 * (i + 1));
+    }
+  }
+  throw Object.assign(new Error(`YouTube is not answering right now (${[...new Set(errors)].join(', ')})`), { youtubeDown: true });
 }
 
 /** The first couple of lines of the description: no hashtags, links-only lines or upload notes. */
