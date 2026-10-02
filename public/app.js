@@ -1185,7 +1185,19 @@ async function renderSettings(body) {
       if (patch.type === 'custom') delete patch.type;
     }
     attempt(async () => {
-      await api('PATCH', `/api/servers/${s.id}`, patch);
+      try {
+        await api('PATCH', `/api/servers/${s.id}`, patch);
+      } catch (e) {
+        if (e.code !== 'DOWNGRADE') throw e;
+        // Going back to an older Minecraft version: only with a fresh world (the current one is backed up first).
+        if (!confirm(`${e.message}
+
+OK: back up the world, then switch to ${patch.version} with a fresh world.
+Cancel: keep the current version.`)) return;
+        await api('PATCH', `/api/servers/${s.id}`, { ...patch, downgrade: 'fresh-world' });
+        toast(`Switched to ${patch.version} with a fresh world. Your old world is in Backups.`);
+        return;
+      }
       toast(s.pid ? 'Saved. Restart the server to apply.' : 'Settings saved');
     });
   });

@@ -823,6 +823,11 @@ class Instance extends EventEmitter {
     }
     if (this.status === 'starting' && (/Done \([\d.,]+m?s\)!/.test(line) || /Listening on \//.test(line))) {
       this.setStatus('running');
+      // Remember which version last opened the world: Minecraft can't open it in an older version.
+      if (this.kind !== 'proxy' && this.cfg.worldVersion !== this.cfg.version) {
+        this.cfg.worldVersion = this.cfg.version;
+        this.manager.save();
+      }
       this.staffJoined = new Set();
       this.getProperties().then((p) => {
         this.maxPlayers = Number(p['max-players']) || null;
@@ -832,6 +837,11 @@ class Instance extends EventEmitter {
       const addr = this.cfg.port === 25565 ? '127.0.0.1' : `127.0.0.1:${this.cfg.port}`;
       this.sysLog(`Ready! In Minecraft go to Multiplayer → Add Server and use the address: ${this.cfg.publicAddress || this.cfg.autoAddress || addr}`);
       if (this.manager.teamMode && this.kind !== 'proxy' && !this.isCustomer) this.teamAccess({ op: false, quiet: true });
+    }
+    if (!this.downgradeHinted && /No key dimensions in MapLike|saved with a newer version|newer version of Minecraft|Unsupported data version|outdated server/i.test(line) && this.status === 'starting') {
+      this.downgradeHinted = true;
+      setTimeout(() => (this.downgradeHinted = false), 60000);
+      this.sysLog(`This world was saved by a newer Minecraft version, so ${this.cfg.version} can't open it. Switch back to the newer version in Settings → Server software, or restore a backup from before the change (Backups tab), or Reset worlds to start a fresh one.`);
     }
     let m = /: ([A-Za-z0-9_.]{1,16})(?: joined the game|\[[^\]]*\] logged in with entity id)/.exec(line);
     if (m) {
@@ -1354,6 +1364,12 @@ class Instance extends EventEmitter {
     const text = (await exists(f)) ? (await readInside(this.dir, f)).toString('utf8') : '';
     await fsp.mkdir(this.dir, { recursive: true });
     await writeInside(this.dir, f, updateProperties(text, clean));
+  }
+
+  /** True if the server has a saved world (level.dat in its world folder). */
+  async hasWorld() {
+    const level = (await this.getProperties())['level-name'] || 'world';
+    return exists(path.join(this.resolvePath(level), 'level.dat'));
   }
 
   async resetWorlds() {

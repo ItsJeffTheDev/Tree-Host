@@ -193,6 +193,16 @@ function expect(label, got, want) {
     expect("another customer can't set it", (await call('cust2', 'PUT', `/api/servers/${sid}/domain`, { domain: 'x.example.com' })).status, 404);
     expect('removing the domain', (await call('cust1', 'PUT', `/api/servers/${sid}/domain`, { domain: '' })).data.customDomain, null);
 
+    // going back to an older Minecraft version needs a fresh world (Minecraft can't open newer worlds)
+    await call('cust1', 'PUT', `/api/servers/${sid}/file?path=${encodeURIComponent('world/level.dat')}`, { content: 'pretend world' });
+    const down = await call('cust1', 'PATCH', `/api/servers/${sid}`, { version: '1.20.4' });
+    expect('switching to an older version with a world is stopped', down.status, 409);
+    expect('...and explains why', down.data && down.data.code, 'DOWNGRADE');
+    const fresh = await call('cust1', 'PATCH', `/api/servers/${sid}`, { version: '1.20.4', downgrade: 'fresh-world' });
+    expect('...unless they choose a fresh world', fresh.status, 200);
+    expect('the old world was backed up first', ((await call('cust1', 'GET', `/api/servers/${sid}/backups`)).data || []).length >= 1, true);
+    expect('going to a newer version needs no confirmation', (await call('cust1', 'PATCH', `/api/servers/${sid}`, { version: '1.21.1' })).status, 200);
+
     // server icon
     expect('customer uploads a 64x64 icon', await putIcon('cust1', sid, makePng(64, 64)), 200);
     expect('the server knows it has an icon', !!(await call('cust1', 'GET', `/api/servers/${sid}`)).data.icon, true);

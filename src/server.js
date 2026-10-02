@@ -1618,6 +1618,22 @@ route('PATCH', '/api/servers/:id', async (req, res, p) => {
     (k) => body[k] !== undefined && String(body[k] || '') !== String(inst.cfg[k] || ''),
   );
   if (software) getFor(req, p.id, 'manage');
+  // Minecraft can't open a world saved by a newer version (the server crashes). Going back needs a fresh world,
+  // which Tree Host makes only when asked, after backing up the current one.
+  if (body.version !== undefined && String(body.version) !== String(inst.cfg.version) && inst.provider.kind !== 'proxy') {
+    const worldVersion = inst.cfg.worldVersion || inst.cfg.version;
+    if (olderMinecraft(body.version, worldVersion) && (await inst.hasWorld())) {
+      if (body.downgrade !== 'fresh-world') {
+        throw httpError(409, `Your world was last played on Minecraft ${worldVersion}. Minecraft can't open a world in an older version, so ${body.version} would crash. To go back to ${body.version}, Tree Host can back up this world and start a fresh one (you can restore the backup any time).`, 'DOWNGRADE');
+      }
+      if (inst.proc) throw httpError(400, 'Stop the server first.');
+      await backups.create(inst, { label: `World from ${worldVersion}, before switching to ${body.version}`, by: who(req) });
+      await inst.resetWorlds();
+      inst.cfg.worldVersion = null;
+      inst.sysLog(`Backed up the ${worldVersion} world and started fresh for ${body.version}. Restore it from the Backups tab after switching back to ${worldVersion}.`);
+    }
+  }
+  delete body.downgrade;
   if (inst.isCustomer && body.type && body.type !== inst.cfg.type) {
     const sub = inst.cfg.subscriptionId ? billing.sub(inst.cfg.subscriptionId) : null;
     let kind = 'server';
@@ -1704,6 +1720,18 @@ manager.beforeStart = (inst) => syncStaffPlugin(inst).catch((e) => console.error
 setInterval(() => {
   for (const inst of manager.instances.values()) syncStaffPlugin(inst).catch(() => {});
 }, 30 * 1000);
+
+/** True if Minecraft version a is older than b (1.20.4 < 1.21.1 < 26.2). Snapshots and unknown formats: false. */
+function olderMinecraft(a, b) {
+  const parse = (v) => (/^\d+(\.\d+)*$/.test(String(v || '')) ? String(v).split('.').map(Number) : null);
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
+  }
+  return false;
+}
 
 // ---------- Tree Host staff in Minecraft ----------
 // Staff (anyone who can open the Staff Console, with a Minecraft name in Account) get special treatment on customer
