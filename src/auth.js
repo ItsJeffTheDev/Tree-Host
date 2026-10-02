@@ -346,6 +346,33 @@ class Auth {
     return user;
   }
 
+  /**
+   * Remembers that this account was used in a browser (the device id is stored hashed). Accounts that share a browser
+   * are "linked": staff actions apply to all of them. Returns true if this browser is new for the account.
+   */
+  async recordDevice(user, deviceId) {
+    if (!user || !deviceId) return false;
+    const h = sha256(`device:${deviceId}`).slice(0, 32);
+    const list = Object.values(user.devices || {});
+    if (list.includes(h)) return false;
+    user.devices = [...list, h].slice(-20);
+    await this.save();
+    return true;
+  }
+
+  /** Accounts used in one particular browser. */
+  accountsOnDevice(deviceId) {
+    const h = sha256(`device:${deviceId}`).slice(0, 32);
+    return this.users.filter((u) => Object.values(u.devices || {}).includes(h));
+  }
+
+  /** Other accounts used in the same browser as this one. */
+  linkedAccounts(user) {
+    const mine = new Set(Object.values((user && user.devices) || {}));
+    if (!mine.size) return [];
+    return this.users.filter((u) => u !== user && Object.values(u.devices || {}).some((d) => mine.has(d)));
+  }
+
   dropSessions(userId) {
     for (const [hash, s] of this.sessions) if (s.userId === userId) this.sessions.delete(hash);
   }

@@ -112,6 +112,13 @@ function openTakeAction(opts) {
       <label class="field">Staff notes <span class="muted small">(never shown to the customer: tickets, who reported it, what you checked)</span>
         <textarea name="notes" rows="3" placeholder="e.g. Reported in ticket #42. CPU at 100% for 6 hours, found xmrig in /plugins."></textarea></label>
       ${EVIDENCE_FIELD}
+      ${(() => {
+        const linked = target === 'account' ? (opts.user.linked || []).filter((l) => l.role === 'customer') : [];
+        return linked.length ? `<div class="linked-box">
+        <label class="check"><input type="checkbox" name="includeLinked" checked>
+          <span><b>Also apply to ${linked.length} linked account${linked.length === 1 ? '' : 's'}</b> (used on the same device):
+          ${linked.map((l) => esc(l.username)).join(', ')}. Each gets its own action number.</span></label></div>` : '';
+      })()}
       <div class="stack" style="gap:6px">
         <label class="check"><input type="checkbox" name="includeLog" checked> Save the console log${target === 'server' ? '' : 's of their servers'} as evidence</label>
         <label class="check"><input type="checkbox" name="appealable" checked> They can appeal</label>
@@ -144,9 +151,10 @@ function openTakeAction(opts) {
           target, type: t, userId: opts.user && opts.user.id, serverId: opts.server && opts.server.id,
           reason: form.reason.value, days: Number(form.days.value), message: form.message.value, notes: form.notes.value,
           includeLog: form.includeLog.checked, appealable: form.appealable.checked, email: form.email.checked, evidence,
+          includeLinked: form.includeLinked ? form.includeLinked.checked : false,
         });
         close();
-        toast(`Done: action ${a.id}. Look it up any time in Action logs.`);
+        toast(`Done: action ${a.id}${a.linked && a.linked.length ? ` (+ ${a.linked.length} linked account${a.linked.length === 1 ? '' : 's'}: ${a.linked.join(', ')})` : ''}. Look it up any time in Action logs.`);
         if (opts.onDone) opts.onDone(a);
       } finally {
         const b = $('#ta-go', root);
@@ -354,6 +362,8 @@ async function openActionDetail(id, onChange) {
         <span>Customer</span><b>${esc(c.username || '-')}${c.email ? ` · ${esc(c.email)}` : ''} <span class="muted small">(${esc(c.id || '')})</span></b>
         <span>At the time</span><b class="small">${c.plans && c.plans.length ? esc(c.plans.join(', ')) : 'no plans'} · ${c.servers ? c.servers.length : 0} server(s)${c.previous && c.previous.length ? ` · earlier: ${esc(c.previous.join(', '))}` : ''}</b>
         <span>Told by</span><b>${[a.notified.inbox && 'inbox', a.notified.email && 'email'].filter(Boolean).join(' and ') || 'not notified'}</b>
+        ${a.parentId ? `<span>Linked to</span><b><a href="#" data-goto="${esc(a.parentId)}">${esc(a.parentId)}</a> <span class="muted small">(same device)</span></b>` : ''}
+        ${a.linked && a.linked.length ? `<span>Linked accounts</span><b>${a.linked.map((id) => `<a href="#" data-goto="${esc(id)}">${esc(id)}</a>`).join(', ')}</b>` : ''}
       </div>
     </div>
     <div class="card"><h3>Message shown to the customer</h3><div class="pre">${esc(a.message)}</div></div>
@@ -381,6 +391,11 @@ async function openActionDetail(id, onChange) {
     if (onChange) onChange();
     openActionDetail(a.id, onChange);
   };
+  $$('[data-goto]', root).forEach((l) => l.addEventListener('click', (e) => {
+    e.preventDefault();
+    close();
+    openActionDetail(l.dataset.goto, onChange);
+  }));
   const evForm = $('#ad-ev', root);
   if (evForm) {
     bindEvidencePicker(evForm);
@@ -541,17 +556,14 @@ async function showRestricted() {
       <div class="stack">${inbox.messages.map((m) => inboxItem(m, actions.get(m.actionId))).join('') || '<p class="muted">No messages.</p>'}</div>
       <div class="row" style="margin-top:22px;flex-wrap:wrap">
         <a class="btn" href="mailto:${esc(mine.supportEmail)}">✉️ Email support</a>
+        <button class="btn" id="rs-switch">⇄ Switch account</button>
         <button class="btn" id="rs-logout">Sign out</button>
         <a class="btn" href="/terms" target="_blank">Terms of Service</a>
       </div>
     </div>`;
   bindAppealButtons($('.app'), actions, () => showRestricted());
-  $('#rs-logout').addEventListener('click', async () => {
-    await api('POST', '/api/auth/logout').catch(() => {});
-    const fb = await firebaseAuth().catch(() => null);
-    if (fb) await fb.signOut(fb.auth).catch(() => {});
-    location.href = '/';
-  });
+  $('#rs-logout').addEventListener('click', () => signOut(false));
+  $('#rs-switch').addEventListener('click', () => openAccountSwitcher().catch((e) => toast(e.message, 'error')));
   if (inbox.unread) api('POST', '/api/inbox/read', {}).catch(() => {});
 }
 

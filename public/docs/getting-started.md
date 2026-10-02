@@ -69,6 +69,15 @@ At the top of your server's page is the **Join address**, for example `play.tree
 
 ---
 
+## More than one account?
+
+You can be signed in to up to 5 accounts in the same browser. Click **⇄ Switch** under your name to switch between
+them, or **Add another account** to sign in to one more. **Sign out** signs you out of the account you're using and
+switches to the next one.
+
+> **Note:** accounts used in the same browser count as linked. If one of them breaks the
+> [rules](/terms) and is suspended or banned, the linked accounts are too.
+
 ## 5. What's next
 
 - **Add plugins or mods:** the **Plugins** tab → **🔎 Browse plugins**. See [Your server](servers.md#add-plugins).

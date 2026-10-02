@@ -131,6 +131,13 @@ report is written to the audit log.
 in Action logs, and support@ gets an email. **Admins** accept (this lifts it) or deny, with an answer the customer
 sees. Each action can be appealed once.
 
+**Linked accounts:** customers can be signed in to several accounts in one browser, and Tree Host links every
+account used in the same browser (People shows **🔗 N linked**). When you act on an account, **Also apply to linked
+accounts** (on by default) gives each linked customer account the same action with its own number, pointing at the
+first one. Lifting the first action, or accepting its appeal, lifts the linked ones too. Staff accounts are never
+included. If someone signs in to a new account in a browser where a suspended or banned account was used, the new
+account gets the same action automatically (reason: *Ban evasion*, appealable).
+
 **Lifting early:** open the action → **Lift**, with a reason (the customer sees it).
 
 > **Important:** Never take action on your own account or servers, and don't take action on a friend's. You can't

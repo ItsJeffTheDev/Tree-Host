@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { URL } = require('url');
+const crypto = require('crypto');
 const { PUBLIC, DATA } = require('./paths');
 const { Manager } = require('./instances');
 const { Auth } = require('./auth');
@@ -37,6 +38,7 @@ const LOCAL_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
 const SESSION_COOKIE = 'th_session';
 const MAX_CUSTOMER_BACKUPS = Number(env('MAX_BACKUPS')) || 5;
 // Inboxes shown on the website and used as Reply-To on emails.
+const DISCORD_INVITE = env('DISCORD_INVITE', 'https://discord.gg/a37pbwajKd');
 const EMAILS = {
   support: env('SUPPORT_EMAIL', 'support@treehost.online'),
   billing: env('BILLING_EMAIL', 'billing@treehost.online'),
@@ -326,6 +328,62 @@ function sessionCookie(req, token, maxAge = 30 * 86400) {
   return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
 }
 
+// ---------- several accounts in one browser ----------
+// th_session is the active account; th_accounts lists the session tokens of every account signed in on this browser
+// (for the account switcher); th_device identifies the browser, so accounts used together are linked.
+const ACCOUNTS_COOKIE = 'th_accounts';
+const DEVICE_COOKIE = 'th_device';
+const MAX_ACCOUNTS = 5;
+const cookieStr = (req, name, value, maxAge) => `${name}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`;
+
+/** Every account signed in on this browser (still valid), the active one first. */
+function browserSessions(req) {
+  const tokens = [getCookie(req, SESSION_COOKIE), ...String(getCookie(req, ACCOUNTS_COOKIE) || '').split('.')].filter(Boolean);
+  const seen = new Set();
+  const out = [];
+  for (const token of tokens) {
+    const user = auth.userFromSession(token);
+    if (user && !seen.has(user.id)) {
+      seen.add(user.id);
+      out.push({ token, user });
+    }
+  }
+  return out;
+}
+
+const validDevice = (d) => (d && /^[\w-]{16,64}$/.test(d) ? d : null);
+
+/**
+ * Cookies after signing in (or switching) to `token`: it becomes the active account and the other accounts on this
+ * browser stay in the switcher. Also remembers the browser on the account, which links accounts used together.
+ */
+async function signInCookies(req, token) {
+  const user = auth.userFromSession(token);
+  const cookies = [];
+  let device = validDevice(getCookie(req, DEVICE_COOKIE));
+  if (!device) {
+    device = crypto.randomBytes(18).toString('base64url');
+    cookies.push(cookieStr(req, DEVICE_COOKIE, device, 5 * 365 * 86400));
+  }
+  const others = browserSessions(req).filter((s) => !user || s.user.id !== user.id).map((s) => s.token);
+  cookies.unshift(sessionCookie(req, token), cookieStr(req, ACCOUNTS_COOKIE, [token, ...others].slice(0, MAX_ACCOUNTS).join('.'), 30 * 86400));
+  if (user && TEAM) await linkDevice(user, device).catch((e) => console.error(`[accounts] linking failed: ${e.message}`));
+  return cookies;
+}
+
+/** Records the browser on the account; a new link to a suspended or banned account passes the action on. */
+async function linkDevice(user, device) {
+  if (!(await auth.recordDevice(user, device))) return;
+  if (user.role !== 'customer' || user.restriction) return;
+  // Only accounts used in this same browser pass their action on (not everything linked some other way).
+  const restricted = auth.accountsOnDevice(device).filter((u) => u !== user && u.restriction && u.restriction.actionId);
+  const from = restricted.find((u) => u.restriction.type === 'banned') || restricted[0];
+  const parent = from && moderation.find(from.restriction.actionId);
+  if (!parent || parent.status !== 'active') return;
+  await linkedAction(parent, user, { id: 'system', username: 'Tree Host (automatic)', role: 'system', roleLabel: 'Automatic' }, { auto: true, email: true });
+  await moderation.save();
+}
+
 function authenticate(req) {
   if (!TEAM) return LOCAL_ADMIN;
   const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '');
@@ -474,8 +532,17 @@ setInterval(() => {
 route(
   'GET',
   '/api/auth/me',
-  (req) => {
+  (req, res) => {
     const user = authenticate(req);
+    // Accounts signed in before the account switcher existed: remember this browser on them too.
+    if (TEAM && user && !user.local) {
+      let device = validDevice(getCookie(req, DEVICE_COOKIE));
+      if (!device) {
+        device = crypto.randomBytes(18).toString('base64url');
+        res.setHeader('Set-Cookie', cookieStr(req, DEVICE_COOKIE, device, 5 * 365 * 86400));
+      }
+      linkDevice(user, device).catch(() => {});
+    }
     return {
       teamMode: TEAM,
       user: user ? { ...(user.local ? user : auth.publicUser(user)), roleLabel: rbac.role(user.role).label, permissions: TEAM ? rbac.permissionsOf(user) : PERMISSIONS.map((x) => x.id) } : null,
@@ -484,6 +551,7 @@ route(
       allowSignup: TEAM && auth.settings.allowSignup,
       mailEnabled: mail.enabled(),
       customEmails: TEAM && mail.enabled() && firebase.linksEnabled(),
+      discordInvite: DISCORD_INVITE,
       firebase: TEAM ? firebase.publicConfig() : null,
       billingMode: billing.mode,
       isolated: manager.docker,
@@ -505,7 +573,7 @@ route(
       activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${r.user.role}`);
       if (r.user.email && mail.enabled()) welcomeEmail(req, r.user).catch((e) => console.error(`[mail] welcome email failed: ${e.message}`));
     }
-    sendJson(res, 200, { ok: true, created: !!r.created }, { 'Set-Cookie': sessionCookie(req, r.token) });
+    sendJson(res, 200, { ok: true, created: !!r.created }, { 'Set-Cookie': await signInCookies(req, r.token) });
     return HANDLED;
   },
   { public: true },
@@ -522,7 +590,7 @@ route(
   async (req, res) => {
     passwordAuthOnly();
     const token = await auth.login(await readJson(req), clientIp(req));
-    sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+    sendJson(res, 200, { ok: true }, { 'Set-Cookie': await signInCookies(req, token) });
     return HANDLED;
   },
   { public: true },
@@ -536,7 +604,7 @@ route(
     const body = await readJson(req);
     const token = await auth.acceptInvite(body, clientIp(req));
     activity.log('people', String(body.username || 'Someone'), 'joined the support staff with an invite link');
-    sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+    sendJson(res, 200, { ok: true }, { 'Set-Cookie': await signInCookies(req, token) });
     return HANDLED;
   },
   { public: true },
@@ -551,7 +619,7 @@ route(
     const { user, token } = await auth.signup(body, clientIp(req));
     activity.log('people', user.username, 'signed up');
     if (user.email && mail.enabled()) welcomeEmail(req, user).catch((e) => console.error(`[mail] welcome email failed: ${e.message}`));
-    sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+    sendJson(res, 200, { ok: true }, { 'Set-Cookie': await signInCookies(req, token) });
     return HANDLED;
   },
   { public: true },
@@ -579,7 +647,7 @@ route(
   async (req, res) => {
     passwordAuthOnly();
     const token = await auth.resetPassword(await readJson(req), clientIp(req));
-    sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, token) });
+    sendJson(res, 200, { ok: true }, { 'Set-Cookie': await signInCookies(req, token) });
     return HANDLED;
   },
   { public: true },
@@ -589,12 +657,42 @@ route(
   'POST',
   '/api/auth/logout',
   async (req, res) => {
-    await auth.logout(getCookie(req, SESSION_COOKIE));
-    sendJson(res, 200, { ok: true }, { 'Set-Cookie': sessionCookie(req, '', 0) });
+    const all = String(req.headers['content-length'] || '0') !== '0' ? (await readJson(req).catch(() => ({}))).all : false;
+    const sessions = browserSessions(req);
+    const current = getCookie(req, SESSION_COOKIE);
+    for (const s of sessions) if (all || s.token === current) await auth.logout(s.token);
+    await auth.logout(current);
+    const left = all ? [] : sessions.filter((s) => s.token !== current);
+    if (left.length) {
+      // Another account is still signed in on this browser: switch to it.
+      sendJson(res, 200, { ok: true, switchedTo: left[0].user.username }, { 'Set-Cookie': await signInCookies(req, left[0].token) });
+    } else {
+      sendJson(res, 200, { ok: true }, { 'Set-Cookie': [sessionCookie(req, '', 0), cookieStr(req, ACCOUNTS_COOKIE, '', 0)] });
+    }
     return HANDLED;
   },
   { public: true },
 );
+
+// The account switcher: every account signed in on this browser, and switching between them.
+route('GET', '/api/auth/accounts', (req) => {
+  if (!TEAM) return { accounts: [], max: MAX_ACCOUNTS };
+  const sessions = browserSessions(req);
+  return {
+    max: MAX_ACCOUNTS,
+    accounts: sessions.map(({ user }) => ({
+      id: user.id, username: user.username, email: user.email || '', role: user.role, roleLabel: rbac.role(user.role).label,
+      active: user.id === req.user.id, restricted: user.restriction ? user.restriction.type : null,
+    })),
+  };
+}, { restrictedOk: true });
+route('POST', '/api/auth/switch', async (req, res) => {
+  const { userId } = await readJson(req);
+  const s = browserSessions(req).find((x) => x.user.id === userId);
+  if (!s) throw httpError(404, 'That account is not signed in on this browser any more. Sign in to it again.');
+  sendJson(res, 200, { ok: true, username: s.user.username }, { 'Set-Cookie': await signInCookies(req, s.token) });
+  return HANDLED;
+}, { restrictedOk: true });
 
 route('PATCH', '/api/auth/me', async (req) => {
   if (!TEAM) throw httpError(400, 'Accounts only exist in team mode.');
@@ -628,6 +726,7 @@ route(
         servers: [...manager.instances.values()].filter((i) => i.cfg.owner === u.id && i.isCustomer).length,
         activePlans: subs.filter((x) => x.status === 'active' || x.status === 'past_due').map((x) => x.planName),
         roleLabel: rbac.role(u.role).label,
+        linked: auth.linkedAccounts(u).map((x) => ({ id: x.id, username: x.username, role: x.role })),
       };
     }),
   { perm: 'users.view' },
@@ -780,6 +879,74 @@ function actionNotice(a) {
 const LOG_FILTERS = ['q', 'id', 'username', 'email', 'by', 'server', 'types', 'type', 'target', 'reason', 'status', 'appeal', 'from', 'to', 'sort'];
 const logFilters = (q) => Object.fromEntries(LOG_FILTERS.map((k) => [k, q.get(k) || '']));
 
+/**
+ * Carries out an action on an account and tells the customer: suspensions and bans lock the account (bans also
+ * cancel its plans), deletions remove it (they're told by email first, since the inbox goes with the account).
+ */
+async function enforceAccountAction(a, user, byName, { email = true } = {}) {
+  const notice = actionNotice(a);
+  if (a.type === 'suspend' || a.type === 'ban') {
+    if (a.type === 'ban') {
+      for (const sub of billing.forUser(user.id).filter((x) => x.status === 'active' || x.status === 'past_due')) {
+        await billing.cancel(sub.id, `${byName} (ban ${a.id})`).catch((e) => moderation.note(a, 'Tree Host', `Could not cancel plan ${sub.planName}: ${e.message}`));
+      }
+    }
+    await refreshAccount(user.id);
+  }
+  if (a.type === 'delete') {
+    for (const sub of billing.forUser(user.id).filter((x) => x.status === 'active' || x.status === 'past_due')) {
+      await billing.cancel(sub.id, `${byName} (deletion ${a.id})`);
+    }
+    await tellCustomer(a, user, { ...notice, inbox: false, email, button: false });
+    for (const s of [...manager.instances.values()]) if (s.cfg.owner === user.id && s.isCustomer) await manager.remove(s.cfg.id);
+    await auth.removeUser(user.id);
+    await moderation.dropInbox(user.id);
+    if (user.firebaseUid) await firebase.deleteAuthUser(user.firebaseUid).catch(() => {});
+  } else {
+    await tellCustomer(a, user, { ...notice, email });
+  }
+}
+
+/** The same action on a linked account (used in the same browser), with its own number pointing at the first one. */
+async function linkedAction(parent, other, by, { auto = false, email = true } = {}) {
+  const what = parent.type === 'ban' ? 'banned' : parent.type === 'suspend' ? 'suspended' : parent.type === 'delete' ? 'deleted' : 'warned';
+  const child = await moderation.create({
+    type: parent.type,
+    target: 'account',
+    reason: auto ? 'evasion' : parent.reason,
+    message: auto
+      ? `This account was used on the same device as another Tree Host account that is ${what} (action ${parent.id}). Linked accounts share the same action.`
+      : `${parent.message}\n\nThis applies to every account used on the same device, so it also applies to this account (linked to action ${parent.id}).`,
+    notes: `Linked to ${parent.id} (${parent.customer.username}): the accounts were used in the same browser.${auto ? ' Applied automatically when the accounts became linked.' : ''}`,
+    until: parent.until,
+    appealable: parent.appealable,
+    by,
+    customer: customerSnapshot(other),
+    server: null,
+  });
+  child.parentId = parent.id;
+  parent.linked = [...(parent.linked || []), child.id];
+  moderation.note(parent, by.username, `Also applied to the linked account ${other.username} (${child.id})`);
+  await enforceAccountAction(child, other, by.username, { email });
+  moderation.note(child, 'Tree Host', `Customer told by ${[child.notified.inbox && 'inbox', child.notified.email && 'email'].filter(Boolean).join(' and ') || 'nothing'}`);
+  activity.log('moderation', by.username, `${what} the linked account ${other.username} (${child.id}, linked to ${parent.id})`);
+  return child;
+}
+
+/** Lifting an action also lifts the ones it passed on to linked accounts. */
+async function liftLinked(a, by, reason) {
+  for (const id of a.linked || []) {
+    const child = moderation.find(id);
+    if (!child || child.status !== 'active') continue;
+    await moderation.lift(child, by, `Lifted together with ${a.id}: ${reason}`);
+    await refreshAccount(child.customer.id);
+    await tellCustomer(child, auth.userById(child.customer.id), {
+      title: 'Your Tree Host account can be used again',
+      paragraphs: [`We've lifted the ${child.type === 'ban' ? 'ban' : 'suspension'} (action ${child.id}).`, String(reason || '').trim(), 'Thanks for your patience.'].filter(Boolean),
+    });
+  }
+}
+
 route('GET', '/api/admin/actions', (req, res, p, q) => ({
   actions: moderation.search(logFilters(q)),
   pendingAppeals: [...moderation.actions.values()].filter((a) => a.appeal && a.appeal.status === 'pending').length,
@@ -854,6 +1021,9 @@ route('POST', '/api/admin/actions', async (req) => {
   if (user && user.role === 'owner' && target === 'account' && b.type !== 'warn') throw httpError(400, 'Owners cannot be suspended, banned or deleted. Change their role first.');
   const days = Math.max(0, Math.min(3650, Math.round(Number(b.days) || 0)));
   const evidence = Array.isArray(b.evidence) ? b.evidence.slice(0, 20) : [];
+  // Accounts used in the same browser get the same action (each with its own number). Staff at or above your level are skipped.
+  const linked = target === 'account' && b.includeLinked !== false && user ? auth.linkedAccounts(user) : [];
+  const linkedOk = linked.filter((u) => u.id !== req.user.id && u.role === 'customer'); // staff accounts are never included
 
   const a = await moderation.create({
     type: b.type, target, reason: b.reason, message: b.message, notes: b.notes, appealable: b.appealable !== false,
@@ -873,42 +1043,27 @@ route('POST', '/api/admin/actions', async (req) => {
   }
 
   // Do it.
-  const notice = actionNotice(a);
-  if (a.type === 'suspend' || a.type === 'ban') {
-    if (target === 'server') refreshServer(inst.cfg.id);
-    else {
-      if (a.type === 'ban') {
-        for (const sub of billing.forUser(user.id).filter((x) => x.status === 'active' || x.status === 'past_due')) {
-          await billing.cancel(sub.id, `${req.user.username} (ban ${a.id})`).catch((e) => moderation.note(a, 'Tree Host', `Could not cancel plan ${sub.planName}: ${e.message}`));
-        }
-      }
-      await refreshAccount(user.id);
-    }
-    if (inst) inst.sysLog(`This server was ${a.type === 'ban' ? 'banned' : 'suspended'} by Tree Host staff (action ${a.id}).`);
-  }
-  if (a.type === 'delete' && target === 'server') {
-    inst.logActivity('server', who(req), `deleted server "${inst.cfg.name}" (action ${a.id})`);
-    await manager.remove(inst.cfg.id);
-    billing.detachServer(inst.cfg.id);
-  }
-  if (a.type === 'delete' && target === 'account') {
-    for (const sub of billing.forUser(user.id).filter((x) => x.status === 'active' || x.status === 'past_due')) {
-      await billing.cancel(sub.id, `${req.user.username} (deletion ${a.id})`);
-    }
-    // Tell them first: the inbox goes with the account, so only the email remains.
-    await tellCustomer(a, user, { ...notice, inbox: false, email: b.email !== false, button: false });
-    for (const s of [...manager.instances.values()]) if (s.cfg.owner === user.id && s.isCustomer) await manager.remove(s.cfg.id);
-    await auth.removeUser(user.id);
-    await moderation.dropInbox(user.id);
-    if (user.firebaseUid) await firebase.deleteAuthUser(user.firebaseUid).catch(() => {});
+  if (target === 'account') {
+    await enforceAccountAction(a, user, req.user.username, { email: b.email !== false });
+    for (const other of linked.filter((u) => !linkedOk.includes(u))) moderation.note(a, 'Tree Host', `Linked account ${other.username} was skipped (staff account)`);
+    for (const other of linkedOk) await linkedAction(a, other, a.by, { email: b.email !== false });
   } else {
-    await tellCustomer(a, user, { ...notice, email: b.email !== false });
+    if (a.type === 'suspend' || a.type === 'ban') {
+      refreshServer(inst.cfg.id);
+      inst.sysLog(`This server was ${a.type === 'ban' ? 'banned' : 'suspended'} by Tree Host staff (action ${a.id}).`);
+    }
+    if (a.type === 'delete') {
+      inst.logActivity('server', who(req), `deleted server "${inst.cfg.name}" (action ${a.id})`);
+      await manager.remove(inst.cfg.id);
+      billing.detachServer(inst.cfg.id);
+    }
+    if (a.type !== 'delete' || user) await tellCustomer(a, user, { ...actionNotice(a), email: b.email !== false });
   }
 
   const subject = target === 'server' ? `the server "${a.server.name}"${user ? ` of ${user.username}` : ''}` : `the account ${a.customer.username}`;
   moderation.note(a, 'Tree Host', `Customer told by ${[a.notified.inbox && 'inbox', a.notified.email && 'email'].filter(Boolean).join(' and ') || 'nothing (no email address or email is off)'}`);
   await moderation.save();
-  audit(req, `${{ warn: 'warned', suspend: 'suspended', ban: 'banned', delete: 'deleted' }[a.type]} ${subject} (${a.id}: ${REASONS[a.reason]})`, inst && a.type !== 'delete' ? inst : null);
+  audit(req, `${{ warn: 'warned', suspend: 'suspended', ban: 'banned', delete: 'deleted' }[a.type]} ${subject} (${a.id}: ${REASONS[a.reason]})${a.linked && a.linked.length ? ` and ${a.linked.length} linked account${a.linked.length === 1 ? '' : 's'}` : ''}`, inst && a.type !== 'delete' ? inst : null);
   return moderation.full(a);
 }, { perm: 'console.access' });
 
@@ -930,6 +1085,7 @@ route('POST', '/api/admin/actions/:aid/lift', async (req, res, p) => {
   await moderation.lift(a, req.user, reason);
   if (a.target === 'server') refreshServer(a.server.id);
   else await refreshAccount(a.customer.id);
+  await liftLinked(a, req.user, reason);
   const user = auth.userById(a.customer.id);
   await tellCustomer(a, user, {
     title: a.target === 'server' ? `Your server "${a.server.name}" can be used again` : 'Your Tree Host account can be used again',
@@ -954,6 +1110,7 @@ route('POST', '/api/admin/actions/:aid/appeal', async (req, res, p) => {
     await moderation.lift(a, req.user, `Appeal accepted: ${a.appeal.response}`);
     if (a.target === 'server') refreshServer(a.server.id);
     else await refreshAccount(a.customer.id);
+    await liftLinked(a, req.user, `Appeal for ${a.id} accepted`);
   }
   await moderation.save();
   await tellCustomer(a, auth.userById(a.customer.id), {
@@ -1027,7 +1184,7 @@ route('POST', '/api/moderation/:aid/appeal', async (req, res, p) => {
   await moderation.message(req.user.id, { title: `We got your appeal for ${a.id}`, body: "Thanks. A member of our team will look at it and you'll get the answer here and by email.", actionId: a.id, kind: 'appeal' });
   if (mail.enabled()) {
     mail.send(EMAILS.support, `New appeal for ${a.id} from ${req.user.username}`, [`${req.user.username} appealed ${a.id} (${TYPES[a.type]} of the ${a.target}).`, text, 'Decide it in the Staff Console → Action logs.'],
-      PUBLIC_URL ? { text: 'Open the action', url: `${PUBLIC_URL}/admin#actions/${a.id}` } : null).catch(() => {});
+      PUBLIC_URL ? { text: 'Open the action', url: `${PUBLIC_URL}/admin#actions/${a.id}` } : null, { community: false, note: 'Sent to the Tree Host team.' }).catch(() => {});
   }
   return moderation.forCustomer(a);
 }, { restrictedOk: true });
@@ -1319,7 +1476,7 @@ route('GET', '/api/admin/emails/preview/:kind', (req, res, p) => {
   const make = PREVIEWS[p.kind];
   if (!make) throw httpError(404, 'No such email.');
   const [subject, paragraphs, button, opts] = make(siteUrl(req));
-  const { html } = mail.render(subject, paragraphs, button, opts);
+  const { html } = mail.render(subject, paragraphs, button, { ...opts, preview: true });
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'" });
   res.end(html);
   return HANDLED;

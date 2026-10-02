@@ -13,8 +13,8 @@ async function call(who, method, path, body) {
     headers: { 'Content-Type': 'application/json', Origin: B, ...(jar[who] ? { Cookie: jar[who] } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const set = res.headers.get('set-cookie');
-  if (set) jar[who] = set.split(';')[0];
+  const session = res.headers.getSetCookie().find((c) => c.startsWith('th_session='));
+  if (session) jar[who] = session.split(';')[0];
   let data = null;
   try { data = await res.json(); } catch {}
   return { status: res.status, data };
@@ -226,6 +226,53 @@ function expect(label, got, want) {
   expect('support list leaves out the technical guide', (await call('support1', 'GET', '/api/staff/docs')).data.docs.some((d) => d.id === 'hosting-guide'), false);
   expect('staff docs come with their text', /Support playbook/.test((await call('support1', 'GET', '/api/staff/docs/support-playbook')).data.markdown), true);
   expect('no path tricks', (await call('owner1', 'GET', '/api/staff/docs/..%2Fpackage')).status, 404);
+
+  // several accounts in one browser, linked accounts
+  const browser = new Map(); // one browser's cookies (session, accounts, device)
+  const bcall = async (method, p, body) => {
+    const res = await fetch(B + p, {
+      method,
+      headers: { 'Content-Type': 'application/json', Origin: B, Cookie: [...browser].map(([k, v]) => `${k}=${v}`).join('; ') },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    for (const c of res.headers.getSetCookie()) {
+      const [kv] = c.split(';');
+      const i = kv.indexOf('=');
+      if (/Max-Age=0/.test(c)) browser.delete(kv.slice(0, i));
+      else browser.set(kv.slice(0, i), kv.slice(i + 1));
+    }
+    return { status: res.status, data: await res.json().catch(() => null) };
+  };
+  for (const u of ['multi1', 'multi2', 'multi3']) await call(u, 'POST', '/api/auth/signup', { username: u, email: `${u}@example.com`, password: 'TreeHost-test-123', acceptTerms: true });
+  await bcall('POST', '/api/auth/login', { username: 'multi1', password: 'TreeHost-test-123' });
+  await bcall('POST', '/api/auth/login', { username: 'multi2', password: 'TreeHost-test-123' });
+  const accts = (await bcall('GET', '/api/auth/accounts')).data.accounts;
+  expect('browser has two accounts', accts.length, 2);
+  expect('the newest is active', accts.find((x) => x.active).username, 'multi2');
+  const m1 = accts.find((x) => x.username === 'multi1').id;
+  expect('switch to the other account', (await bcall('POST', '/api/auth/switch', { userId: m1 })).status, 200);
+  expect('...and it is active', (await bcall('GET', '/api/auth/me')).data.user.username, 'multi1');
+  expect("can't switch to an account that isn't signed in here", (await bcall('POST', '/api/auth/switch', { userId: id('cust1') })).status, 404);
+  const people = (await call('owner1', 'GET', '/api/team/users')).data;
+  expect('staff see the accounts are linked', people.find((x) => x.username === 'multi1').linked.map((l) => l.username).join(), 'multi2');
+  const susBoth = await act('admin1', { target: 'account', userId: m1, type: 'suspend', days: 2 });
+  expect('suspending one account...', susBoth.status, 200);
+  expect('...also suspends the linked one', susBoth.data.linked && susBoth.data.linked.length, 1);
+  expect('linked account is locked out', (await call('multi2', 'GET', '/api/servers')).status, 403);
+  expect('linked action points at the first', (await call('owner1', 'GET', `/api/admin/actions/${susBoth.data.linked[0]}`)).data.parentId, susBoth.data.id);
+  expect('lifting the first...', (await call('admin1', 'POST', `/api/admin/actions/${susBoth.data.id}/lift`, { reason: 'Sorted out.' })).status, 200);
+  expect('...lifts the linked one too', (await call('multi2', 'GET', '/api/servers')).status, 200);
+  const banOne = await act('admin1', { target: 'account', userId: m1, type: 'ban', includeLinked: false });
+  expect('ban without linked accounts', banOne.data.linked, undefined);
+  expect('multi2 not banned', (await call('multi2', 'GET', '/api/servers')).status, 200);
+  await bcall('POST', '/api/auth/login', { username: 'multi3', password: 'TreeHost-test-123' });
+  expect('a new account on the banned account\'s browser is banned too', (await call('multi3', 'GET', '/api/servers')).status, 403);
+  const auto = (await call('owner1', 'GET', '/api/admin/actions?username=multi3')).data.actions[0];
+  expect('...as ban evasion, linked to the ban', auto && auto.reason, 'evasion');
+  const out = await bcall('POST', '/api/auth/logout');
+  expect('signing out switches to another account on the browser', !!out.data.switchedTo, true);
+  await bcall('POST', '/api/auth/logout', { all: true });
+  expect('sign out of all', (await bcall('GET', '/api/auth/me')).data.user, null);
 
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);

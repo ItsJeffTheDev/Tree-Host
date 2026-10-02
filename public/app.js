@@ -1684,7 +1684,12 @@ async function init() {
     toast(e.message, 'error');
     return;
   }
-  if (state.me.teamMode && (!state.me.user || new URLSearchParams(location.search).has('invite'))) {
+  const pending = sessionStorage.getItem('th.toast');
+  if (pending) {
+    sessionStorage.removeItem('th.toast');
+    setTimeout(() => toast(pending), 300);
+  }
+  if (state.me.teamMode && (!state.me.user || new URLSearchParams(location.search).has('invite') || new URLSearchParams(location.search).has('add-account'))) {
     showAuth();
     return;
   }

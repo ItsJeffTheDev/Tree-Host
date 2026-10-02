@@ -223,7 +223,7 @@ The public Firebase settings (API key, project ID...) are already in `/etc/tree-
 
 ## 6. Email
 
-Tree Host sends its own branded emails through Resend: welcome (with "confirm your email"), password resets, plan
+Tree Host sends its own branded emails (with the logo, a tree watermark and a Discord invite; set `TREEHOST_DISCORD_INVITE` to change the link) through Resend: welcome (with "confirm your email"), password resets, plan
 active / ended, failed payments, free server codes, staff actions, appeals and staff messages. Without it, nothing is
 sent except Firebase's plain sign-in emails. To turn it on:
 

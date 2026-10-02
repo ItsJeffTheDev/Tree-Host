@@ -96,7 +96,7 @@ async function checkEmailVerified() {
   if (!fb) return;
   await fb.auth.authStateReady();
   const cur = fb.auth.currentUser;
-  if (!cur) return;
+  if (!cur || (cur.email || '').toLowerCase() !== (u.email || '').toLowerCase()) return; // another account is signed in to Firebase
   const refresh = async () => {
     await cur.reload();
     if (!cur.emailVerified) return false;
@@ -140,6 +140,7 @@ function showFirebaseAuth(forceMode) {
     <div class="auth-screen">
       <form class="auth-card stack" id="auth-form" autocomplete="on">
         <a href="/" class="brand" style="text-decoration:none;color:inherit"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Minecraft server hosting</div></div></a>
+        ${addAccountBanner()}
         <h2>${esc(title)}</h2>
         <p class="muted" style="margin:0">${esc(sub)}</p>
         ${newAccount ? `<label class="field">Username <input type="text" name="username" required minlength="3" maxlength="32" autocomplete="username" value="${esc(state.pendingProfile?.suggested || '')}"></label>` : ''}
@@ -318,6 +319,7 @@ function showAuth(forceMode) {
     <div class="auth-screen">
       <form class="auth-card stack" id="auth-form" autocomplete="on">
         <a href="/" class="brand" style="text-decoration:none;color:inherit"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Minecraft server hosting</div></div></a>
+        ${addAccountBanner()}
         <h2>${esc(title)}</h2>
         <p class="muted" style="margin:0">${esc(sub)}</p>
         ${
@@ -427,19 +429,68 @@ function renderUserBox() {
       <button class="btn sm" id="ub-account">Account</button>
       ${state.me.hosted ? '<button class="btn sm" id="ub-billing">💳 Billing</button>' : ''}
       ${isTeam() && hasPerm('console.access') ? '<a class="btn sm" href="/admin">🛠️ Staff Console</a>' : ''}
+      <button class="btn sm" id="ub-switch" title="Switch to another account or add one">⇄ Switch</button>
       <button class="btn sm" id="ub-logout">Sign out</button>
     </div>`;
   $('#ub-account').addEventListener('click', openAccount);
+  $('#ub-switch').addEventListener('click', () => openAccountSwitcher().catch((e) => toast(e.message, 'error')));
   if ($('#ub-billing')) $('#ub-billing').addEventListener('click', openBilling);
-  $('#ub-logout').addEventListener('click', async () => {
-    await api('POST', '/api/auth/logout').catch(() => {});
-    const fb = await firebaseAuth().catch(() => null);
-    if (fb) await fb.signOut(fb.auth).catch(() => {});
-    location.href = '/';
-  });
+  $('#ub-logout').addEventListener('click', () => signOut(false));
   $$('[data-copy]', el).forEach((b) =>
     b.addEventListener('click', () => navigator.clipboard.writeText(b.dataset.copy).then(() => toast('Copied'))),
   );
+}
+
+// ---------- several accounts: switch, add, sign out ----------
+
+/** "Adding another account" note on the sign-in screen (with a way back). */
+function addAccountBanner() {
+  if (!new URLSearchParams(location.search).has('add-account') || !state.me?.user) return '';
+  return `<div class="warn-box">Adding another account. You stay signed in as <b>${esc(state.me.user.username)}</b> and can switch between them.
+    <a href="/dashboard">Cancel</a></div>`;
+}
+
+/** Signs out of this account (switching to another one on this browser if there is one), or of all of them. */
+async function signOut(all) {
+  const r = await api('POST', '/api/auth/logout', all ? { all: true } : undefined).catch(() => ({}));
+  if (r.switchedTo) {
+    sessionStorage.setItem('th.toast', `Signed out. You're now using ${r.switchedTo}.`);
+    location.href = '/dashboard';
+    return;
+  }
+  const fb = await firebaseAuth().catch(() => null);
+  if (fb) await fb.signOut(fb.auth).catch(() => {});
+  location.href = '/';
+}
+
+async function switchAccount(userId) {
+  const r = await api('POST', '/api/auth/switch', { userId });
+  sessionStorage.setItem('th.toast', `Switched to ${r.username}`);
+  location.href = location.pathname.startsWith('/admin') ? '/dashboard' : location.pathname + location.hash;
+}
+
+async function openAccountSwitcher() {
+  const { accounts, max } = await api('GET', '/api/auth/accounts');
+  const { root } = openModal(`
+    <h2>Switch account</h2>
+    <p class="hint" style="margin-top:-8px">Accounts signed in on this browser. Tree Host treats accounts used together as linked.</p>
+    <div class="stack" style="gap:8px">${accounts
+      .map((a) => `<button class="acct-row ${a.active ? 'active' : ''}" data-switch="${esc(a.id)}" ${a.active ? 'disabled' : ''}>
+        <span class="acct-avatar">${esc(a.username.slice(0, 1).toUpperCase())}</span>
+        <span class="acct-text"><b>${esc(a.username)}</b><span class="small muted">${esc(a.email || 'no email')}</span></span>
+        <span class="badge ${ROLE_BADGE[a.role] || ''}">${esc(a.roleLabel)}</span>
+        ${a.restricted ? `<span class="badge red">${esc(a.restricted)}</span>` : ''}
+        ${a.active ? '<span class="badge green">using now</span>' : ''}
+      </button>`)
+      .join('')}</div>
+    <div class="row" style="margin-top:14px;flex-wrap:wrap">
+      ${accounts.length < max ? '<a class="btn primary" href="/dashboard?add-account">＋ Add another account</a>' : `<span class="muted small">You can be signed in to ${max} accounts at once.</span>`}
+      <span style="flex:1"></span>
+      ${accounts.length > 1 ? '<button class="btn" id="sw-all">Sign out of all</button>' : ''}
+    </div>
+    <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+  $$('[data-switch]', root).forEach((b) => b.addEventListener('click', () => attempt(() => switchAccount(b.dataset.switch))));
+  if ($('#sw-all', root)) $('#sw-all', root).addEventListener('click', () => confirm('Sign out of every account on this browser?') && signOut(true));
 }
 
 function openModal(html) {
@@ -722,7 +773,7 @@ async function adminPeople(body) {
     $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
       .map(
         (u) => `<tr>
-          <td><b>${esc(u.username)}</b>${restrictionBadge(u.restriction)}
+          <td><b>${esc(u.username)}</b>${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">🔗 ${u.linked.length} linked</span>` : ''}
             <div class="small muted">${esc(u.email) || 'no email'} · joined ${new Date(u.createdAt).toLocaleDateString()}${u.lastLogin ? ` · last seen ${new Date(u.lastLogin).toLocaleDateString()}` : ''}</div></td>
           <td>${
             u.id !== me.id && canRoles && outranks(u)
