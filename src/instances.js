@@ -285,6 +285,7 @@ class Instance extends EventEmitter {
       suspended: c.suspended || null,
       moderation: c.moderation || null,
       icon: c.iconAt || null,
+      maxPlayers: this.proc ? this.maxPlayers || null : null,
       subscriptionId: c.subscriptionId || null,
       plan: this.manager.planInfo(this),
       diskUsedMb: this.diskUsedMb || null,
@@ -812,8 +813,21 @@ class Instance extends EventEmitter {
   handleLine(raw) {
     this.appendLog(raw);
     const line = stripAnsi(raw);
+    if (this.manager.onConsoleLine) {
+      try {
+        this.manager.onConsoleLine(this, line);
+      } catch (e) {
+        console.error(`[console hook] ${e.message}`);
+      }
+    }
     if (this.status === 'starting' && (/Done \([\d.,]+m?s\)!/.test(line) || /Listening on \//.test(line))) {
       this.setStatus('running');
+      this.staffJoined = new Set();
+      this.getProperties().then((p) => {
+        this.maxPlayers = Number(p['max-players']) || null;
+        this.onlineMode = p['online-mode'] !== 'false';
+        this.emitStatus();
+      }).catch(() => {});
       const addr = this.cfg.port === 25565 ? '127.0.0.1' : `127.0.0.1:${this.cfg.port}`;
       this.sysLog(`Ready! In Minecraft go to Multiplayer → Add Server and use the address: ${this.cfg.publicAddress || this.cfg.autoAddress || addr}`);
       if (this.manager.teamMode && this.kind !== 'proxy' && !this.isCustomer) this.teamAccess({ op: false, quiet: true });

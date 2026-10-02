@@ -153,10 +153,16 @@ function expect(label, got, want) {
     expect('owner of server sees it', (await call('cust1', 'GET', `/api/servers/${sid}`)).status, 200);
     expect('other customer gets 404', (await call('cust2', 'GET', `/api/servers/${sid}`)).status, 404);
     expect('support sees it', (await call('support1', 'GET', `/api/servers/${sid}`)).status, 200);
-    expect('support can edit settings', (await call('support1', 'PUT', `/api/servers/${sid}/properties`, {})).status, 200);
+    expect("support can't change settings", (await call('support1', 'PUT', `/api/servers/${sid}/properties`, {})).status, 403);
+    expect("support can't read the settings", (await call('support1', 'GET', `/api/servers/${sid}/properties`)).status, 403);
+    expect("support can't open files", (await call('support1', 'GET', `/api/servers/${sid}/files`)).status, 403);
+    expect("developer can't open files", (await call('dev1', 'GET', `/api/servers/${sid}/files`)).status, 403);
+    expect('admin can open files', (await call('admin1', 'GET', `/api/servers/${sid}/files`)).status, 200);
+    expect('support can still see the console', (await call('support1', 'GET', `/api/servers/${sid}/log`)).status, 200);
     expect('support cannot delete', (await call('support1', 'DELETE', `/api/servers/${sid}`)).status, 403);
     expect('support cannot set a custom Java path', (await call('support1', 'PATCH', `/api/servers/${sid}`, { java: '/usr/bin/java' })).status, 403);
-    expect('developer may set host settings', (await call('dev1', 'PATCH', `/api/servers/${sid}`, { java: 'auto' })).status, 200);
+    expect("developer can't change settings", (await call('dev1', 'PATCH', `/api/servers/${sid}`, { java: 'auto' })).status, 403);
+    expect("admin can't use host-level settings", (await call('admin1', 'PATCH', `/api/servers/${sid}`, { java: '/usr/bin/java' })).status, 403);
     // take servers.edit away from Support and check it bites immediately
     await call('owner1', 'PUT', '/api/admin/roles/staff', { permissions: staffPerms.filter((p) => p !== 'servers.edit') });
     expect('support without servers.edit is blocked', (await call('support1', 'PUT', `/api/servers/${sid}/properties`, {})).status, 403);
@@ -196,14 +202,15 @@ function expect(label, got, want) {
     expect('support can see the icon', (await fetch(`${B}/api/servers/${sid}/icon`, { headers: { Cookie: jar.support1 } })).status, 200);
     expect('customer removes the icon', (await call('cust1', 'DELETE', `/api/servers/${sid}/icon`)).status, 200);
     expect('...and it is gone', (await fetch(`${B}/api/servers/${sid}/icon`, { headers: { Cookie: jar.cust1 } })).status, 404);
-    expect("staff can't delete a customer's server without a reason", (await call('dev1', 'DELETE', `/api/servers/${sid}`)).status, 400);
+    expect("staff can't delete a customer's server without a reason", (await call('admin1', 'DELETE', `/api/servers/${sid}`)).status, 400);
+    expect("developer can't delete customers' servers", (await call('dev1', 'DELETE', `/api/servers/${sid}`)).status, 403);
     const susSrv = await act('support1', { target: 'server', serverId: sid, type: 'suspend', days: 3 });
     expect('support suspends the server', susSrv.status, 200);
     expect('customer cannot start a suspended server', (await call('cust1', 'POST', `/api/servers/${sid}/start`)).status, [402, 423]);
     expect('support lifts it', (await call('support1', 'POST', `/api/admin/actions/${susSrv.data.id}/lift`, { reason: 'Checked, all fine.' })).status, 200);
-    const del = await act('dev1', { target: 'server', serverId: sid, type: 'delete' });
+    const del = await act('admin1', { target: 'server', serverId: sid, type: 'delete' });
     if (del.status !== 200) console.log('   delete said:', JSON.stringify(del.data));
-    expect('developer can delete it with a reason (servers.destroy)', del.status, 200);
+    expect('admin can delete it with a reason (servers.destroy)', del.status, 200);
     expect('the server is gone', (await call('cust1', 'GET', `/api/servers/${sid}`)).status, 404);
   }
 

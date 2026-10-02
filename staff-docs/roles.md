@@ -7,9 +7,9 @@ your role has the permission it needs, and the server checks the same permission
 | Role | Who | In short |
 |---|---|---|
 | **Owner** | You (the emails in `TREEHOST_ADMIN_EMAILS`) | Every permission, always. Only Owners can edit roles. |
-| **Admin** | People who run the business with you | People, billing, plans, promo codes, settings, every server. |
-| **Developer** | People who build and fix Tree Host | Every server (including deleting and host settings), system info, audit log. No money, no people management. |
-| **Support** | Helpers | Sees and fixes any server, sees accounts and plans. Can't delete anything or change billing. |
+| **Admin** | People who run the business with you | People, billing, plans, promo codes, settings, every server (files and settings too). No machine-level settings, no role editing. |
+| **Developer** | People who build and fix Tree Host | Sees every server and its console, starts and stops them, system info, audit log. Can't open customers' files or settings, delete servers, or manage money or people. |
+| **Support** | Helpers | Sees any server and its console, starts and stops it, sees accounts and plans, warns and suspends. Can't open customers' files or settings, delete anything or change billing. |
 | **Customer** | Everyone who signs up | Buys plans and fully manages **their own** servers. Can't see anyone else's. |
 
 Staff can have their own servers too: give yourself a free plan in **Staff Console → People → More**.
@@ -25,9 +25,9 @@ The Owner can change the Admin, Developer and Support columns in **Staff Console
 | Open the Staff Console | ✓ | ✓ | ✓ | ✓ |
 | See every customer's server | ✓ | ✓ | ✓ | ✓ |
 | Start, stop and run commands on any server | ✓ | ✓ | ✓ | ✓ |
-| Change files, plugins and settings on any server | ✓ | ✓ | ✓ | ✓ |
-| Delete servers, reset worlds, change versions (anyone's) | ✓ | ✓ | ✓ | |
-| Host-level settings (custom Java, custom jars, ports) | ✓ | ✓ | ✓ | |
+| Open and change files, plugins and settings on any server | ✓ | ✓ | | |
+| Delete servers, reset worlds, change versions (anyone's) | ✓ | ✓ | | |
+| Host-level settings (custom Java, custom jars, ports) | ✓ | | | |
 | See accounts | ✓ | ✓ | ✓ | ✓ |
 | Manage accounts (suspend, password help, delete) | ✓ | ✓ | | |
 | Change roles and invite staff | ✓ | ✓ | | |

@@ -1410,7 +1410,7 @@ route('GET', '/api/admin/servers', (req) => [...manager.instances.values()].map(
   const owner = auth.userById(i.cfg.owner);
   return {
     id: j.id, name: j.name, type: j.typeLabel || j.type, version: j.version, port: j.port, status: j.status,
-    running: !!i.proc, suspended: i.cfg.suspended || null, moderation: i.cfg.moderation || null, players: (j.players || []).length,
+    running: !!i.proc, suspended: i.cfg.suspended || null, moderation: i.cfg.moderation || null, players: (j.players || []).length, maxPlayers: j.maxPlayers || null,
     memUsedMb: i.memUsedMb || null, memoryMb: Number(i.cfg.memoryMb) || null, diskUsedMb: i.diskUsedMb || null,
     owner: owner ? { id: owner.id, username: owner.username, email: can(req.user, 'users.view') ? owner.email : undefined } : null,
     plan: manager.planInfo(i),
@@ -1641,6 +1641,129 @@ route('DELETE', '/api/servers/:id', async (req, res, p) => {
   billing.detachServer(p.id);
   return { ok: true };
 });
+
+// ---------- Tree Host staff in Minecraft ----------
+// Staff (anyone who can open the Staff Console, with a Minecraft name in Account) get special treatment on customer
+// servers, done with standard Minecraft commands so it works on Vanilla, Paper, Spigot, Purpur and Fabric:
+// they can join even when the server is whitelisted, everyone sees a green-and-gold "Tree Host staff joined" notice,
+// they wear a gold STAFF badge in chat and in the player list (hover: "Official Tree Host Staff"), and bans on them
+// are undone at once. Only on online-mode servers, where Minecraft has checked that the name really is theirs.
+
+const STAFF_TEAM = 'th_staff';
+const mcName = /^[A-Za-z0-9_]{3,16}$/;
+const staffFor = (name) => (TEAM && name ? auth.users.find((u) => u.mcName && u.mcName.toLowerCase() === name.toLowerCase() && rbac.isStaff(u)) : null);
+
+function versionAtLeast(v, want) {
+  const a = String(v || '').split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < want.length; i++) {
+    if ((a[i] || 0) !== want[i]) return (a[i] || 0) > want[i];
+  }
+  return true;
+}
+
+/** A chat component as a command argument, in the format this Minecraft version understands. */
+function component(inst, parts) {
+  const snbt = versionAtLeast(inst.cfg.version, [1, 21, 5]);
+  const conv = (p) => {
+    const o = { text: p.text };
+    if (p.color) o.color = p.color;
+    if (p.bold) o.bold = true;
+    if (p.hover) {
+      if (snbt) o.hover_event = { action: 'show_text', value: { text: p.hover, color: 'green' } };
+      else if (versionAtLeast(inst.cfg.version, [1, 16])) o.hoverEvent = { action: 'show_text', contents: { text: p.hover, color: 'green' } };
+      else o.hoverEvent = { action: 'show_text', value: { text: p.hover, color: 'green' } };
+    }
+    return o;
+  };
+  return JSON.stringify(['', ...parts.map(conv)]);
+}
+
+const supportsStaffFeatures = (inst) => inst.provider.kind !== 'proxy' && versionAtLeast(inst.cfg.version, [1, 13]);
+
+function staffWelcome(inst, name, user) {
+  const role = rbac.role(user.role).label;
+  const badge = { text: '✔ STAFF ', color: 'gold', bold: true, hover: 'Official Tree Host Staff' };
+  inst.write(`team add ${STAFF_TEAM}`);
+  inst.write(`team modify ${STAFF_TEAM} color gold`);
+  inst.write(`team modify ${STAFF_TEAM} prefix ${component(inst, [badge])}`);
+  inst.write(`team join ${STAFF_TEAM} ${name}`);
+  inst.write(`tellraw @a ${component(inst, [
+    { text: '🌳 Tree Host ', color: 'green', bold: true },
+    { text: `» ${name} `, color: 'gold', bold: true },
+    { text: `(${role}) joined. `, color: 'gold' },
+    { text: `A Tree Host ${role} has joined your server.`, color: 'green', hover: 'Official Tree Host Staff' },
+  ])}`);
+  inst.sysLog(`Tree Host staff ${name} (${user.username}, ${role}) joined the server.`);
+  inst.logActivity('staff', user.username, `joined "${inst.cfg.name}" in Minecraft as ${name} (${role})`);
+}
+
+manager.onConsoleLine = (inst, line) => {
+  if (!TEAM || !inst.isCustomer || !supportsStaffFeatures(inst)) return;
+  inst.staffJoined = inst.staffJoined || new Set();
+  inst.staffWhitelisted = inst.staffWhitelisted || new Set();
+  let m = /: ([A-Za-z0-9_]{3,16}) joined the game/.exec(line);
+  if (m) {
+    const user = staffFor(m[1]);
+    if (!user) return;
+    if (inst.onlineMode === false) {
+      inst.sysLog(`${m[1]} has a Tree Host staff name, but this server is in offline mode, so it can't be checked: no staff badge.`);
+      return;
+    }
+    inst.staffJoined.add(m[1].toLowerCase());
+    staffWelcome(inst, m[1], user);
+    return;
+  }
+  // A staff member stopped by the whitelist: let them in for this visit (they just join again).
+  // Vanilla: "Steve (/1.2.3.4:5678) lost connection: You are not white-listed", Paper: "Disconnecting Steve (/1.2.3.4:5678): You are
+  // not whitelisted", older: "...GameProfile@...[...name=Steve,...] ... You are not white-listed".
+  m = /: ([A-Za-z0-9_]{3,16}) \(\/[^)]*\) lost connection: .*not white-?listed/i.exec(line)
+    || /Disconnecting ([A-Za-z0-9_]{3,16}) \(\/[^)]*\): .*not white-?listed/i.exec(line)
+    || /name=([A-Za-z0-9_]{3,16}).*not white-?listed/i.exec(line);
+  if (m && staffFor(m[1]) && inst.onlineMode !== false) {
+    inst.write(`whitelist add ${m[1]}`);
+    inst.staffWhitelisted.add(m[1].toLowerCase());
+    inst.sysLog(`Tree Host staff ${m[1]} was let through the whitelist for this visit.`);
+    return;
+  }
+  m = /: ([A-Za-z0-9_]{3,16}) left the game/.exec(line);
+  if (m && inst.staffJoined.has(m[1].toLowerCase())) {
+    inst.staffJoined.delete(m[1].toLowerCase());
+    inst.write(`team leave ${m[1]}`);
+    if (inst.staffWhitelisted.delete(m[1].toLowerCase())) inst.write(`whitelist remove ${m[1]}`);
+    return;
+  }
+  // Staff can't be banned from customer servers: undo it straight away.
+  m = /: (?:\[[A-Za-z0-9_]{1,16}: )?Banned ([A-Za-z0-9_]{3,16})[:,]/.exec(line); // console or op feedback, never chat
+  if (m && staffFor(m[1])) {
+    inst.write(`pardon ${m[1]}`);
+    inst.write(`tellraw @a ${component(inst, [{ text: '🌳 Tree Host ', color: 'green', bold: true }, { text: `» ${m[1]} is Tree Host staff and can't be banned.`, color: 'gold' }])}`);
+    inst.sysLog(`Someone tried to ban Tree Host staff ${m[1]}; the ban was undone.`);
+    return;
+  }
+  m = /: (?:\[[A-Za-z0-9_]{1,16}: )?Kicked ([A-Za-z0-9_]{3,16})[:,]/.exec(line);
+  if (m && staffFor(m[1])) {
+    inst.write(`tellraw @a ${component(inst, [{ text: '🌳 Tree Host ', color: 'green', bold: true }, { text: `» ${m[1]} is Tree Host staff. Please don't kick staff while they help you.`, color: 'gold' }])}`);
+    inst.sysLog(`Tree Host staff ${m[1]} was kicked. They can join again at any time.`);
+    return;
+  }
+  m = /: (?:\[[A-Za-z0-9_]{1,16}: )?Removed ([A-Za-z0-9_]{3,16}) from the whitelist/.exec(line);
+  if (m && inst.staffJoined.has(m[1].toLowerCase()) && staffFor(m[1])) inst.write(`whitelist add ${m[1]}`);
+};
+
+// "Join as staff": lets you through the whitelist and any ban, and gives you the address.
+route('POST', '/api/servers/:id/staff-join', async (req, res, p) => {
+  const inst = getFor(req, p.id);
+  if (!inst.proc || inst.status !== 'running') throw httpError(400, 'Start the server first (or ask the owner to).');
+  const name = req.user.mcName;
+  if (!name || !mcName.test(name)) throw httpError(400, 'Set your Minecraft name first (Account → Minecraft name).');
+  if (!supportsStaffFeatures(inst)) throw httpError(400, 'Staff joining works on Minecraft servers 1.13 and newer (not proxies).');
+  inst.staffWhitelisted = inst.staffWhitelisted || new Set();
+  inst.write(`pardon ${name}`);
+  inst.write(`whitelist add ${name}`);
+  inst.staffWhitelisted.add(name.toLowerCase());
+  audit(req, `joined the server "${inst.cfg.name}" in Minecraft as staff (${name})`, inst);
+  return { ok: true, address: inst.toJSON().publicAddress, name, onlineMode: inst.onlineMode !== false };
+}, { perm: 'console.access' });
 
 // ---------- custom addresses (the owner's own domain instead of Tree Host's address) ----------
 
@@ -1902,7 +2025,7 @@ route(
   { perm: 'servers.host' },
 );
 
-route('GET', '/api/servers/:id/properties', (req, res, p) => getFor(req, p.id).getProperties());
+route('GET', '/api/servers/:id/properties', (req, res, p) => getFor(req, p.id, 'settings').getProperties());
 route('PUT', '/api/servers/:id/properties', async (req, res, p) => {
   const inst = getFor(req, p.id, 'settings');
   await inst.setProperties(await readJson(req));

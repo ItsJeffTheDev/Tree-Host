@@ -84,6 +84,24 @@ Never promise a refund.
 
 ---
 
+## Joining a customer's server in Minecraft
+
+Set your Minecraft name in **Account** first. Then open the server → **🎮 Join as staff**, and join with the address shown.
+
+- You get in even if the server is **whitelisted** (you're added for your visit and removed when you leave).
+- Everyone sees a green-and-gold notice: **🌳 Tree Host » YourName (Support) joined. A Tree Host Support has joined your
+  server.**
+- You wear a gold **✔ STAFF** badge before your name in chat and in the player list (hover over it in chat: *Official
+  Tree Host Staff*).
+- If someone bans you, the ban is undone at once. Minecraft can't stop a kick, but everyone is asked not to kick staff,
+  and you can join again straight away.
+- This only works on **online-mode** servers from Minecraft **1.13** up (not proxies): that's how we know the name is
+  really yours.
+
+Be polite: it's the customer's server. Say why you're there, and don't change anything without asking.
+
+> **Note:** Support and Developers can't open customers' **files** or **settings**. Ask an Admin if a fix needs them.
+
 ## 4. Free servers and codes (Admins)
 
 - **Give a free plan now** (People → More): it shows up in their Billing right away. Pick how long it lasts, up to

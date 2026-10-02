@@ -460,3 +460,5 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .tag-pick { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; cursor: pointer; }
 .tag-pick:has(input:checked) { border-color: var(--accent); background: rgba(70,195,123,.12); }
 .tag-pick input { margin: 0; accent-color: var(--accent); }
+
+.si-online { color: var(--accent); font-weight: 600; }

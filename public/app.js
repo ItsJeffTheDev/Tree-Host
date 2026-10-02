@@ -141,7 +141,7 @@ function serverItem(s) {
         ${s.icon ? `<span class="si-icon"><img src="${iconUrl(s)}" alt=""><span class="dot ${esc(s.status)}"></span></span>` : `<span class="dot ${esc(s.status)}"></span>`}
         <div>
           <div class="si-name">${esc(s.name)}</div>
-          <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.players.length ? ` · ${s.players.length} online` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
+          <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.status === 'running' && s.kind !== 'proxy' ? ` · <span class="si-online">👥 ${s.players.length}${s.maxPlayers ? `/${s.maxPlayers}` : ''}</span>` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
         </div>
       </button>`;
 }
@@ -303,7 +303,7 @@ function renderHeader() {
           ${alive && s.startedAt ? `<span>Up <b id="uptime">${fmtUptime(Date.now() - s.startedAt)}</b></span>` : ''}
           ${s.autoRestart ? '<span title="Restarts by itself after a crash">♻ auto-restart</span>' : ''}
           ${s.plan && s.diskUsedMb ? `<span title="Disk used / plan limit">Disk <b>${+(s.diskUsedMb / 1024).toFixed(1)} / ${s.plan.diskGb} GB</b></span>` : ''}
-          ${s.kind !== 'proxy' && alive ? `<span title="${esc(s.players.join(', '))}">Players <b>${s.players.length}</b>${s.players.length ? `: ${esc(s.players.slice(0, 5).join(', '))}${s.players.length > 5 ? '…' : ''}` : ''}</span>` : ''}
+          ${s.kind !== 'proxy' && alive ? `<span title="${esc(s.players.join(', '))}">Players <b>${s.players.length}${s.maxPlayers ? ` / ${s.maxPlayers}` : ''}</b>${s.players.length ? `: ${esc(s.players.slice(0, 5).join(', '))}${s.players.length > 5 ? '…' : ''}` : ''}</span>` : ''}
         </div>
       </div>
       <div class="address" title="In Minecraft: Multiplayer → Add Server → paste this as the Server Address">
@@ -350,6 +350,7 @@ function renderHeader() {
         <button class="btn" data-act="stop" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>■ Stop</button>
         <button class="btn danger" data-act="kill" ${!alive ? 'disabled' : ''} title="Force kill the Java process">Kill</button>
         ${hostFeatures() ? '<button class="btn" data-act="open-folder" title="Open the server folder">📁 Folder</button>' : ''}
+        ${isTeam() && s.owner && s.owner !== state.me.user.id && hasPerm('console.access') && s.kind !== 'proxy' ? `<button class="btn" id="btn-staff-join" ${s.status === 'running' ? '' : 'disabled'} title="Join this server in Minecraft as Tree Host staff (gets you past the whitelist)">🎮 Join as staff</button>` : ''}
         ${isTeam() && s.owner && s.owner !== state.me.user.id && canTakeAction('server') ? '<button class="btn" id="btn-take-action" title="Warn, suspend, ban or delete this server, with a reason and evidence">🛡️ Take action</button>' : ''}
       </div>
     </div>
@@ -359,6 +360,17 @@ function renderHeader() {
     b.addEventListener('click', () => attempt(() => api('POST', `/api/servers/${s.id}/${b.dataset.act}`))),
   );
   if ($('#btn-play', el)) $('#btn-play', el).addEventListener('click', () => launchClient(s));
+  if ($('#btn-staff-join', el)) $('#btn-staff-join', el).addEventListener('click', () => attempt(async () => {
+    const r = await api('POST', `/api/servers/${s.id}/staff-join`);
+    openModal(`<h2>🎮 Join as Tree Host staff</h2>
+      <p>You're let through the whitelist as <b>${esc(r.name)}</b>. In Minecraft: Multiplayer → Add Server →</p>
+      <div class="row"><code class="addr-main copy" data-copy="${esc(r.address)}" style="font-size:18px">${esc(r.address)}</code></div>
+      ${r.onlineMode ? `<p class="hint">When you join, everyone sees a green-and-gold <b>Tree Host staff joined</b> notice, and you wear a gold <b>✔ STAFF</b> badge in chat and in the player list.
+        Bans on you are undone automatically. Please be respectful: it's the customer's server.</p>`
+        : '<div class="warn-box">This server is in offline mode, so Minecraft cannot confirm who you are: you join without the staff badge.</div>'}
+      <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+    $$('#modal-root [data-copy]').forEach((c) => c.addEventListener('click', () => navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Copied'))));
+  }));
   if ($('#btn-take-action', el)) $('#btn-take-action', el).addEventListener('click', () => openTakeAction({ target: 'server', server: { id: s.id, name: s.name, ownerName: s.ownerName }, user: { id: s.owner, username: s.ownerName } }));
   $$('[data-mod-inbox]', el).forEach((a) => a.addEventListener('click', (e) => {
     e.preventDefault();

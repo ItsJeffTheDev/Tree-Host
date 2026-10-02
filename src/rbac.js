@@ -40,19 +40,24 @@ const FIRST_PERMISSIONS = ['console.access', 'servers.viewAll', 'servers.operate
  * Roles from most to least access. `level` decides who may manage whom: you can only assign roles below your
  * own level (Owners can assign anything). Owner always has every permission; Customer never has any.
  */
+// Admins run the business but don't touch the machine itself or what roles can do.
+const ADMIN_EXCLUDED = ['roles.manage', 'servers.host'];
+// Taken away from saved roles once (the Owner can give them back in Roles & permissions).
+const REVOKED = { 2: { staff: ['servers.edit', 'servers.host'], developer: ['servers.edit', 'servers.host'], admin: ['servers.host'] } };
+
 const DEFAULT_ROLES = [
   { id: 'owner', label: 'Owner', level: 100, locked: true, description: 'Runs Tree Host. Every permission, always.' },
   {
-    id: 'admin', label: 'Admin', level: 80, description: 'Runs day-to-day business: people, billing, servers.',
-    permissions: PERMISSIONS.map((p) => p.id).filter((id) => id !== 'roles.manage'),
+    id: 'admin', label: 'Admin', level: 80, description: 'Runs day-to-day business: people, billing, servers. No machine-level settings or role editing.',
+    permissions: PERMISSIONS.map((p) => p.id).filter((id) => !ADMIN_EXCLUDED.includes(id)),
   },
   {
-    id: 'developer', label: 'Developer', level: 60, description: 'Builds and fixes Tree Host: servers, host settings, system info. No money or people management.',
-    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'servers.destroy', 'servers.host', 'users.view', 'audit.view', 'system.view', 'moderation.view'],
+    id: 'developer', label: 'Developer', level: 60, description: "Builds and fixes Tree Host: sees every server and its console, system info. Can't open customers' files or settings.",
+    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'users.view', 'audit.view', 'system.view', 'moderation.view'],
   },
   {
-    id: 'staff', label: 'Support', level: 40, description: "Helps customers: sees and fixes any server, sees accounts and plans, can't delete anything.",
-    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'users.view', 'billing.view', 'moderation.view', 'moderation.act', 'messages.send'],
+    id: 'staff', label: 'Support', level: 40, description: "Helps customers: sees any server and its console, starts and stops it, sees accounts and plans. Can't open customers' files or settings, or delete anything.",
+    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'users.view', 'billing.view', 'moderation.view', 'moderation.act', 'messages.send'],
   },
   { id: 'customer', label: 'Customer', level: 0, locked: true, description: 'Everyone who signs up. Manages only their own servers.' },
 ];
@@ -76,11 +81,20 @@ class Rbac {
       r.permissions = [...new Set([...Object.values(s.permissions).filter((p) => PERMISSION_IDS.has(p)), ...fresh])];
       if (fresh.length) added = true;
     }
+    // Tightened defaults (e.g. Support and Developer no longer open customers' files and settings).
+    let rev = Number(saved._rev) || 1;
+    if (Object.keys(saved).length) {
+      for (const [n, byRole] of Object.entries(REVOKED)) {
+        if (rev >= Number(n)) continue;
+        for (const r of this.roles) if (byRole[r.id]) r.permissions = r.permissions.filter((p) => !byRole[r.id].includes(p));
+        added = true;
+      }
+    }
     if (added || (Object.keys(saved).length && !saved._known)) await this.save();
   }
 
   save() {
-    const out = { _known: [...PERMISSION_IDS] };
+    const out = { _known: [...PERMISSION_IDS], _rev: Math.max(...Object.keys(REVOKED).map(Number)) };
     for (const r of this.roles) if (!r.locked) out[r.id] = { permissions: r.permissions };
     return store.save('roles', out);
   }

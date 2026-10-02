@@ -103,7 +103,7 @@ async function consoleServers(body) {
     $('#srv-list', body).innerHTML = rows.length
       ? `<table><thead><tr><th>Server</th><th>Owner</th><th>Plan</th><th>Status</th><th>Memory</th><th></th></tr></thead><tbody>${rows
           .map((s) => `<tr>
-            <td><b>${esc(s.name)}</b><div class="small muted">${esc(s.type)} ${esc(s.version)} · port ${s.port}${s.players ? ` · ${s.players} online` : ''}</div></td>
+            <td><b>${esc(s.name)}</b><div class="small muted">${esc(s.type)} ${esc(s.version)} · port ${s.port}${s.running ? ` · 👥 ${s.players}${s.maxPlayers ? `/${s.maxPlayers}` : ''} online` : ''}</div></td>
             <td class="small">${s.owner ? `${esc(s.owner.username)}${s.owner.email ? `<div class="muted">${esc(s.owner.email)}</div>` : ''}` : '<span class="muted">-</span>'}</td>
             <td class="small">${s.plan ? `${esc(s.plan.planName)}${s.plan.usable ? '' : ' <span class="badge red">not paid</span>'}` : '<span class="muted">-</span>'}</td>
             <td>${statusBadge(s)}</td>
