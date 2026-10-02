@@ -676,13 +676,30 @@ route(
   () => billing.promos.map((p) => {
     const x = billing.publicPromo(p);
     x.redeemedBy = x.redeemedBy.map((u) => ({ ...u, username: (auth.userById(u.userId) || {}).username || '(deleted)' }));
+    if (x.forUserId) x.forUsername = (auth.userById(x.forUserId) || {}).username || '(deleted)';
     return x;
   }).reverse(),
   { perm: 'promos.manage' },
 );
 route('POST', '/api/admin/promos', async (req) => {
-  const c = await billing.createPromo(await readJson(req), req.user.username);
-  audit(req, `created promo code ${c.code} (${c.planName}, ${c.months ? `${c.months} months` : 'no end date'}, ${c.maxUses} use${c.maxUses === 1 ? '' : 's'})`);
+  const body = await readJson(req);
+  // "forUser": a username, email or account id. The code then only works for that account, once.
+  let target = null;
+  if (body.forUser || body.forUserId) {
+    const key = String(body.forUserId || body.forUser).trim().toLowerCase();
+    target = auth.userById(body.forUserId) || auth.users.find((u) => u.username.toLowerCase() === key || (u.email && u.email === key)) || null;
+    if (!target) throw httpError(404, `No account called "${body.forUser || body.forUserId}". Use their username or email.`);
+  }
+  const c = await billing.createPromo({ ...body, forUserId: target ? target.id : null }, req.user.username);
+  audit(req, `created promo code ${c.code} (${c.planName}, ${c.months ? `${c.months} month${c.months === 1 ? '' : 's'}` : 'no end date'}, ${target ? `only for ${target.username}` : `${c.maxUses} use${c.maxUses === 1 ? '' : 's'}`})`);
+  if (target) c.forUsername = target.username;
+  // Optionally email the code straight to them.
+  if (target && body.email && target.email && mail.enabled()) {
+    await mail.send(target.email, 'A free Tree Host server for you', [
+      `Hi ${target.username}, you've been given a free ${c.planName} plan on Tree Host${c.months ? ` for ${c.months} month${c.months === 1 ? '' : 's'}` : ''}!`,
+      `Your code is ${c.code}. It only works for your account: open Billing, choose "Have a code?", and paste it.`,
+    ], PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null).then(() => (c.emailed = true)).catch(() => (c.emailed = false));
+  }
   return c;
 }, { perm: 'promos.manage' });
 route('DELETE', '/api/admin/promos/:code', async (req, res, p) => {

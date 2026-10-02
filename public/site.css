@@ -252,3 +252,8 @@ section { padding: 88px 0; position: relative; }
   .leaves { display: none; }
   .browser { transform: none; }
 }
+
+/* ---------- proportional scaling on big screens (same steps as the dashboard) ---------- */
+@media (min-width: 1800px) { body { zoom: 1.1; } }
+@media (min-width: 2300px) { body { zoom: 1.25; } }
+@media (min-width: 3000px) { body { zoom: 1.5; } }

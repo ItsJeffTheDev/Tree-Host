@@ -36,6 +36,7 @@ function initConsole() {
     <div id="user-box" class="user-box"></div>`;
   renderUserBox();
   const show = () => {
+    $('#modal-root').innerHTML = ''; // a dialog from the previous section must not stay open over this one
     const id = location.hash.slice(1);
     const sec = sections.find((s) => s.id === id) || sections[0];
     $$('[data-sec]', side).forEach((a) => a.classList.toggle('active', a.dataset.sec === sec.id));

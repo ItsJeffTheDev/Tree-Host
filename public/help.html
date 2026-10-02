@@ -8,12 +8,13 @@
   <link rel="stylesheet" href="style.css">
   <style>
     body { overflow-y: auto; }
-    .help { display: grid; grid-template-columns: 270px minmax(0, 1fr) 230px; min-height: 100vh; }
+    :root { --z: 1; }
+    .help { display: grid; grid-template-columns: 270px minmax(0, 1fr) 230px; min-height: calc(100vh / var(--z)); }
 
     /* ---- left navigation ---- */
     .help nav {
       background: var(--panel); border-right: 1px solid var(--border); padding: 18px 14px;
-      display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 4px; position: sticky; top: 0; height: calc(100vh / var(--z)); overflow-y: auto;
     }
     .help nav .brand { margin-bottom: 14px; }
     .search { position: relative; margin-bottom: 12px; }
@@ -114,7 +115,7 @@
     .pager .next { text-align: right; grid-column: 2; }
 
     /* right: on this page */
-    aside.toc { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 44px 18px 20px 0; }
+    aside.toc { position: sticky; top: 0; height: calc(100vh / var(--z)); overflow-y: auto; padding: 44px 18px 20px 0; }
     aside.toc .toc-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 8px; }
     aside.toc a { display: block; color: var(--muted); text-decoration: none; font-size: 13px; padding: 4px 0 4px 12px; border-left: 2px solid var(--border); }
     aside.toc a:hover { color: var(--text); }
@@ -126,12 +127,20 @@
     }
     @media (max-width: 800px) {
       .help { grid-template-columns: 1fr; }
+      /* the guide list becomes compact chips so the guide itself starts near the top */
       .help nav { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
-      .help nav .back { margin-top: 8px; }
+      #nav-links { display: flex; flex-wrap: wrap; gap: 6px; }
+      .help nav .nav-group { display: none; }
+      .help nav a.doc { padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; box-shadow: none !important; }
+      .help nav .back { margin-top: 4px; }
       article { padding: 24px 16px 30px; }
       article h1 { font-size: 27px; }
       .pager { padding: 0 16px 50px; }
     }
+    /* proportional scaling on big screens (same steps as the dashboard) */
+    @media (min-width: 1800px) { :root { --z: 1.1; } body { zoom: 1.1; } }
+    @media (min-width: 2300px) { :root { --z: 1.25; } body { zoom: 1.25; } }
+    @media (min-width: 3000px) { :root { --z: 1.5; } body { zoom: 1.5; } }
   </style>
 </head>
 <body>

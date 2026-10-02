@@ -34,7 +34,9 @@ TREEHOST_PUBLIC_URL=http://localhost:8766 BILLING_DEMO=1 node src/server.js
 ```
 
 Open http://localhost:8766: that's the full hosted site with fake payments. The first account you create becomes the
-admin. On Windows, just double-click **`Start.bat`** (installs Node.js if needed, keeps its data in `test-site-data/`).
+admin. On Windows, just double-click **`Start.bat`** (installs Node.js if needed, keeps its data in `test-site-data/`,
+signs in with Firebase, and works with or without Docker Desktop). For Stripe test payments, copy
+[`test-site.env.example`](test-site.env.example) to `test-site.env` (never committed) and add your **test** keys.
 
 - `node src/server.js` without settings runs **personal mode** (http://localhost:8765, no accounts).
 - Real Minecraft servers need Java (downloaded automatically) and, for isolation, Docker

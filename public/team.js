@@ -682,7 +682,8 @@ async function adminPeople(body) {
             if (u.id === me.id) return '<span class="muted small">you</span>';
             const manage = canManage && outranks(u);
             const items = [
-              canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan</button>` : '',
+              hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">🎟️ Give a free server code</button>` : '',
+              canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan now</button>` : '',
               manage
                 ? u.firebase
                   ? `<button class="btn sm" data-reset="${esc(u.email)}">Send password reset email</button>`
@@ -726,6 +727,7 @@ async function adminPeople(body) {
         });
       }),
     );
+    $$('[data-code]', body).forEach((b) => b.addEventListener('click', () => openAccountCode(all.find((x) => x.id === b.dataset.code), plans.plans)));
     $$('[data-reset]', body).forEach((b) =>
       b.addEventListener('click', () =>
         attempt(async () => {
@@ -850,6 +852,47 @@ async function adminBilling(body) {
   );
 }
 
+/** One-time code for one account: only that person can redeem it, once (Billing → Have a code?). */
+function openAccountCode(user, planList) {
+  const canEmail = !!(state.me.mailEnabled && user.email);
+  const { root, close } = openModal(`
+    <h2>Free server code for ${esc(user.username)}</h2>
+    <p class="hint" style="margin-top:0">Creates a one-time code that <b>only ${esc(user.username)}</b> can redeem, under
+      <b>Billing → Have a code?</b>. Anyone else who tries it is told it's for a different account.</p>
+    <form id="ac-form" class="card stack">
+      <div class="row" style="flex-wrap:wrap;align-items:flex-end">
+        <label class="small">Plan<br><select name="planId" style="width:auto">${planList.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${+(p.ramMb / 1024).toFixed(1)} GB)</option>`).join('')}</select></label>
+        <label class="small">Months free<br><input type="number" name="months" value="1" min="0" max="120" style="width:90px" title="0 = no end date"></label>
+        <label class="small" style="flex:1;min-width:180px">Note<br><input type="text" name="note" placeholder="e.g. Creator promo, giveaway winner"></label>
+      </div>
+      ${canEmail ? `<label class="check"><input type="checkbox" name="email" checked> Email the code to ${esc(user.email)}</label>` : ''}
+      <div class="row"><button class="btn primary">Create code</button></div>
+    </form>
+    <div id="ac-result"></div>
+    <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+  $('#ac-form', root).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    attempt(async () => {
+      const c = await api('POST', '/api/admin/promos', { planId: f.planId, months: Number(f.months) || 0, note: f.note || `For ${user.username}`, forUserId: user.id, email: !!f.email });
+      const msg = `Here's your free Tree Host server: ${c.planName}${c.months ? ` for ${c.months} month${c.months === 1 ? '' : 's'}` : ''}! Sign in, open Billing → "Have a code?" and enter ${c.code}. It only works for your account.`;
+      $('#ac-form', root).classList.add('hidden');
+      $('#ac-result', root).innerHTML = `<div class="card stack">
+        <div class="small muted">Code (one use, only for ${esc(user.username)})</div>
+        <code class="copy" data-copy="${esc(c.code)}" style="font-size:20px;padding:8px 12px" title="Click to copy">${esc(c.code)}</code>
+        ${c.emailed ? `<div class="badge green" style="align-self:flex-start">Emailed to ${esc(user.email)}</div>` : ''}
+        <div class="small muted">Message to send them:</div>
+        <textarea readonly rows="3" style="width:100%">${esc(msg)}</textarea>
+        <div class="row"><button class="btn sm" id="ac-copy-msg">Copy message</button></div>
+      </div>`;
+      $('[data-copy]', root).addEventListener('click', (ev) => navigator.clipboard.writeText(ev.target.dataset.copy).then(() => toast('Code copied')));
+      $('#ac-copy-msg', root).addEventListener('click', () => navigator.clipboard.writeText(msg).then(() => toast('Message copied')));
+      toast(`Code ${c.code} created for ${user.username}`);
+    });
+  });
+  return { root, close };
+}
+
 // Promo codes: free plans for creators, partners and giveaways. Customers redeem them in Billing.
 async function adminPromos(body) {
   const [codes, plans] = await Promise.all([api('GET', '/api/admin/promos'), api('GET', '/api/admin/billing')]);
@@ -864,6 +907,7 @@ async function adminPromos(body) {
         <label class="small">Months free<br><input type="number" name="months" value="3" min="0" max="120" style="width:80px" title="0 = no end date"></label>
         <label class="small">Uses<br><input type="number" name="maxUses" value="1" min="1" style="width:70px"></label>
         <label class="small">Redeem by (optional)<br><input type="date" name="expiresAt" style="width:auto"></label>
+        <label class="small">Only for account (optional)<br><input type="text" name="forUser" placeholder="username or email" style="max-width:200px" title="The code then works once, and only for this account"></label>
         <label class="small" style="flex:1;min-width:160px">Note<br><input type="text" name="note" placeholder="e.g. Creator: Steve (YouTube)"></label>
         <button class="btn primary">Create code</button>
       </div>
@@ -877,7 +921,7 @@ async function adminPromos(body) {
                 (c) => `<tr>
                   <td><code class="copy" data-copy="${esc(c.code)}" title="Click to copy">${esc(c.code)}</code>
                     ${c.active ? '<span class="badge green">active</span>' : `<span class="badge">${c.disabled ? 'disabled' : 'used up / expired'}</span>`}</td>
-                  <td class="small">${esc(c.planName)} · ${length(c.months)}${c.expiresAt ? `<div class="muted">redeem by ${new Date(c.expiresAt).toLocaleDateString()}</div>` : ''}</td>
+                  <td class="small">${esc(c.planName)} · ${length(c.months)}${c.forUsername ? `<div><span class="badge blue" title="Only this account can redeem it">only for ${esc(c.forUsername)}</span></div>` : ''}${c.expiresAt ? `<div class="muted">redeem by ${new Date(c.expiresAt).toLocaleDateString()}</div>` : ''}</td>
                   <td class="small">${c.uses} / ${c.maxUses}${c.redeemedBy.length ? `<div class="muted">${c.redeemedBy.map((u) => esc(u.username)).join(', ')}</div>` : ''}</td>
                   <td class="small">${esc(c.note) || '<span class="muted">-</span>'}</td>
                   <td class="actions-cell">${c.disabled ? '' : `<button class="btn sm danger" data-pdis="${esc(c.code)}">Disable</button>`}</td>

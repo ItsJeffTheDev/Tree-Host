@@ -29,7 +29,9 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--panel-2); 
 .muted { color: var(--muted); }
 .small { font-size: 12.5px; }
 
-.app { display: grid; grid-template-columns: 260px 1fr; height: 100vh; }
+/* --z: proportional scaling on big screens (set below); the app always fills exactly one screen. */
+:root { --z: 1; }
+.app { display: grid; grid-template-columns: 260px minmax(0, 1fr); height: calc(100vh / var(--z)); height: calc(100dvh / var(--z)); }
 
 /* ---------- sidebar ---------- */
 .sidebar {
@@ -40,6 +42,7 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--panel-2); 
   padding: 16px 12px;
   gap: 14px;
   min-height: 0;
+  overflow-y: auto;
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
 .logo {
@@ -68,7 +71,7 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--panel-2); 
 .sys-info { color: var(--muted); font-size: 12px; padding: 0 4px; border-top: 1px solid var(--border); padding-top: 10px; }
 
 /* ---------- main ---------- */
-.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 .srv-header { padding: 18px 24px 0; border-bottom: 1px solid var(--border); background: var(--panel); }
 .srv-top { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .srv-title { flex: 1; min-width: 240px; }
@@ -220,7 +223,7 @@ tr.disabled td:not(.actions-cell) { opacity: .5; }
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: grid; place-items: center; z-index: 50; padding: 20px; }
 .modal {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  width: min(860px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; padding: 22px 24px;
+  width: min(860px, 100%); max-height: calc(100vh / var(--z) - 40px); max-height: calc(100dvh / var(--z) - 40px); overflow-y: auto; padding: 22px 24px;
 }
 .modal h2 { margin: 0 0 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
@@ -261,7 +264,7 @@ tr.disabled td:not(.actions-cell) { opacity: .5; }
 .readonly-note b { color: var(--text); }
 .warn-box { background: rgba(217,164,65,.1); border: 1px solid rgba(217,164,65,.45); border-radius: 7px; padding: 10px 12px; font-size: 13px; }
 .count { background: var(--danger); color: #fff; border-radius: 999px; padding: 0 6px; font-size: 11px; margin-left: 4px; }
-.auth-screen { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+.auth-screen { min-height: calc(100vh / var(--z)); display: grid; place-items: center; padding: 20px; }
 .auth-card {
   width: min(420px, 100%); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 24px;
 }
@@ -287,10 +290,20 @@ details { margin-top: 8px; }
 details summary { cursor: pointer; font-weight: 600; }
 
 @media (max-width: 800px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
-  .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
+  .sidebar { border-right: none; border-bottom: 1px solid var(--border); overflow: visible; }
   .server-list { max-height: 180px; }
+  .main { overflow: visible; }
   .files, .grid2, .grid3 { grid-template-columns: 1fr; }
+  .srv-header { padding: 14px 14px 0; }
+  .tab-body { padding: 14px; overflow: visible; }
+  .tab-body.console-mode { min-height: 75vh; }
+  .console-wrap { min-height: 55vh; }
+  .card { overflow-x: auto; }
+  .card > table { min-width: 560px; }  /* readable columns; the card scrolls sideways */
+  .menu-body { position: static; box-shadow: none; margin-top: 4px; }
+  .modal-bg { padding: 10px; }
+  .modal { padding: 16px; }
 }
 
 /* ---------- activity, claims, backups, plugin browser ---------- */
@@ -353,10 +366,24 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .console-nav a { color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; }
 .console-nav a:hover { background: var(--panel-2); }
 .console-nav a.active { background: var(--panel-2); border-color: var(--border); color: var(--accent); }
-.console-page { max-width: 1200px; }
+.console-page { width: 100%; max-width: 1600px; padding: 24px 32px 48px; }
 .console-title { font-size: 22px; margin: 0 0 14px; }
+.console-page .card + .card { margin-top: 12px; }
+@media (max-width: 800px) {
+  /* the console menu becomes one row you can swipe sideways */
+  .console-nav { flex-direction: row; overflow-x: auto; gap: 6px; margin: 0; padding-bottom: 4px; scrollbar-width: none; }
+  .console-nav a { white-space: nowrap; flex: none; padding: 7px 10px; border-color: var(--border); }
+  .console-page { padding: 16px 14px 40px; }
+}
 .role-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
 .perm-table th.c, .perm-table td.c { text-align: center; width: 92px; }
 .perm-table tr.perm-group td { background: var(--panel-2); font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 .perm-table input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
 .perm-table input[type=checkbox]:disabled { opacity: .55; }
+
+/* ---------- proportional scaling on big screens ----------
+   Everything is sized in px, so the whole interface is zoomed a step at a time on large monitors.
+   .app divides its height by --z so it still fills exactly one screen. */
+@media (min-width: 1800px) { :root { --z: 1.1; } body { zoom: 1.1; } }
+@media (min-width: 2300px) { :root { --z: 1.25; } body { zoom: 1.25; } }
+@media (min-width: 3000px) { :root { --z: 1.5; } body { zoom: 1.5; } }

@@ -107,6 +107,19 @@ function expect(label, got, want) {
     expect('developer can delete (servers.destroy)', del.status, 200);
   }
 
+  // one-time codes that only work for one account
+  const bound = await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', months: 1, forUser: 'cust2' });
+  expect('owner creates a code only for cust2', bound.status, 200);
+  expect('bound code is single-use', bound.data.maxUses, 1);
+  expect('bound code knows its account', bound.data.forUsername, 'cust2');
+  expect('code for an unknown account is refused', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', forUser: 'nobody-here' })).status, 404);
+  expect('support cannot create codes', (await call('support1', 'POST', '/api/admin/promos', { planId: 'sapling', forUser: 'cust2' })).status, 403);
+  const wrong = await call('cust1', 'POST', '/api/billing/redeem', { code: bound.data.code });
+  expect('another customer cannot redeem it', wrong.status, 403);
+  expect('...and is told why', /different account/.test(wrong.data.error), true);
+  expect('the right customer redeems it', (await call('cust2', 'POST', '/api/billing/redeem', { code: bound.data.code })).status, 200);
+  expect('it cannot be used again', (await call('cust2', 'POST', '/api/billing/redeem', { code: bound.data.code })).status, 410);
+
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);
   console.log('\nAudit log (newest first):');

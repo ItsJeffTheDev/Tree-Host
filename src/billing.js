@@ -341,6 +341,7 @@ class Billing {
       uses: p.uses.length,
       redeemedBy: p.uses.map((u) => ({ userId: u.userId, at: u.at })),
       note: p.note || '',
+      forUserId: p.forUserId || null,
       expiresAt: p.expiresAt || null,
       active: p.active && !(p.expiresAt && Date.now() > p.expiresAt) && p.uses.length < p.maxUses,
       disabled: !p.active,
@@ -349,8 +350,12 @@ class Billing {
     };
   }
 
-  /** Creates a code. Leave `code` empty to get a random one like TREE-7K2P-QX9M. */
-  async createPromo({ code, planId, months, maxUses, note, expiresAt }, by) {
+  /**
+   * Creates a code. Leave `code` empty to get a random one like TREE-7K2P-QX9M.
+   * forUserId: the code only works for that one account (and only once).
+   */
+  async createPromo({ code, planId, months, maxUses, note, expiresAt, forUserId }, by) {
+    if (forUserId && !this.hooks.userById(forUserId)) throw httpError(404, 'That account does not exist.');
     const plan = this.plan(planId);
     if (!plan) throw httpError(400, 'Pick a plan for this code.');
     let c = cleanCode(code);
@@ -361,7 +366,8 @@ class Billing {
       code: c,
       planId: plan.id,
       months: Math.max(0, Math.min(120, Math.round(Number(months) || 0))),
-      maxUses: Math.max(1, Math.min(10000, Math.round(Number(maxUses) || 1))),
+      maxUses: forUserId ? 1 : Math.max(1, Math.min(10000, Math.round(Number(maxUses) || 1))),
+      forUserId: forUserId || null,
       note: String(note || '').slice(0, 100),
       expiresAt: expiresAt ? Number(new Date(expiresAt)) || null : null,
       active: true,
@@ -389,6 +395,7 @@ class Billing {
     if (!p || !p.active) throw httpError(404, nope);
     if (p.expiresAt && Date.now() > p.expiresAt) throw httpError(410, 'That code has expired.');
     if (p.uses.length >= p.maxUses) throw httpError(410, 'That code has already been used.');
+    if (p.forUserId && p.forUserId !== user.id) throw httpError(403, 'This code is for a different account. Sign in with the account it was made for.');
     if (p.uses.some((u) => u.userId === user.id)) throw httpError(400, 'You already used this code.');
     const plan = this.plan(p.planId);
     if (!plan) throw httpError(410, 'The plan for this code no longer exists. Please contact support.');
