@@ -263,3 +263,9 @@ section { padding: 88px 0; position: relative; }
 .plan.lifetime h3 { color: #f0cf8c; }
 .lifetime-body { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: center; }
 @media (max-width: 760px) { .lifetime-body { grid-template-columns: 1fr; } }
+
+/* ---------- icons (public/icons.svg) ---------- */
+.ic { width: 1.15em; height: 1.15em; display: inline-block; vertical-align: -0.2em; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+.ic.lg { width: 1.6em; height: 1.6em; }
+.ic.xl { width: 2.4em; height: 2.4em; }
+.card .ico .ic, .ico .ic { width: 30px; height: 30px; color: var(--accent2); }

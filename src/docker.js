@@ -65,6 +65,8 @@ function runArgs({ id, dir, port, memLimitMb, cpus, image }) {
     // A proxy reaches its owner's servers through the ports they publish on this machine (servers can't reach each other directly).
     '--add-host', 'host.docker.internal:host-gateway',
     '-p', `${port}:${port}/tcp`,
+    // Bedrock players (Geyser) use the same port number over UDP.
+    '-p', `${port}:${port}/udp`,
     '-m', `${memLimitMb}m`, '--memory-swap', `${memLimitMb}m`,
     '--pids-limit', '1024',
     '--cap-drop', 'ALL',
@@ -102,12 +104,16 @@ async function removeLeftovers(log) {
 
 /** Memory in MB used by each running server container, keyed by server id. */
 async function memoryByServer() {
-  const { stdout } = await run('docker', ['stats', '--no-stream', '--format', '{{.Name}}|{{.MemUsage}}']);
+  const { stdout } = await run('docker', ['stats', '--no-stream', '--format', '{{.Name}}|{{.MemUsage}}|{{.CPUPerc}}']);
   const out = new Map();
+  out.cpu = new Map(); // server id -> CPU % (100 = one full core)
   const units = { B: 1 / 1048576, KiB: 1 / 1024, KB: 1 / 1024, MiB: 1, MB: 1, GiB: 1024, GB: 1024 };
   for (const line of stdout.split(/\r?\n/)) {
-    const m = /^th-(.+)\|\s*([\d.]+)\s*([A-Za-z]+)/.exec(line.trim());
-    if (m) out.set(m[1], Math.round(Number(m[2]) * (units[m[3]] || 1)));
+    const m = /^th-(.+?)\|\s*([\d.]+)\s*([A-Za-z]+)[^|]*\|\s*([\d.]+)%/.exec(line.trim());
+    if (m) {
+      out.set(m[1], Math.round(Number(m[2]) * (units[m[3]] || 1)));
+      out.cpu.set(m[1], Math.round(Number(m[4]) * 10) / 10);
+    }
   }
   return out;
 }

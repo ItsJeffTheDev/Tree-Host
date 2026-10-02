@@ -183,6 +183,56 @@ function expect(label, got, want) {
     expect('...with only known tags', mine && mine.tags.join(), 'SMP,Survival');
     expect('...and no owner details', mine && 'owner' in mine, false);
     expect('bad Discord links are refused', (await call('cust1', 'PUT', `/api/servers/${sid}/listing`, { public: true, discord: 'https://evil.example/x' })).status, 400);
+    // sharing a server with a friend
+    expect('owner shares the server (helper)', (await call('cust1', 'POST', `/api/servers/${sid}/members`, { user: 'cust2', role: 'helper' })).status, 200);
+    expect('the friend sees it', (await call('cust2', 'GET', `/api/servers/${sid}`)).status, 200);
+    expect('...in their server list', ((await call('cust2', 'GET', '/api/servers')).data || []).some((x) => x.id === sid), true);
+    expect('a helper can see the console', (await call('cust2', 'GET', `/api/servers/${sid}/log`)).status, 200);
+    expect("a helper can't open files", (await call('cust2', 'GET', `/api/servers/${sid}/files`)).status, 403);
+    expect("a helper can't share it further", (await call('cust2', 'POST', `/api/servers/${sid}/members`, { user: 'cust1', role: 'viewer' })).status, 403);
+    await call('cust1', 'POST', `/api/servers/${sid}/members`, { user: 'cust2', role: 'coowner' });
+    expect('a co-owner can open files', (await call('cust2', 'GET', `/api/servers/${sid}/files`)).status, 200);
+    expect("a co-owner can't delete the server", (await call('cust2', 'DELETE', `/api/servers/${sid}`)).status, 403);
+    await call('cust1', 'POST', `/api/servers/${sid}/members`, { user: 'cust2', role: 'viewer' });
+    expect("a viewer can't run commands", (await call('cust2', 'POST', `/api/servers/${sid}/command`, { command: 'say hi' })).status, 403);
+    expect('sharing with an unknown name explains', (await call('cust1', 'POST', `/api/servers/${sid}/members`, { user: 'nobody-here', role: 'viewer' })).status, 404);
+    expect('owner removes access', (await call('cust1', 'DELETE', `/api/servers/${sid}/members/${id('cust2')}`)).status, 200);
+    expect('...and the friend loses it', (await call('cust2', 'GET', `/api/servers/${sid}`)).status, 404);
+    // sleep when empty, scheduled tasks
+    const sl = await call('cust1', 'PUT', `/api/servers/${sid}/sleep`, { enabled: true, minutes: 10 });
+    expect('sleep when empty turned on', sl.data && sl.data.sleep && sl.data.sleep.minutes, 10);
+    const sch = await call('cust1', 'PUT', `/api/servers/${sid}/schedules`, { schedules: [{ action: 'restart', when: { type: 'daily', time: '04:30', days: [1, 3] } }, { action: 'broadcast', text: 'Vote for us!', when: { type: 'every', hours: 2 } }], timeZone: 'Europe/London' });
+    expect('scheduled tasks saved', sch.data && sch.data.schedules.length, 2);
+    expect('...with the time zone', sch.data && sch.data.timeZone, 'Europe/London');
+    expect('a command task needs the command', (await call('cust1', 'PUT', `/api/servers/${sid}/schedules`, { schedules: [{ action: 'command', when: { type: 'daily', time: '01:00' } }] })).status, 400);
+    expect("support can't change schedules", (await call('support1', 'PUT', `/api/servers/${sid}/schedules`, { schedules: [] })).status, 403);
+    // performance history, Bedrock rules, world zip
+    const st = await call('cust1', 'GET', `/api/servers/${sid}/stats`);
+    expect('performance stats answer', st.status === 200 && Array.isArray(st.data.samples), true);
+    expect("Bedrock needs Paper/Spigot (this is Vanilla)", (await call('cust1', 'POST', `/api/servers/${sid}/bedrock`, { enabled: true })).status, 400);
+    {
+      const fs = require('fs');
+      const path = require('path');
+      const { writeZip } = require('../src/zip');
+      const tmp = path.join(require('os').tmpdir(), `th-e2e-world-${Date.now()}`);
+      fs.mkdirSync(path.join(tmp, 'MyWorld', 'region'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, 'MyWorld', 'level.dat'), 'level');
+      fs.writeFileSync(path.join(tmp, 'MyWorld', 'region', 'r.0.0.mca'), Buffer.alloc(4096, 7));
+      const out = fs.createWriteStream(path.join(tmp, 'w.zip'));
+      await writeZip(out, tmp, ['MyWorld']);
+      out.end();
+      await new Promise((r) => out.on('finish', r));
+      const up = await fetch(`${B}/api/servers/${sid}/world`, { method: 'POST', headers: { Origin: B, Cookie: jar.cust1 }, body: fs.readFileSync(path.join(tmp, 'w.zip')) });
+      expect('uploading a world zip', up.status, 200);
+      const notZip = await fetch(`${B}/api/servers/${sid}/world`, { method: 'POST', headers: { Origin: B, Cookie: jar.cust1 }, body: Buffer.from('not a zip') });
+      expect("a file that isn't a zip is refused", notZip.status, 400);
+      const down = await fetch(`${B}/api/servers/${sid}/world.zip`, { headers: { Cookie: jar.cust1 } });
+      const buf = Buffer.from(await down.arrayBuffer());
+      expect('downloading the world gives a zip', down.status === 200 && buf.readUInt32LE(0) === 0x04034b50, true);
+      expect('...with the uploaded world in it', buf.includes(Buffer.from('world/level.dat')), true);
+      expect("support can't download a customer's world", (await fetch(`${B}/api/servers/${sid}/world.zip`, { headers: { Cookie: jar.support1 } })).status, 403);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
     // MOTD with colors and animation
     const motd = await call('cust1', 'PUT', `/api/servers/${sid}/motd`, { frames: ['&6&lHello\n&7world', '&#ff8800Frame 2'], interval: 2 });
     expect('MOTD with colors and frames saved', motd.status === 200 && motd.data.motd.animated, true);

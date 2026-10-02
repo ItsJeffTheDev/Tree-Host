@@ -130,8 +130,8 @@ function renderSpaceSwitch() {
   }
   el.classList.remove('hidden');
   el.innerHTML = `
-    <button class="${state.space !== 'all' ? 'active' : ''}" data-space="mine" title="Servers on your own plans">👤 My servers</button>
-    <button class="${state.space === 'all' ? 'active' : ''}" data-space="all" title="Every customer's server (for support)">🌳 All servers</button>`;
+    <button class="${state.space !== 'all' ? 'active' : ''}" data-space="mine" title="Servers on your own plans">My servers</button>
+    <button class="${state.space === 'all' ? 'active' : ''}" data-space="all" title="Every customer's server (for support)">All servers</button>`;
   $$('[data-space]', el).forEach((b) => b.addEventListener('click', () => setSpace(b.dataset.space)));
 }
 
@@ -141,7 +141,7 @@ function serverItem(s) {
         ${s.icon ? `<span class="si-icon"><img src="${iconUrl(s)}" alt=""><span class="dot ${esc(s.status)}"></span></span>` : `<span class="dot ${esc(s.status)}"></span>`}
         <div>
           <div class="si-name">${esc(s.name)}</div>
-          <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.status === 'running' && s.kind !== 'proxy' ? ` · <span class="si-online">👥 ${s.players.length}${s.maxPlayers ? `/${s.maxPlayers}` : ''}</span>` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
+          <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.status === 'running' && s.kind !== 'proxy' ? ` · <span class="si-online">${s.players.length}${s.maxPlayers ? `/${s.maxPlayers}` : ''}</span>` : ''}${s.sleeping ? ' · <span class="si-online" style="color:#8cc2ff">sleeping</span>' : ''}${myMembership(s) ? ` · <span title="Shared with you by ${esc(s.ownerName || '')}">${MEMBER_LABEL[myMembership(s).role]}</span>` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
         </div>
       </button>`;
 }
@@ -197,14 +197,14 @@ function renderMain() {
   if (!s && isTeam() && state.space !== 'all') {
     main.innerHTML = `
       <div class="welcome">
-        <h1>Welcome to Tree Host, ${esc(state.me.user.username)}! 🌳</h1>
+        <h1>Welcome to Tree Host, ${esc(state.me.user.username)}! ${ic('tree')}</h1>
         <p>Your Minecraft server is two steps away:</p>
         <ol>
           <li><b>Pick a plan</b>: how much memory your server gets. You can buy more plans later for more servers.</li>
           <li><b>Create your server</b>: choose Paper, Purpur, Fabric, Vanilla... and any version. It's ready in about a minute.</li>
         </ol>
         <div class="row"><button class="btn primary" id="welcome-go">Get started</button>
-          <a class="btn" href="help.html" target="_blank">📖 Read the guide</a></div>
+          <a class="btn" href="help.html" target="_blank">${ic('book')} Read the guide</a></div>
       </div>`;
     $('#welcome-go').addEventListener('click', openNewServer);
     return;
@@ -229,12 +229,12 @@ function renderMain() {
     <header class="srv-header">
       <div id="srv-head"></div>
       <div class="tabs">
-        ${['console', 'plugins', 'backups', 'files', 'settings']
+        ${['console', 'stats', 'plugins', 'backups', 'files', 'settings']
           .filter((t) => (t === 'files' ? can('files', s) : t === 'settings' ? can('settings', s) : true))
           .map(
             (t) =>
               `<button class="tab ${state.tab === t ? 'active' : ''}" data-tab="${t}">${
-                t === 'plugins' ? (s.pluginDir === 'mods' ? 'Mods' : 'Plugins') : t[0].toUpperCase() + t.slice(1)
+                t === 'plugins' ? (s.pluginDir === 'mods' ? 'Mods' : 'Plugins') : t === 'stats' ? 'Performance' : t[0].toUpperCase() + t.slice(1)
               }</button>`,
           )
           .join('')}
@@ -268,7 +268,7 @@ function renderHeader() {
     const cp = s.client.total ? Math.min(100, Math.round((s.client.done / s.client.total) * 100)) : null;
     progress += `
       <div class="progress">
-        <div class="progress-label">🎮 ${esc(s.client.label || 'Preparing Minecraft...')}${cp !== null ? ` · ${cp}% (${fmtSize(s.client.done)} / ${fmtSize(s.client.total)})` : ''}</div>
+        <div class="progress-label">${ic('gamepad')} ${esc(s.client.label || 'Preparing Minecraft...')}${cp !== null ? ` · ${cp}% (${fmtSize(s.client.done)} / ${fmtSize(s.client.total)})` : ''}</div>
         <div class="bar client ${cp === null ? 'indeterminate' : ''}"><div style="width:${cp ?? 0}%"></div></div>
       </div>`;
   }
@@ -284,24 +284,26 @@ function renderHeader() {
     <div class="srv-top">
       <div class="srv-title">
         <h1>${esc(s.name)}
-          ${isTeam() && s.owner !== state.me.user.id ? `<span class="badge blue" title="This server belongs to someone else">👤 ${esc(s.ownerName || 'customer')}</span>` : ''}
+          ${isTeam() && s.owner !== state.me.user.id ? `<span class="badge blue" title="This server belongs to someone else">${esc(s.ownerName || 'customer')}</span>` : ''}
           ${s.plan ? `<span class="badge green" title="Plan">${esc(s.plan.planName)}</span>` : ''}
-          <span class="badge ${STATUS_BADGE[s.status]}">${STATUS_LABEL[s.status] || s.status}</span>
+          ${s.sleeping && s.status === 'stopped' ? '<span class="badge blue" title="Wakes up when someone joins">Sleeping</span>' : `<span class="badge ${STATUS_BADGE[s.status]}">${STATUS_LABEL[s.status] || s.status}</span>`}
+          ${myMembership(s) ? `<span class="badge" title="Shared with you by ${esc(s.ownerName || '')}">${MEMBER_LABEL[myMembership(s).role]}</span>` : ''}
           ${s.needsInstall && s.status === 'stopped' && s.installedBuild ? '<span class="badge blue" title="Type/version changed. The new jar is downloaded on next start.">update on start</span>' : ''}
         </h1>
         ${
           s.suspended
-            ? `<div class="suspended-box">⛔ ${s.suspended === 'canceled' ? 'The plan for this server has ended.' : 'The payment for this server failed.'}
+            ? `<div class="suspended-box">${ic('ban')} ${s.suspended === 'canceled' ? 'The plan for this server has ended.' : 'The payment for this server failed.'}
                  ${isCustomer() ? '<a href="#" id="hdr-billing">Open Billing</a> to fix it.' : ''}</div>`
             : ''
         }
         ${serverModerationBox(s)}
+        ${doctorBoxHtml(s)}
         <div class="meta">
           <span><b>${esc(s.typeLabel)}</b> ${esc(s.version)} ${buildText ? `<span class="muted">(${esc(buildText)})</span>` : ''}</span>
           <span title="Memory the server is using right now / the most it may use">RAM <b>${s.memUsedMb ? `${fmtMem(s.memUsedMb)} / ` : ''}${fmtMem(s.memoryMb)}</b></span>
           <span>Java <b>${s.javaMajor || 'auto'}</b></span>
           ${alive && s.startedAt ? `<span>Up <b id="uptime">${fmtUptime(Date.now() - s.startedAt)}</b></span>` : ''}
-          ${s.autoRestart ? '<span title="Restarts by itself after a crash">♻ auto-restart</span>' : ''}
+          ${s.autoRestart ? '<span title="Restarts by itself after a crash">auto-restart</span>' : ''}
           ${s.plan && s.diskUsedMb ? `<span title="Disk used / plan limit">Disk <b>${+(s.diskUsedMb / 1024).toFixed(1)} / ${s.plan.diskGb} GB</b></span>` : ''}
           ${s.kind !== 'proxy' && alive ? `<span title="${esc(s.players.join(', '))}">Players <b>${s.players.length}${s.maxPlayers ? ` / ${s.maxPlayers}` : ''}</b>${s.players.length ? `: ${esc(s.players.slice(0, 5).join(', '))}${s.players.length > 5 ? '…' : ''}` : ''}</span>` : ''}
         </div>
@@ -339,22 +341,22 @@ function renderHeader() {
       ${
         hostFeatures() && !s.gateway
           ? `<div class="play">
-        <button class="btn play-btn" id="btn-play" ${s.client ? 'disabled' : ''} title="Downloads this Minecraft version if needed, starts the server and joins it${isTeam() ? ' (opens on the host PC)' : ''}">🎮 Play${isTeam() ? ' on host' : ''}${s.clientsRunning ? ` (${s.clientsRunning} open)` : ''}</button>
+        <button class="btn play-btn" id="btn-play" ${s.client ? 'disabled' : ''} title="Downloads this Minecraft version if needed, starts the server and joins it${isTeam() ? ' (opens on the host PC)' : ''}">Play${isTeam() ? ' on host' : ''}${s.clientsRunning ? ` (${s.clientsRunning} open)` : ''}</button>
         <div class="play-as">as <a id="play-name" title="Change username">${esc(player)}</a></div>
       </div>`
           : ''
       }
       <div class="actions">
-        <button class="btn primary" data-act="start" ${alive || busy || s.suspended || s.moderation ? 'disabled' : ''}>▶ Start</button>
+        <button class="btn primary" data-act="start" ${alive || busy || s.suspended || s.moderation ? 'disabled' : ''}>${ic('play')} Start</button>
         <button class="btn" data-act="restart" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>⟳ Restart</button>
-        <button class="btn" data-act="stop" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>■ Stop</button>
+        <button class="btn" data-act="stop" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>${ic('stop')} Stop</button>
         <button class="btn danger" data-act="kill" ${!alive ? 'disabled' : ''} title="Force kill the Java process">Kill</button>
-        ${hostFeatures() ? '<button class="btn" data-act="open-folder" title="Open the server folder">📁 Folder</button>' : ''}
-        ${isTeam() && s.owner && s.owner !== state.me.user.id && hasPerm('console.access') && s.kind !== 'proxy' ? `<button class="btn" id="btn-staff-join" ${s.status === 'running' ? '' : 'disabled'} title="Join this server in Minecraft as Tree Host staff (gets you past the whitelist)">🎮 Join as staff</button>` : ''}
-        ${isTeam() && s.owner && s.owner !== state.me.user.id && canTakeAction('server') ? '<button class="btn" id="btn-take-action" title="Warn, suspend, ban or delete this server, with a reason and evidence">🛡️ Take action</button>' : ''}
+        ${hostFeatures() ? '<button class="btn" data-act="open-folder" title="Open the server folder">Folder</button>' : ''}
+        ${isTeam() && s.owner && s.owner !== state.me.user.id && hasPerm('console.access') && s.kind !== 'proxy' ? `<button class="btn" id="btn-staff-join" ${s.status === 'running' ? '' : 'disabled'} title="Join this server in Minecraft as Tree Host staff (gets you past the whitelist)">Join as staff</button>` : ''}
+        ${isTeam() && s.owner && s.owner !== state.me.user.id && canTakeAction('server') ? '<button class="btn" id="btn-take-action" title="Warn, suspend, ban or delete this server, with a reason and evidence">Take action</button>' : ''}
       </div>
     </div>
-    ${s.notes ? `<div class="srv-notes"><span class="muted small">📝 Notes</span> ${esc(s.notes)}</div>` : ''}
+    ${s.notes ? `<div class="srv-notes"><span class="muted small">${ic('note')} Notes</span> ${esc(s.notes)}</div>` : ''}
     ${progress}`;
   $$('[data-act]', el).forEach((b) =>
     b.addEventListener('click', () => attempt(() => api('POST', `/api/servers/${s.id}/${b.dataset.act}`))),
@@ -362,7 +364,7 @@ function renderHeader() {
   if ($('#btn-play', el)) $('#btn-play', el).addEventListener('click', () => launchClient(s));
   if ($('#btn-staff-join', el)) $('#btn-staff-join', el).addEventListener('click', () => attempt(async () => {
     const r = await api('POST', `/api/servers/${s.id}/staff-join`);
-    openModal(`<h2>🎮 Join as Tree Host staff</h2>
+    openModal(`<h2>${ic('gamepad')} Join as Tree Host staff</h2>
       <p>You're let through the whitelist as <b>${esc(r.name)}</b>. In Minecraft: Multiplayer → Add Server →</p>
       <div class="row"><code class="addr-main copy" data-copy="${esc(r.address)}" style="font-size:18px">${esc(r.address)}</code></div>
       ${r.onlineMode ? `<p class="hint">When you join, everyone sees a green-and-gold <b>Tree Host staff joined</b> notice, and you wear a gold <b>✔ STAFF</b> badge in chat and in the player list.
@@ -372,6 +374,7 @@ function renderHeader() {
     $$('#modal-root [data-copy]').forEach((c) => c.addEventListener('click', () => navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Copied'))));
   }));
   if ($('#btn-take-action', el)) $('#btn-take-action', el).addEventListener('click', () => openTakeAction({ target: 'server', server: { id: s.id, name: s.name, ownerName: s.ownerName }, user: { id: s.owner, username: s.ownerName } }));
+  bindDoctorBox(s, el);
   $$('[data-mod-inbox]', el).forEach((a) => a.addEventListener('click', (e) => {
     e.preventDefault();
     openInbox(a.dataset.modInbox);
@@ -442,6 +445,7 @@ function renderTab() {
   else if (state.tab === 'plugins') renderPlugins(body);
   else if (state.tab === 'files') renderFiles(body);
   else if (state.tab === 'backups') renderBackups(body);
+  else if (state.tab === 'stats') renderStats(body);
   else renderSettings(body);
 }
 
@@ -545,7 +549,7 @@ function renderConsole(body) {
       <div id="console" class="console"><div class="empty">Loading log...</div></div>
       <button id="jump" class="btn sm jump hidden">↓ Jump to latest</button>
     </div>
-    ${can('command', s) ? '' : '<div class="readonly-note">👀 Read-only console: you can watch the log, but only developers and admins can type commands.</div>'}
+    ${can('command', s) ? '' : '<div class="readonly-note">' + ic('eye') + ' Read-only console: you can watch the log, but only developers and admins can type commands.</div>'}
     <div class="quick ${can('command', s) ? '' : 'hidden'}">
       ${quickCommands(s)
         .map(([cmd, label]) => `<button class="btn sm" data-cmd="${esc(cmd)}" title="${esc(cmd)}">${esc(label)}</button>`)
@@ -692,8 +696,8 @@ async function renderPlugins(body) {
       <div class="row" style="justify-content:space-between;margin-bottom:10px">
         <h3>${isMods ? 'Installed mods' : 'Installed plugins'}</h3>
         <div class="row">
-          ${!noPlugins && can('plugins', s) ? `<button class="btn sm primary" id="browse-plugins">🔎 Browse ${isMods ? 'mods' : 'plugins'}</button>` : ''}
-          ${hostFeatures() ? `<button class="btn sm" id="open-plugins">📁 Open ${dirName}/</button>` : ''}
+          ${!noPlugins && can('plugins', s) ? `<button class="btn sm primary" id="browse-plugins">${ic('search')} Browse ${isMods ? 'mods' : 'plugins'}</button>` : ''}
+          ${hostFeatures() ? `<button class="btn sm" id="open-plugins">${ic('folder')} Open ${dirName}/</button>` : ''}
           <button class="btn sm" id="refresh-plugins">Refresh</button>
         </div>
       </div>
@@ -798,7 +802,7 @@ async function loadPlugins() {
           <tr class="${p.enabled ? '' : 'disabled'}">
             <td>
               <div class="p-name">${esc(p.name || p.file.replace(/\.jar(\.disabled)?$/i, ''))}
-                ${p.locked ? '<span class="badge lifetime-badge" title="Required by Tree Host on every server: lets official Tree Host staff help you">🔒 Required by Tree Host</span>' : ''}
+                ${p.locked ? '<span class="badge lifetime-badge" title="Required by Tree Host on every server: lets official Tree Host staff help you">Required by Tree Host</span>' : ''}
                 ${p.watched ? '<span class="badge blue" title="Deployed automatically from your build folder">auto</span>' : ''}
                 ${p.format === 'paper-plugin.yml' ? '<span class="badge">paper-plugin</span>' : ''}
                 ${p.invalid ? '<span class="badge red">invalid jar</span>' : ''}
@@ -909,7 +913,7 @@ async function loadDir(p) {
       .map((f) => {
         const rel = p ? `${p}/${f.name}` : f.name;
         return `<div class="file-row ${state.files.open === rel ? 'active' : ''}" ${f.dir ? `data-dir="${esc(rel)}"` : `data-file="${esc(rel)}"`}>
-          <span>${f.dir ? '📁' : '📄'}</span><span class="fname">${esc(f.name)}</span>
+          <span>${f.dir ? '' + ic('folder') + '' : '' + ic('file') + ''}</span><span class="fname">${esc(f.name)}</span>
           ${f.dir ? '' : `<span class="fsize">${fmtSize(f.size)}</span>`}
         </div>`;
       })
@@ -1022,6 +1026,10 @@ async function renderSettings(body) {
 
   body.innerHTML = `
     ${networkCardHtml(s)}
+    ${membersCardHtml(s)}
+    ${bedrockCardHtml(s)}
+    ${sleepCardHtml(s)}
+    ${schedulesCardHtml(s)}
     ${motdCardHtml(s)}
     ${iconCardHtml(s)}
     ${domainCardHtml(s)}
@@ -1051,7 +1059,7 @@ async function renderSettings(body) {
         <label class="field ${s.space === 'customer' ? 'hidden' : ''}">Public join address <span class="muted small" style="font-weight:400">(shown to everyone as the address to join)</span>
           <input type="text" name="publicAddress" value="${esc(s.manualAddress || '')}" placeholder="${s.autoAddress ? `Automatic: ${esc(s.autoAddress)} (leave empty to keep it)` : 'e.g. play.example.com:25565'}">
         </label>
-        <label class="field ${hostFeatures() ? '' : 'hidden'}" style="max-width:420px">Minecraft version for the 🎮 Play button
+        <label class="field ${hostFeatures() ? '' : 'hidden'}" style="max-width:420px">Minecraft version for the ${ic('gamepad')} Play button
           <input type="text" name="clientVersion" value="${s.clientVersion === 'auto' ? '' : esc(s.clientVersion)}" placeholder="Automatic (${s.kind === 'proxy' || s.type === 'custom' ? 'latest release' : 'same as the server'})">
         </label>
       </div>
@@ -1061,7 +1069,7 @@ async function renderSettings(body) {
         ${
           can('manage', s)
             ? '<p class="hint" style="margin:0">Changing the type, version or build downloads the new jar on the next start. Worlds and plugins are kept.</p>'
-            : `<div class="readonly-note">🔒 Only ${s.createdByName ? `<b>${esc(s.createdByName)}</b> (who created this server)` : 'the person who created this server'} or an admin can change its type or version.</div>`
+            : `<div class="readonly-note">${ic('lock')} Only ${s.createdByName ? `<b>${esc(s.createdByName)}</b> (who created this server)` : 'the person who created this server'} or an admin can change its type or version.</div>`
         }
         <div class="grid3">
           <label class="field">Type
@@ -1129,7 +1137,7 @@ async function renderSettings(body) {
         can('manage', s)
           ? `<div class="row"><button class="btn danger" id="btn-reset" ${s.pid ? 'disabled' : ''}>Reset worlds</button><span class="muted small">Deletes the world folders so a fresh world is generated. Plugins and configs are kept.</span></div>
       <div class="row"><button class="btn danger" id="btn-delete" ${s.pid ? 'disabled' : ''}>Delete server</button><span class="muted small">Removes this server and all its files.</span></div>`
-          : `<div class="readonly-note">🔒 Only ${s.createdByName ? `<b>${esc(s.createdByName)}</b>` : 'the person who created this server'} or an admin can reset its worlds or delete it.</div>`
+          : `<div class="readonly-note">${ic('lock')} Only ${s.createdByName ? `<b>${esc(s.createdByName)}</b>` : 'the person who created this server'} or an admin can reset its worlds or delete it.</div>`
       }
     </div>`;
 
@@ -1230,6 +1238,10 @@ Cancel: keep the current version.`)) return;
   });
 
   bindIconCard(s);
+  bindMembersCard(s);
+  bindBedrockCard(s);
+  bindSleepCard(s);
+  bindSchedulesCard(s);
   bindMotdCard(s);
   bindNetworkCard(s);
   bindDomainCard(s);
@@ -1286,6 +1298,387 @@ async function bindNetworkCard(s) {
   }));
 }
 
+// ---------- Performance tab: memory, CPU and players over time ----------
+// Three small charts (one measure each, never two y-axes), a 2px line, gaps where the server was off,
+// headline numbers above, and a crosshair tooltip on hover.
+
+const CHART_LINE = '#34a868'; // validated for the dark panel (lightness band + contrast)
+let statsRange = 60; // minutes
+
+async function renderStats(body) {
+  const s = current();
+  body.innerHTML = `<div class="card stack">
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap;align-items:center">
+        <h3 style="margin:0">Performance</h3>
+        <div class="seg" id="stats-range">${[[60, '1 hour'], [360, '6 hours'], [1440, '24 hours']].map(([m, l]) => `<button class="${statsRange === m ? 'on' : ''}" data-range="${m}">${l}</button>`).join('')}</div>
+      </div>
+      <div id="stats-body" class="muted">Loading...</div>
+    </div>`;
+  $$('[data-range]', body).forEach((b) => b.addEventListener('click', () => {
+    statsRange = Number(b.dataset.range);
+    renderStats(body);
+  }));
+  const draw = async () => {
+    if (!document.body.contains(body) || current() !== s) return;
+    const d = await api('GET', `/api/servers/${s.id}/stats`).catch(() => null);
+    if (!d) return;
+    const since = Date.now() - statsRange * 60000;
+    const samples = d.samples.filter((x) => x.t >= since);
+    const el = $('#stats-body', body);
+    if (!el) return;
+    el.classList.remove('muted');
+    if (!samples.length) {
+      el.innerHTML = `<p class="muted" style="margin:0">${d.now.running ? 'Collecting... the first points appear within a minute.' : 'Start the server to see its performance. History is kept for 24 hours while it runs.'}</p>`;
+      return;
+    }
+    const charts = [
+      { key: 'mem', title: 'Memory', fmt: (v) => fmtMem(v), max: d.memLimitMb, limitLabel: d.memLimitMb ? `of ${fmtMem(d.memLimitMb)}` : '' },
+      { key: 'cpu', title: 'CPU', fmt: (v) => `${Math.round(v)}%`, max: d.cpuLimit, limitLabel: d.cpuLimit ? `of ${d.cpuLimit}% (${d.cpuLimit / 100} core${d.cpuLimit === 100 ? '' : 's'})` : '' },
+      { key: 'players', title: 'Players online', fmt: (v) => String(Math.round(v)), max: d.maxPlayers, limitLabel: d.maxPlayers ? `of ${d.maxPlayers}` : '', integer: true },
+    ].filter((c) => samples.some((x) => typeof x[c.key] === 'number'));
+    el.innerHTML = `<div class="stats-grid">${charts.map((c) => statChartHtml(c, samples, d.now[c.key], since)).join('')}</div>
+      <p class="small muted" style="margin:8px 0 0">One point a minute while the server runs. Gaps mean it was off.</p>`;
+    charts.forEach((c) => bindStatChart(el, c, samples, since));
+  };
+  await draw();
+  clearInterval(body._statsTimer);
+  body._statsTimer = setInterval(() => (document.body.contains(body) ? draw() : clearInterval(body._statsTimer)), 30000);
+}
+
+function statChartHtml(c, samples, now, since) {
+  const vals = samples.map((x) => x[c.key]).filter((v) => typeof v === 'number');
+  const peak = Math.max(...vals);
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return `<div class="stat-chart" data-key="${c.key}">
+    <div class="sc-head"><span class="sc-title">${c.title}</span>
+      <span class="sc-now">${typeof now === 'number' ? c.fmt(now) : '–'}</span><span class="sc-sub">${esc(c.limitLabel)}</span></div>
+    <div class="sc-meta small muted">Peak ${c.fmt(peak)} · Average ${c.fmt(avg)}</div>
+    <div class="sc-plot" role="img" aria-label="${c.title}: now ${typeof now === 'number' ? c.fmt(now) : 'unknown'}, peak ${c.fmt(peak)}, average ${c.fmt(avg)}">
+      <svg viewBox="0 0 600 150" preserveAspectRatio="none"></svg>
+      <div class="sc-tip hidden"></div>
+    </div>
+  </div>`;
+}
+
+function niceMax(v, integer) {
+  if (!(v > 0)) return integer ? 5 : 1;
+  const p = 10 ** Math.floor(Math.log10(v));
+  const n = [1, 2, 2.5, 5, 10].find((m) => m * p >= v) * p;
+  return integer ? Math.max(5, Math.ceil(n)) : n;
+}
+
+function bindStatChart(root, c, samples, since) {
+  const box = $(`.stat-chart[data-key="${c.key}"]`, root);
+  const svg = $('svg', box);
+  const tip = $('.sc-tip', box);
+  const W = 600;
+  const H = 150;
+  const pad = { l: 46, r: 8, t: 8, b: 20 };
+  const vals = samples.map((x) => x[c.key]).filter((v) => typeof v === 'number');
+  const top = niceMax(Math.max(...vals, c.max && c.max < Math.max(...vals) * 3 ? c.max : 0), c.integer);
+  const t1 = Date.now();
+  const x = (t) => pad.l + ((t - since) / (t1 - since)) * (W - pad.l - pad.r);
+  const y = (v) => pad.t + (1 - v / top) * (H - pad.t - pad.b);
+  // Break the line where the server was off (more than 3 minutes between points).
+  let d = '';
+  let prev = null;
+  for (const p of samples) {
+    if (typeof p[c.key] !== 'number') continue;
+    d += `${!prev || p.t - prev.t > 180000 ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(p[c.key]).toFixed(1)} `;
+    prev = p;
+  }
+  const grid = [0, 0.5, 1].map((f) => {
+    const v = top * f;
+    return `<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(v)}" y2="${y(v)}" class="sc-grid"/>
+      <text x="${pad.l - 6}" y="${y(v) + 4}" text-anchor="end" class="sc-axis">${esc(c.fmt(v))}</text>`;
+  }).join('');
+  const limit = c.max && c.max <= top ? `<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(c.max)}" y2="${y(c.max)}" class="sc-limit"/>` : '';
+  const ticks = [since, (since + t1) / 2, t1].map((t, i) => `<text x="${x(t)}" y="${H - 4}" text-anchor="${['start', 'middle', 'end'][i]}" class="sc-axis">${i === 2 ? 'now' : new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</text>`).join('');
+  svg.innerHTML = `${grid}${limit}${ticks}<path d="${d}" fill="none" stroke="${CHART_LINE}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
+    <line class="sc-cross hidden" y1="${pad.t}" y2="${H - pad.b}"/><circle class="sc-dot hidden" r="4" fill="${CHART_LINE}"/>
+    <rect x="${pad.l}" y="0" width="${W - pad.l - pad.r}" height="${H}" fill="transparent" class="sc-hit"/>`;
+  const cross = $('.sc-cross', svg);
+  const dot = $('.sc-dot', svg);
+  const pts = samples.filter((p) => typeof p[c.key] === 'number');
+  const hide = () => [cross, dot, tip].forEach((e) => e.classList.add('hidden'));
+  $('.sc-hit', svg).addEventListener('mousemove', (e) => {
+    const r = svg.getBoundingClientRect();
+    const tx = since + ((((e.clientX - r.left) / r.width) * W - pad.l) / (W - pad.l - pad.r)) * (t1 - since);
+    let best = pts[0];
+    for (const p of pts) if (Math.abs(p.t - tx) < Math.abs(best.t - tx)) best = p;
+    if (!best || Math.abs(best.t - tx) > 180000) return hide();
+    const px = x(best.t);
+    cross.setAttribute('x1', px);
+    cross.setAttribute('x2', px);
+    dot.setAttribute('cx', px);
+    dot.setAttribute('cy', y(best[c.key]));
+    tip.innerHTML = `<b>${esc(c.fmt(best[c.key]))}</b> <span class="muted">${new Date(best.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
+    tip.style.left = `${Math.min(r.width - 90, Math.max(0, (px / W) * r.width - 45))}px`;
+    [cross, dot, tip].forEach((el2) => el2.classList.remove('hidden'));
+  });
+  $('.sc-hit', svg).addEventListener('mouseleave', hide);
+}
+
+// ---------- crash doctor banner ----------
+
+function doctorBoxHtml(s) {
+  const d = s.diagnosis;
+  if (!d || !d.findings || !d.findings.length || localStorage.getItem(`th.doctor.${s.id}`) === String(d.at)) return '';
+  const edit = can('plugins', s);
+  return `<div class="doctor-box" data-doctor="${d.at}">
+    <div class="row" style="justify-content:space-between;align-items:center"><b>${ic('pulse')} ${d.crashed ? 'Why it crashed' : 'Problems while starting'}</b><a href="#" data-doctor-hide>Hide</a></div>
+    ${d.findings.map((f, i) => `<div class="doctor-item">
+      <div><b>${esc(f.title)}</b> <span class="muted small">${esc(f.detail)}</span></div>
+      <div class="small">${ic('arrow')} ${esc(f.fix)}</div>
+      ${edit && f.action ? `<div class="row" style="margin-top:6px;flex-wrap:wrap">${doctorButtons(f, i)}</div>` : ''}
+    </div>`).join('')}
+  </div>`;
+}
+
+function doctorButtons(f, i) {
+  const a = f.action;
+  if (a.type === 'disable') return `<button class="btn sm" data-doc="${i}" data-do="disable">Disable ${esc(a.plugin)}</button>`;
+  if (a.type === 'install') return `<button class="btn sm primary" data-doc="${i}" data-do="install">Find ${esc(a.names[0])}</button>`;
+  if (a.type === 'settings') return `<button class="btn sm" data-doc="${i}" data-do="settings">Open Settings</button>`;
+  if (a.type === 'plugins') return `<button class="btn sm" data-doc="${i}" data-do="plugins">Open ${current() && current().pluginDir === 'mods' ? 'Mods' : 'Plugins'}</button>`;
+  if (a.type === 'billing') return '<button class="btn sm" data-do="billing">See bigger plans</button>';
+  return '';
+}
+
+function bindDoctorBox(s, el) {
+  const box = $('.doctor-box', el);
+  if (!box) return;
+  $('[data-doctor-hide]', box).addEventListener('click', (e) => {
+    e.preventDefault();
+    localStorage.setItem(`th.doctor.${s.id}`, box.dataset.doctor);
+    box.remove();
+  });
+  $$('[data-do]', box).forEach((b) => b.addEventListener('click', () => attempt(async () => {
+    const f = s.diagnosis.findings[Number(b.dataset.doc)];
+    if (b.dataset.do === 'disable') {
+      const list = await api('GET', `/api/servers/${s.id}/plugins`);
+      const p = list.find((x) => (x.name || '').toLowerCase() === f.action.plugin.toLowerCase() && x.enabled);
+      if (!p) throw new Error(`${f.action.plugin} isn't in the plugins folder (or is already off).`);
+      await api('POST', `/api/servers/${s.id}/plugins/${encodeURIComponent(p.file)}/toggle`);
+      toast(`${f.action.plugin} disabled. Start the server again.`);
+    } else if (b.dataset.do === 'billing') openBilling();
+    else {
+      state.tab = b.dataset.do === 'settings' ? 'settings' : 'plugins';
+      renderMain();
+      if (b.dataset.do === 'install' && typeof openPluginBrowser === 'function') {
+        openPluginBrowser(s);
+        setTimeout(() => {
+          const q = document.getElementById('mr-q');
+          if (q) {
+            q.value = f.action.names[0];
+            q.dispatchEvent(new Event('input'));
+          }
+        }, 50);
+      }
+    }
+  })));
+}
+
+// ---------- Bedrock crossplay card ----------
+
+function bedrockCardHtml(s) {
+  if (s.family !== 'bukkit' || !isTeam()) return '';
+  const edit = can('plugins', s);
+  return `<div class="card stack" id="bedrock-card">
+    <h3>${ic('phone')} Bedrock players <span class="muted small" style="font-weight:400">(phones, tablets, consoles and Windows can join)</span></h3>
+    <p class="hint" style="margin:0">Turns on Geyser and Floodgate, so Bedrock Edition players join with the <b>same address and port</b> as Java players, without a Java account.</p>
+    ${s.bedrock
+      ? `<div class="row" style="flex-wrap:wrap;align-items:center"><span class="badge green">On</span><span class="small">Bedrock address: <b class="copy" data-copy="${esc((s.publicAddress || '').split(':')[0])}">${esc((s.publicAddress || 'your address').split(':')[0])}</b> port <b>${s.port}</b></span>
+          ${edit ? '<button class="btn sm" id="bedrock-off" type="button">Turn off</button>' : ''}</div>`
+      : edit ? '<div><button class="btn primary" id="bedrock-on" type="button">Turn on Bedrock crossplay</button></div>' : '<span class="muted small">Off</span>'}
+  </div>`;
+}
+
+function bindBedrockCard(s) {
+  const card = $('#bedrock-card');
+  if (!card) return;
+  const go = (enabled) => attempt(async () => {
+    const btn = $(enabled ? '#bedrock-on' : '#bedrock-off', card);
+    btn.disabled = true;
+    btn.textContent = enabled ? 'Installing Geyser and Floodgate...' : 'Turning off...';
+    try {
+      const r = await api('POST', `/api/servers/${s.id}/bedrock`, { enabled });
+      toast(enabled ? `Bedrock crossplay is on.${r.restartNeeded ? ' Restart the server to start it.' : ''}` : 'Bedrock crossplay is off.');
+      card.outerHTML = bedrockCardHtml(r);
+      bindBedrockCard(r);
+    } finally {
+      if (document.body.contains(btn)) btn.disabled = false;
+    }
+  });
+  const on = $('#bedrock-on', card);
+  if (on) on.addEventListener('click', () => go(true));
+  const off = $('#bedrock-off', card);
+  if (off) off.addEventListener('click', () => confirm('Turn off Bedrock crossplay? Bedrock players can no longer join.') && go(false));
+  $$('[data-copy]', card).forEach((c) => c.addEventListener('click', () => navigator.clipboard.writeText(c.dataset.copy).then(() => toast('Copied'))));
+}
+
+// ---------- people with access (sharing a server with friends) ----------
+
+function membersCardHtml(s) {
+  if (!isTeam()) return '';
+  const owner = s.owner === state.me.user.id || hasPerm('servers.edit');
+  const mine = myMembership(s);
+  if (!owner && !mine) return '';
+  const members = s.members || [];
+  return `<div class="card stack" id="members-card">
+    <h3>People with access <span class="muted small" style="font-weight:400">(share this server with friends)</span></h3>
+    ${mine ? `<p class="hint" style="margin:0">${esc(s.ownerName || 'The owner')} shared this server with you as <b>${MEMBER_LABEL[mine.role]}</b>.</p>` : ''}
+    ${members.length ? `<div class="stack" style="gap:6px">${members.map((m) => `<div class="row member-row">
+        <span class="acct-avatar" style="width:30px;height:30px;flex-basis:30px">${esc(m.username.slice(0, 1).toUpperCase())}</span>
+        <b style="flex:1">${esc(m.username)}</b>
+        ${owner ? `<select data-mrole="${esc(m.id)}" style="width:auto">${Object.entries(MEMBER_LABEL).map(([k, l]) => `<option value="${k}" ${m.role === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          <button class="btn sm" data-mrm="${esc(m.id)}" data-mname="${esc(m.username)}">Remove</button>` : `<span class="badge">${MEMBER_LABEL[m.role]}</span>`}
+      </div>`).join('')}</div>` : '<p class="muted small" style="margin:0">Only you have access.</p>'}
+    ${owner ? `<form class="row" id="member-add" style="flex-wrap:wrap">
+        <input type="text" name="user" placeholder="Their Tree Host username or email" style="flex:1;min-width:200px" autocomplete="off">
+        <select name="role" style="width:auto"><option value="coowner">Co-owner</option><option value="helper" selected>Helper</option><option value="viewer">Viewer</option></select>
+        <button class="btn primary">Share</button>
+      </form>
+      <p class="small muted" style="margin:0"><b>Co-owner</b>: everything except deleting the server, resetting worlds or changing its version. <b>Helper</b>: console, start/stop, commands. <b>Viewer</b>: watch only. Billing stays yours.</p>`
+      : `<div><button class="btn sm" id="member-leave">Leave this server</button></div>`}
+  </div>`;
+}
+
+function bindMembersCard(s) {
+  const card = $('#members-card');
+  if (!card) return;
+  const redraw = (fresh) => {
+    card.outerHTML = membersCardHtml(fresh);
+    bindMembersCard(fresh);
+  };
+  const form = $('#member-add', card);
+  if (form) form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    attempt(async () => {
+      const r = await api('POST', `/api/servers/${s.id}/members`, { user: form.user.value, role: form.role.value });
+      toast(`Shared with ${form.user.value}. They got a message in their inbox.`);
+      redraw(r);
+    });
+  });
+  $$('[data-mrole]', card).forEach((sel) => sel.addEventListener('change', () => attempt(async () => {
+    const m = s.members.find((x) => x.id === sel.dataset.mrole);
+    redraw(await api('POST', `/api/servers/${s.id}/members`, { user: m.username, role: sel.value }));
+    toast('Role changed');
+  })));
+  $$('[data-mrm]', card).forEach((b) => b.addEventListener('click', () => {
+    if (!confirm(`Remove ${b.dataset.mname}'s access?`)) return;
+    attempt(async () => {
+      await api('DELETE', `/api/servers/${s.id}/members/${b.dataset.mrm}`);
+      redraw({ ...s, members: s.members.filter((m) => m.id !== b.dataset.mrm) });
+    });
+  }));
+  const leave = $('#member-leave', card);
+  if (leave) leave.addEventListener('click', () => {
+    if (!confirm('Leave this server? You lose access until the owner shares it again.')) return;
+    attempt(async () => {
+      await api('DELETE', `/api/servers/${s.id}/members/${state.me.user.id}`);
+      location.reload();
+    });
+  });
+}
+
+// ---------- sleep when empty ----------
+
+function sleepCardHtml(s) {
+  if (s.kind === 'proxy' || !isTeam()) return '';
+  const sl = s.sleep || { enabled: false, minutes: 15 };
+  const edit = can('settings', s);
+  return `<div class="card stack" id="sleep-card">
+    <h3>${ic('moon')} Sleep when empty <span class="muted small" style="font-weight:400">(start again when someone joins)</span></h3>
+    <label class="check"><input type="checkbox" name="sleepOn" ${sl.enabled ? 'checked' : ''} ${edit ? '' : 'disabled'}>
+      <span>When nobody has been online for <select name="sleepMin" style="width:auto" ${edit ? '' : 'disabled'}>${[5, 10, 15, 30, 60, 120].map((m) => `<option value="${m}" ${sl.minutes === m ? 'selected' : ''}>${m < 60 ? `${m} minutes` : `${m / 60} hour${m === 60 ? '' : 's'}`}</option>`).join('')}</select>, the server goes to sleep.</span></label>
+    <p class="hint" style="margin:0">While it sleeps, the server list shows <b>${ic('moon')} Sleeping · Join to wake it up!</b> The first player to join wakes it (it takes about 30 seconds), then everyone joins normally. Your world and settings stay exactly as they are.</p>
+    ${s.sleeping ? '<div class="small"><span class="badge blue">' + ic('moon') + ' Sleeping now</span> Press Start, or just join, to wake it.</div>' : ''}
+  </div>`;
+}
+
+function bindSleepCard(s) {
+  const card = $('#sleep-card');
+  if (!card || !can('settings', s)) return;
+  const save = () => attempt(async () => {
+    const on = $('[name=sleepOn]', card).checked;
+    await api('PUT', `/api/servers/${s.id}/sleep`, { enabled: on, minutes: Number($('[name=sleepMin]', card).value) });
+    toast(on ? 'Sleep when empty is on' : 'Sleep when empty is off');
+  });
+  $('[name=sleepOn]', card).addEventListener('change', save);
+  $('[name=sleepMin]', card).addEventListener('change', save);
+}
+
+// ---------- scheduled tasks ----------
+
+const TASK_LABEL = { restart: '' + ic('refresh') + ' Restart', stop: '' + ic('stop') + ' Stop', start: '' + ic('play') + ' Start', backup: '' + ic('save') + ' Back up', command: '' + ic('terminal') + ' Run command', broadcast: '' + ic('megaphone') + ' Send message' };
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const taskWhen = (t) => (t.when.type === 'every' ? `every ${t.when.hours} hour${t.when.hours === 1 ? '' : 's'}` : `${t.when.days && t.when.days.length && t.when.days.length < 7 ? t.when.days.map((d) => DAY_NAMES[d]).join(', ') : 'every day'} at ${t.when.time}`);
+
+function schedulesCardHtml(s) {
+  if (!isTeam()) return '';
+  const edit = can('settings', s);
+  const list = s.schedules || [];
+  const tz = s.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return `<div class="card stack" id="sched-card">
+    <h3>${ic('clock')} Scheduled tasks <span class="muted small" style="font-weight:400">(times in ${esc(tz)})</span></h3>
+    ${list.length ? `<div class="stack" style="gap:6px">${list.map((t) => `<div class="row sched-row ${t.enabled ? '' : 'off'}">
+        <span style="flex:1;min-width:200px"><b>${TASK_LABEL[t.action]}</b>${t.text ? ` <code>${esc(t.text)}</code>` : ''} <span class="muted small">${esc(taskWhen(t))}${(t.action === 'restart' || t.action === 'stop') && t.warn ? ' · warns players 60 s before' : ''}</span>
+          ${t.lastRun && t.when.type === 'daily' ? `<div class="small muted">Last ran ${new Date(t.lastRun).toLocaleString()}</div>` : ''}</span>
+        ${edit ? `<label class="small"><input type="checkbox" data-ton="${esc(t.id)}" ${t.enabled ? 'checked' : ''}> on</label>
+          <button class="btn sm" data-trun="${esc(t.id)}" title="Run it now">Run now</button>
+          <button class="btn sm" data-trm="${esc(t.id)}">Delete</button>` : ''}
+      </div>`).join('')}</div>` : '<p class="muted small" style="margin:0">No tasks yet. A daily restart at a quiet hour keeps busy servers fast.</p>'}
+    ${edit ? `<form class="sched-form" id="sched-add">
+      <select name="action" style="width:auto">${Object.entries(TASK_LABEL).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+      <input type="text" name="text" placeholder="Command (without /)" class="hidden" maxlength="200" style="min-width:200px">
+      <select name="type" style="width:auto"><option value="daily">at a time</option><option value="every">every few hours</option></select>
+      <input type="time" name="time" value="04:00" style="width:auto">
+      <span class="sched-days">${DAY_NAMES.map((d, i) => `<label class="tag-pick"><input type="checkbox" name="day" value="${i}"> ${d}</label>`).join('')}</span>
+      <select name="hours" class="hidden" style="width:auto">${[1, 2, 3, 4, 6, 8, 12, 24].map((h) => `<option value="${h}" ${h === 6 ? 'selected' : ''}>every ${h} h</option>`).join('')}</select>
+      <label class="small" id="sched-warn"><input type="checkbox" name="warn" checked> warn players first</label>
+      <button class="btn primary">Add task</button>
+    </form>
+    <p class="small muted" style="margin:0">No days ticked = every day. Restarts and stops count down in chat for 60 seconds first.</p>` : ''}
+  </div>`;
+}
+
+function bindSchedulesCard(s) {
+  const card = $('#sched-card');
+  if (!card || !can('settings', s)) return;
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const save = async (list, msg) => {
+    const r = await api('PUT', `/api/servers/${s.id}/schedules`, { schedules: list, timeZone: s.timeZone || tz });
+    toast(msg);
+    card.outerHTML = schedulesCardHtml(r);
+    bindSchedulesCard(r);
+  };
+  const form = $('#sched-add', card);
+  const sync = () => {
+    const a = form.action.value;
+    form.text.classList.toggle('hidden', a !== 'command' && a !== 'broadcast');
+    form.text.placeholder = a === 'broadcast' ? 'Message for everyone online' : 'Command (without /)';
+    $('#sched-warn', card).classList.toggle('hidden', a !== 'restart' && a !== 'stop');
+    const every = form.type.value === 'every';
+    form.time.classList.toggle('hidden', every);
+    $('.sched-days', card).classList.toggle('hidden', every);
+    form.hours.classList.toggle('hidden', !every);
+  };
+  form.addEventListener('change', sync);
+  sync();
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const when = form.type.value === 'every' ? { type: 'every', hours: Number(form.hours.value) } : { type: 'daily', time: form.time.value, days: $$('[name=day]:checked', form).map((c) => Number(c.value)) };
+    attempt(() => save([...(s.schedules || []), { action: form.action.value, text: form.text.value, when, warn: form.warn.checked }], 'Task added'));
+  });
+  $$('[data-trm]', card).forEach((b) => b.addEventListener('click', () => attempt(() => save(s.schedules.filter((t) => t.id !== b.dataset.trm), 'Task deleted'))));
+  $$('[data-ton]', card).forEach((c) => c.addEventListener('change', () => attempt(() => save(s.schedules.map((t) => (t.id === c.dataset.ton ? { ...t, enabled: c.checked } : t)), c.checked ? 'Task on' : 'Task paused'))));
+  $$('[data-trun]', card).forEach((b) => b.addEventListener('click', () => attempt(async () => {
+    await api('POST', `/api/servers/${s.id}/schedules/${b.dataset.trun}/run`);
+    toast('Running it now (see the console)');
+  })));
+}
+
 // ---------- MOTD editor (colors with & codes, hex colors, animation) ----------
 
 const MC_COLORS = {
@@ -1299,7 +1692,7 @@ const MC_FORMATS = [['l', 'B', 'Bold', 'font-weight:800'], ['o', 'I', 'Italic', 
 const MOTD_PRESETS = [
   { name: 'Classic', frames: ['&a&lWelcome to {name}!\n&7Survival · Friends · Fun'] },
   { name: 'Sunset', frames: ['&#ff5e62&lS&#ff7a5c&lu&#ff965a&ln&#ffb259&ls&#ffce5a&le&#ffe95d&lt &f{name}\n&e✦ &7Join the adventure today &e✦'] },
-  { name: 'Event', frames: ['&6&l⚡ {name} &6&l⚡\n&c&lDOUBLE XP WEEKEND &7- join now!'] },
+  { name: 'Event', frames: ['&6&l✦ {name} &6&l✦\n&c&lDOUBLE XP WEEKEND &7- join now!'] },
   { name: 'Animated', frames: ['&a&l» &f&l{name} &a&l«\n&7Now open!', '&2&l» &a&l{name} &2&l«\n&7Now &aopen&7!', '&e&l» &6&l{name} &e&l«\n&7Join &efriends&7!', '&b&l» &3&l{name} &b&l«\n&7Have &bfun&7!'], interval: 2 },
 ];
 
@@ -1843,7 +2236,7 @@ async function openNewServer() {
                   <label class="field">Plan <select id="nv-plan">${freePlans
                     .map((x) => `<option value="${esc(x.id)}">${esc(x.planName)}${
                       x.slots
-                        ? ` (♾️ servers ${x.slotsUsed.servers}/${x.slots.servers}, proxies ${x.slotsUsed.proxies}/${x.slots.proxies})`
+                        ? ` (servers ${x.slotsUsed.servers}/${x.slots.servers}, proxies ${x.slotsUsed.proxies}/${x.slots.proxies})`
                         : `: ${fmtMem(x.ramMb)}, ${x.cpus} CPU, ${x.diskGb} GB disk${x.serverCount ? ` · ${x.serverCount} server${x.serverCount === 1 ? '' : 's'} already` : ''}`
                     }</option>`)
                     .join('')}</select></label>

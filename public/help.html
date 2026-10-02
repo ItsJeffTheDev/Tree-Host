@@ -19,7 +19,7 @@
     .help nav .brand { margin-bottom: 14px; }
     .search { position: relative; margin-bottom: 12px; }
     .search input { padding-left: 32px; }
-    .search::before { content: "🔍"; position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 13px; opacity: .7; }
+    .search::before { content: "<svg class="ic" aria-hidden="true"><use href="/icons.svg#search"/></svg>"; position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 13px; opacity: .7; }
     .nav-group { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 14px 8px 4px; }
     .help nav a.doc {
       display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px;
@@ -97,10 +97,10 @@
     .callout.note::before { content: "ℹ️"; }
     .callout.note .c-label { color: #8cc2ff; }
     .callout.tip { background: rgba(52,199,123,.07); border-color: rgba(52,199,123,.3); }
-    .callout.tip::before { content: "💡"; }
+    .callout.tip::before { content: "<svg class="ic" aria-hidden="true"><use href="/icons.svg#bulb"/></svg>"; }
     .callout.tip .c-label { color: #6fe0a5; }
     .callout.warn { background: rgba(70,195,123,.08); border-color: rgba(70,195,123,.4); }
-    .callout.warn::before { content: "⚠️"; }
+    .callout.warn::before { content: "<svg class="ic" aria-hidden="true"><use href="/icons.svg#alert"/></svg>"; }
     .callout.warn .c-label { color: var(--accent); }
 
     /* prev / next */
@@ -158,6 +158,7 @@
     </main>
     <aside class="toc" id="toc"></aside>
   </div>
+  <script src="/icons.js"></script>
   <script src="help.js"></script>
 </body>
 </html>

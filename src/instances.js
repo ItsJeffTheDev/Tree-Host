@@ -1,5 +1,6 @@
 'use strict';
 const MOTD = require('./motd');
+const { diagnose } = require('./doctor');
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
@@ -323,6 +324,13 @@ class Instance extends EventEmitter {
       moderation: c.moderation || null,
       icon: c.iconAt || null,
       motd: c.motd || null,
+      diagnosis: this.diagnosis || null,
+      bedrock: !!c.bedrock,
+      sleep: c.sleep || null,
+      sleeping: !!c.sleeping,
+      schedules: c.schedules || [],
+      timeZone: c.timeZone || null,
+      members: (c.members || []).map((m) => ({ id: m.userId, username: this.manager.ownerName(m.userId) || '(deleted)', role: m.role })),
       maxPlayers: this.proc ? this.maxPlayers || null : null,
       subscriptionId: c.subscriptionId || null,
       plan: this.manager.planInfo(this),
@@ -534,6 +542,7 @@ class Instance extends EventEmitter {
       await fsp.writeFile(propsFile, updateProperties(text, { 'server-port': port, ...(motd ? { motd: MOTD.propertiesValue(MOTD.toClassic(motd)) } : {}) }));
       await this.applyGatewayBackend();
       await this.applyNetworkBackend();
+      await this.applyBedrock();
       return;
     }
     // Proxies: keep the configured bind port in sync.
@@ -632,6 +641,25 @@ class Instance extends EventEmitter {
 
   logActivity(kind, who, text) {
     if (this.manager.activity) this.manager.activity.log(kind, who, text, this);
+  }
+
+  // ----- Bedrock crossplay (Geyser + Floodgate): phones, consoles and Windows players join with the same address -----
+
+  /** Geyser listens for Bedrock players on the server's own port (UDP), and Floodgate lets them in without a Java account. */
+  async applyBedrock() {
+    if (!this.cfg.bedrock || this.provider.family !== 'bukkit') return;
+    const file = path.join(this.dir, this.pluginDirName, 'Geyser-Spigot', 'config.yml');
+    await fsp.mkdir(path.dirname(file), { recursive: true });
+    let text = (await exists(file)) ? await fsp.readFile(file, 'utf8') : '';
+    const bedrock = `  port: ${this.cfg.port}\n  clone-remote-port: false`;
+    if (!text) {
+      text = `bedrock:\n${bedrock}\n  motd1: "${this.cfg.name.replace(/"/g, '')}"\n  motd2: "Tree Host"\nremote:\n  auth-type: floodgate\n`;
+    } else {
+      text = replaceYamlChild(text, 'bedrock', 'port', `  port: ${this.cfg.port}`);
+      text = replaceYamlChild(text, 'bedrock', 'clone-remote-port', '  clone-remote-port: false');
+      text = replaceYamlChild(text, 'remote', 'auth-type', '  auth-type: floodgate');
+    }
+    await fsp.writeFile(file, text);
   }
 
   // ----- Network: a customer's proxy in front of their own servers -----
@@ -795,6 +823,8 @@ class Instance extends EventEmitter {
 
   async start() {
     if (this.proc || this.status !== 'stopped') return;
+    this.diagnosis = null;
+    this.startSeq = this.seq;
     const blocked = this.manager.startBlock(this);
     if (blocked) {
       this.sysLog(`Could not start: ${blocked}`);
@@ -938,7 +968,10 @@ class Instance extends EventEmitter {
           .filter((t) => !/^\s*at |^\s*\.\.\. \d+ more|unable to connect|Connection refused|ConnectException|has disconnected|lost connection/i.test(t))
           .slice(-2);
         if (javaInside && code === 137) this.sysLog(`The server ran out of memory (it may use at most ${Number(c.memoryMb)} MB). Use fewer or lighter plugins/mods, or a bigger plan.`);
-        this.logActivity('crash', 'Tree Host', `reports a crash (exit code ${code})${lastLines.length ? `: ${lastLines.join(' / ').slice(0, 300)}` : ''}`);
+        const findings = diagnose(this.logs.slice(-400).map((l) => stripAnsi(l.t)), { memoryExit: javaInside && code === 137 });
+        this.diagnosis = findings.length ? { at: Date.now(), crashed: true, findings } : null;
+        for (const f of findings) this.sysLog(`Crash doctor: ${f.title}. ${f.fix}`);
+        this.logActivity('crash', 'Tree Host', `reports a crash (exit code ${code})${findings.length ? `: ${findings[0].title}` : lastLines.length ? `: ${lastLines.join(' / ').slice(0, 300)}` : ''}`);
         if (c.autoRestart && !this.restartPending) {
           if (this.crashTimes.length > 3) {
             this.sysLog('Crashed more than 3 times in 10 minutes, so it won\'t be restarted automatically. Check the log above.');
@@ -972,6 +1005,11 @@ class Instance extends EventEmitter {
     }
     if (this.status === 'starting' && (/Done \([\d.,]+m?s\)!/.test(line) || /Listening on \//.test(line))) {
       this.setStatus('running');
+      const startup = diagnose(this.logs.filter((l) => l.s > (this.startSeq || 0)).map((l) => stripAnsi(l.t))).filter((f) => f.warning);
+      if (startup.length) {
+        this.diagnosis = { at: Date.now(), crashed: false, findings: startup };
+        for (const f of startup) this.sysLog(`Crash doctor: ${f.title}. ${f.fix}`);
+      }
       // Remember which version last opened the world: Minecraft can't open it in an older version.
       if (this.kind !== 'proxy' && this.cfg.worldVersion !== this.cfg.version) {
         this.cfg.worldVersion = this.cfg.version;
@@ -2024,6 +2062,7 @@ class Manager extends EventEmitter {
       if (!byId) return;
       for (const i of running) {
         const mb = byId.get(i.cfg.id);
+        if (byId.cpu && byId.cpu.has(i.cfg.id)) i.cpuPct = byId.cpu.get(i.cfg.id);
         if (mb && mb !== i.memUsedMb) {
           i.memUsedMb = mb;
           i.emitStatus();

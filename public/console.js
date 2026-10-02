@@ -4,17 +4,17 @@
 // Loaded before app.js; app.js calls initConsole() when the page is /admin. Uses app.js and team.js helpers.
 
 const CONSOLE_SECTIONS = [
-  { id: 'overview', label: '📊 Overview', perm: 'console.access', render: consoleOverview },
-  { id: 'servers', label: '🖥️ Servers', perm: 'servers.viewAll', render: consoleServers },
-  { id: 'people', label: '👥 People', perm: 'users.view', render: (b) => adminPeople(b) },
-  { id: 'billing', label: '💳 Billing', perm: 'billing.view', render: (b) => adminBilling(b) },
-  { id: 'plans', label: '📦 Plans', perm: 'billing.manage', render: (b) => adminPlans(b) },
-  { id: 'promos', label: '🎟️ Promo codes', perm: 'promos.manage', render: (b) => adminPromos(b) },
-  { id: 'actions', label: '📜 Action logs', perm: 'moderation.view', render: (b, sub) => consoleActions(b, sub) },
-  { id: 'roles', label: '🔐 Roles & permissions', perm: 'console.access', render: consoleRoles },
-  { id: 'audit', label: '🧾 Audit log', perm: 'audit.view', render: consoleAudit },
-  { id: 'system', label: '⚙️ System', perm: 'system.view', render: consoleSystem },
-  { id: 'settings', label: '🛠️ Settings', perm: 'settings.manage', render: (b) => adminSettings(b) },
+  { id: 'overview', icon: 'chart', label: 'Overview', perm: 'console.access', render: consoleOverview },
+  { id: 'servers', icon: 'server', label: 'Servers', perm: 'servers.viewAll', render: consoleServers },
+  { id: 'people', icon: 'users', label: 'People', perm: 'users.view', render: (b) => adminPeople(b) },
+  { id: 'billing', icon: 'card', label: 'Billing', perm: 'billing.view', render: (b) => adminBilling(b) },
+  { id: 'plans', icon: 'box', label: 'Plans', perm: 'billing.manage', render: (b) => adminPlans(b) },
+  { id: 'promos', icon: 'ticket', label: 'Promo codes', perm: 'promos.manage', render: (b) => adminPromos(b) },
+  { id: 'actions', icon: 'scroll', label: 'Action logs', perm: 'moderation.view', render: (b, sub) => consoleActions(b, sub) },
+  { id: 'roles', icon: 'key', label: 'Roles & permissions', perm: 'console.access', render: consoleRoles },
+  { id: 'audit', icon: 'receipt', label: 'Audit log', perm: 'audit.view', render: consoleAudit },
+  { id: 'system', icon: 'gear', label: 'System', perm: 'system.view', render: consoleSystem },
+  { id: 'settings', icon: 'sliders', label: 'Settings', perm: 'settings.manage', render: (b) => adminSettings(b) },
 ];
 
 function initConsole() {
@@ -31,10 +31,10 @@ function initConsole() {
   const sections = CONSOLE_SECTIONS.filter((s) => hasPerm(s.perm));
   side.innerHTML = `
     <div class="brand"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Staff Console</div></div></div>
-    <nav class="console-nav">${sections.map((s) => `<a href="#${s.id}" data-sec="${s.id}">${s.label}</a>`).join('')}</nav>
+    <nav class="console-nav">${sections.map((s) => `<a href="#${s.id}" data-sec="${s.id}">${ic(s.icon)} ${s.label}</a>`).join('')}</nav>
     <a class="help-link" href="/dashboard">← Back to dashboard</a>
-    <a class="help-link" href="/staff-docs" target="_blank">📚 Staff docs</a>
-    <a class="help-link" href="help.html" target="_blank">📖 Customer help &amp; guides</a>
+    <a class="help-link" href="/staff-docs" target="_blank">${ic('books')} Staff docs</a>
+    <a class="help-link" href="help.html" target="_blank">${ic('book')} Customer help &amp; guides</a>
     <div id="user-box" class="user-box"></div>`;
   renderUserBox();
   const show = () => {
@@ -43,7 +43,7 @@ function initConsole() {
     const sec = sections.find((s) => s.id === id) || sections[0];
     $$('[data-sec]', side).forEach((a) => a.classList.toggle('active', a.dataset.sec === sec.id));
     const main = $('#main');
-    main.innerHTML = `<div class="console-page"><h1 class="console-title">${sec.label.replace(/^\S+\s/, '')}</h1><div id="console-body"><div class="muted">Loading...</div></div></div>`;
+    main.innerHTML = `<div class="console-page"><h1 class="console-title">${sec.label}</h1><div id="console-body"><div class="muted">Loading...</div></div></div>`;
     sec.render($('#console-body'), sub).catch((e) => ($('#console-body').innerHTML = `<div class="warn-box">${esc(e.message)}</div>`));
   };
   window.addEventListener('hashchange', show);
@@ -103,14 +103,14 @@ async function consoleServers(body) {
     $('#srv-list', body).innerHTML = rows.length
       ? `<table><thead><tr><th>Server</th><th>Owner</th><th>Plan</th><th>Status</th><th>Memory</th><th></th></tr></thead><tbody>${rows
           .map((s) => `<tr>
-            <td><b>${esc(s.name)}</b><div class="small muted">${esc(s.type)} ${esc(s.version)} · port ${s.port}${s.running ? ` · 👥 ${s.players}${s.maxPlayers ? `/${s.maxPlayers}` : ''} online` : ''}</div></td>
+            <td><b>${esc(s.name)}</b><div class="small muted">${esc(s.type)} ${esc(s.version)} · port ${s.port}${s.running ? ` · ${ic('users')} ${s.players}${s.maxPlayers ? `/${s.maxPlayers}` : ''} online` : ''}</div></td>
             <td class="small">${s.owner ? `${esc(s.owner.username)}${s.owner.email ? `<div class="muted">${esc(s.owner.email)}</div>` : ''}` : '<span class="muted">-</span>'}</td>
             <td class="small">${s.plan ? `${esc(s.plan.planName)}${s.plan.usable ? '' : ' <span class="badge red">not paid</span>'}` : '<span class="muted">-</span>'}</td>
             <td>${statusBadge(s)}</td>
             <td class="small">${s.memUsedMb ? `${fmtMem(s.memUsedMb)} / ` : ''}${s.memoryMb ? fmtMem(s.memoryMb) : '-'}</td>
             <td class="actions-cell">
               ${hasPerm('servers.operate') && !s.suspended && !s.moderation ? `<button class="btn sm" data-act="${s.running ? 'stop' : 'start'}" data-id="${esc(s.id)}">${s.running ? 'Stop' : 'Start'}</button>` : ''}
-              ${s.owner && s.owner.id !== state.me.user.id && canTakeAction('server') ? `<button class="btn sm" data-take-srv="${esc(s.id)}" title="Warn, suspend, ban or delete">🛡️ Action</button>` : ''}
+              ${s.owner && s.owner.id !== state.me.user.id && canTakeAction('server') ? `<button class="btn sm" data-take-srv="${esc(s.id)}" title="Warn, suspend, ban or delete">Action</button>` : ''}
               <button class="btn sm primary" data-open="${esc(s.id)}">Open</button></td>
           </tr>`)
           .join('')}</tbody></table>`

@@ -16,7 +16,7 @@ function fmtCount(n) {
 
 // ---------- activity feed ----------
 
-const ACTIVITY_ICON = { crash: '💥', deploy: '🧩', start: '▶', stop: '■', claim: '🙋', backup: '💾', server: '🖥', people: '👤' };
+const ACTIVITY_ICON = { crash: '' + ic('crash') + '', deploy: '' + ic('puzzle') + '', start: '' + ic('play') + '', stop: '' + ic('stop') + '', claim: '' + ic('hand') + '', backup: '' + ic('save') + '', server: '' + ic('server') + '', people: '' + ic('user') + '' };
 
 function activityItem(e, withServer = true) {
   return `<div class="act-item act-${esc(e.kind)}">
@@ -74,7 +74,7 @@ async function openActivity() {
 function renderActivityLink() {
   const el = $('#activity-link');
   if (!el) return;
-  el.innerHTML = `📋 Activity${state.unseenActivity ? ` <span class="count">${state.unseenActivity}</span>` : ''}`;
+  el.innerHTML = `${ic('activity')} Activity${state.unseenActivity ? ` <span class="count">${state.unseenActivity}</span>` : ''}`;
 }
 
 /** Live activity event from the server (SSE). */
@@ -85,17 +85,67 @@ function onActivity(e) {
     renderActivityLink();
   }
   if (state.activityRefresh) state.activityRefresh(e);
-  if (e.kind === 'crash') toast(`💥 ${e.serverName || 'A server'} crashed. Check its console.`, 'error');
+  if (e.kind === 'crash') toast(`${e.serverName || 'A server'} crashed. Check its console.`, 'error');
   else if (!mine && ['deploy', 'claim'].includes(e.kind) && e.serverId === state.selected) toast(`${e.who} ${e.text}`);
 }
 
 // ---------- backups ----------
+
+/** Download the world as a zip, or upload a world zip (from single player, another host, or a backup). */
+function worldCardHtml(s) {
+  if (s.kind === 'proxy') return '';
+  const edit = can('files', s);
+  return `<div class="card stack" id="world-card">
+    <h3>${ic('globe')} World</h3>
+    <p class="hint" style="margin:0">Download the world to keep a copy on your computer, or upload one from single player or another host (a .zip of the world folder).</p>
+    <div class="row" style="flex-wrap:wrap">
+      ${edit ? `<a class="btn" href="/api/servers/${esc(s.id)}/world.zip" download>${ic('download')} Download world (.zip)</a>
+        <label class="btn">${ic('upload')} Upload a world<input type="file" id="world-file" accept=".zip,application/zip" hidden></label>` : `<div class="readonly-note">${ic('lock')} Your access doesn't include the world files.</div>`}
+    </div>
+    <div class="small muted" id="world-status">${s.pid ? 'Uploading needs the server stopped. Downloading works while it runs (it saves first).' : 'Uploading replaces the current world. The current one is backed up first.'}</div>
+  </div>`;
+}
+
+function bindWorldCard(s) {
+  const input = $('#world-file');
+  if (!input) return;
+  input.addEventListener('change', () => {
+    const f = input.files[0];
+    if (!f) return;
+    if (!/\.zip$/i.test(f.name)) return toast('Pick a .zip file.', 'error');
+    if (!confirm(`Replace this server's world with ${f.name}? The current world is backed up first.`)) return;
+    const status = $('#world-status');
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/servers/${s.id}/world`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) status.textContent = `Uploading... ${Math.round((e.loaded / e.total) * 100)}% (${fmtSize(e.loaded)} of ${fmtSize(e.total)})`;
+    };
+    xhr.onload = () => {
+      let r = {};
+      try {
+        r = JSON.parse(xhr.responseText);
+      } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) {
+        status.textContent = 'World uploaded. Start the server to play it.';
+        toast(`World uploaded${r.backedUp ? ' (the old one is in Backups)' : ''}. Start the server to play it.`);
+        if (typeof renderBackups === 'function') renderBackups($('#tab-body'));
+      } else {
+        status.textContent = r.error || `Upload failed (${xhr.status}).`;
+        toast(r.error || 'Upload failed.', 'error');
+      }
+      input.value = '';
+    };
+    xhr.onerror = () => toast('Upload failed: connection lost.', 'error');
+    xhr.send(f);
+  });
+}
 
 async function renderBackups(body) {
   const s = current();
   const canMake = can('control', s);
   const canRestore = can('manage', s);
   body.innerHTML = `
+    ${worldCardHtml(s)}
     <div class="card stack">
       <h3>Make a backup</h3>
       <p class="hint" style="margin:0">Saves a copy of the world${s.kind === 'proxy' ? '' : 's (overworld, nether and end)'} and the <code>${esc(s.pluginDir)}/</code> folder, including plugin configs and data.
@@ -104,9 +154,9 @@ async function renderBackups(body) {
         canMake
           ? `<form id="bk-form" class="row">
               <input type="text" id="bk-label" maxlength="80" placeholder="Name (optional), e.g. before testing the new economy">
-              <button class="btn primary" id="bk-make">💾 Back up now</button>
+              <button class="btn primary" id="bk-make">${ic('save')} Back up now</button>
             </form>`
-          : '<div class="readonly-note">🔒 Your role can\'t make backups.</div>'
+          : '<div class="readonly-note">' + ic('lock') + ' Your role can\'t make backups.</div>'
       }
       ${can('settings', s) ? `<label class="field" style="max-width:360px">Automatic backups
         <select id="bk-auto">
@@ -125,6 +175,7 @@ async function renderBackups(body) {
       <h3 style="margin-bottom:8px">Backups</h3>
       <div id="bk-list" class="muted">Loading...</div>
     </div>`;
+  bindWorldCard(s);
 
   const load = async () => {
     const list = await api('GET', `/api/servers/${s.id}/backups`);
@@ -182,7 +233,7 @@ async function renderBackups(body) {
         .catch((err) => toast(err.message, 'error'))
         .finally(() => {
           btn.disabled = false;
-          btn.textContent = '💾 Back up now';
+          btn.textContent = 'Back up now';
         });
     });
   }
@@ -225,9 +276,9 @@ function openPluginBrowser(s) {
         ? hits
             .map(
               (h) => `<div class="mr-item">
-                ${h.icon ? `<img src="${esc(h.icon)}" alt="" loading="lazy">` : '<div class="mr-noicon">🧩</div>'}
+                ${h.icon ? `<img src="${esc(h.icon)}" alt="" loading="lazy">` : '<div class="mr-noicon">' + ic('puzzle') + '</div>'}
                 <div class="mr-body">
-                  <div><a href="${esc(h.url)}" target="_blank" rel="noopener"><b>${esc(h.title)}</b></a> <span class="muted small">by ${esc(h.author)} · ⬇ ${fmtCount(h.downloads)}</span></div>
+                  <div><a href="${esc(h.url)}" target="_blank" rel="noopener"><b>${esc(h.title)}</b></a> <span class="muted small">by ${esc(h.author)} · ${ic('download')} ${fmtCount(h.downloads)}</span></div>
                   <div class="small muted">${esc(h.description)}</div>
                 </div>
                 <button class="btn sm primary" data-install="${esc(h.id)}" data-title="${esc(h.title)}">Install</button>
@@ -271,7 +322,7 @@ async function renderNotifications(root) {
   el.classList.remove('muted');
   el.innerHTML = `
     <p class="hint" style="margin:0">Posts to a private channel in your Discord when something happens, so admins notice new customers, payments and crashes.
-      To get a link: Discord → channel settings (⚙) → Integrations → Webhooks → New Webhook → Copy Webhook URL.</p>
+      To get a link: Discord → channel settings (${ic('gear')}) → Integrations → Webhooks → New Webhook → Copy Webhook URL.</p>
     <div class="row">
       <input type="password" id="dc-url" placeholder="${st.discordConnected ? 'Connected. Paste a new link to change it' : 'https://discord.com/api/webhooks/...'}" autocomplete="off">
       <button class="btn primary" id="dc-save">Save</button>

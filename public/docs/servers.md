@@ -130,6 +130,52 @@ Memory, CPU, disk and the port come from your plan and can't be changed in Setti
 
 ---
 
+## Share your server with friends
+
+**Settings → People with access** → type a friend's Tree Host username or email and pick a role:
+
+| Role | Can do |
+|---|---|
+| **Co-owner** | Everything except deleting the server, resetting worlds or changing its version |
+| **Helper** | Console, start / stop / restart, commands |
+| **Viewer** | Watch the console and status |
+
+They get a message in their inbox and see the server in their list. Billing always stays with you.
+
+## Sleep when empty
+
+**Settings → Sleep when empty**: when nobody has been online for the time you pick, the server goes to sleep. The
+server list then shows **Zz Sleeping · Join to wake it up!** The first player to join wakes it up (about 30 seconds),
+then everyone joins normally. Your world and settings stay exactly as they are.
+
+## Scheduled tasks
+
+**Settings → Scheduled tasks** runs things for you at set times (in your time zone) or every few hours: restart,
+stop, start, back up, run a command, or send a message to everyone online. Restarts and stops count down in chat for
+60 seconds first. **Run now** tries a task straight away.
+
+## Bedrock players (crossplay)
+
+On Paper, Purpur, Folia and Spigot (1.16.5 and newer): **Settings → Bedrock players → Turn on**. Tree Host installs
+and sets up Geyser and Floodgate, so phone, tablet, console and Windows players join with the **same address and
+port** as Java players, without a Java account. Restart the server after turning it on.
+
+## Performance
+
+The **Performance** tab shows memory, CPU and players online over the last hour, 6 hours or 24 hours, one point a
+minute while the server runs. Hover a chart to see exact values.
+
+## When something goes wrong: the crash doctor
+
+If your server crashes, or a plugin breaks while it starts, a blue box at the top of the server explains what
+happened in plain words (for example "ShopGUI needs Vault" or "Something needs a newer Java") with buttons to fix it.
+
+## Download or upload a world
+
+**Backups → World**: **Download world** gives you a .zip of the world (it saves first if the server is running).
+**Upload a world** replaces the world with a .zip of a world folder, from single player or another host. Stop the
+server first; the current world is backed up before it's replaced.
+
 ## MOTD (your server-list message)
 
 **Settings → MOTD** sets the two lines under your server's name in Minecraft's server list.

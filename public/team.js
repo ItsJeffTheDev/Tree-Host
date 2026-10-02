@@ -29,10 +29,17 @@ const ACTION_PERMISSION = {
   plugins: 'servers.edit', files: 'servers.edit', settings: 'servers.edit', deploy: 'servers.edit',
   manage: 'servers.destroy',
 };
+const MEMBER_ACTIONS = { coowner: ['view', 'control', 'command', 'plugins', 'files', 'settings', 'deploy'], helper: ['view', 'control', 'command'], viewer: ['view'] };
+const MEMBER_LABEL = { coowner: 'Co-owner', helper: 'Helper', viewer: 'Viewer' };
+/** My role on a server someone shared with me (null if it isn't shared with me). */
+const myMembership = (s) => (s && s.members && state.me.user ? s.members.find((m) => m.id === state.me.user.id) : null) || null;
+
 function can(action, s) {
   if (!isTeam()) return true;
   const u = state.me.user;
   if (!s || action === 'view' || s.owner === u.id) return true;
+  const mine = myMembership(s);
+  if (mine && !hasPerm('console.access')) return MEMBER_ACTIONS[mine.role].includes(action);
   return hasPerm(ACTION_PERMISSION[action] || 'servers.viewAll');
 }
 
@@ -419,7 +426,7 @@ function renderUserBox() {
   const u = state.me.user;
   el.classList.remove('hidden');
   el.innerHTML = `
-    <div class="ub-name">${esc(u.username)} <span class="badge ${ROLE_BADGE[u.role] || ''}">${esc(u.roleLabel || ROLE_LABEL[u.role] || u.role)}</span>${u.lifetime ? ' <span class="badge lifetime-badge" title="Lifetime member: paid once, yours forever">♾️ Lifetime</span>' : ''}</div>
+    <div class="ub-name">${esc(u.username)} <span class="badge ${ROLE_BADGE[u.role] || ''}">${esc(u.roleLabel || ROLE_LABEL[u.role] || u.role)}</span>${u.lifetime ? ' <span class="badge lifetime-badge" title="Lifetime member: paid once, yours forever">Lifetime</span>' : ''}</div>
     ${
       state.me.lanUrls?.length
         ? `<div class="ub-link small">Home network: <span class="copy" data-copy="${esc(state.me.lanUrls[1] || state.me.lanUrls[0])}" title="Click to copy">${esc((state.me.lanUrls[1] || state.me.lanUrls[0]).replace('http://', ''))}</span></div>`
@@ -427,8 +434,8 @@ function renderUserBox() {
     }
     <div class="row" style="flex-wrap:wrap;margin-top:6px">
       <button class="btn sm" id="ub-account">Account</button>
-      ${state.me.hosted ? '<button class="btn sm" id="ub-billing">💳 Billing</button>' : ''}
-      ${isTeam() && hasPerm('console.access') ? '<a class="btn sm" href="/admin">🛠️ Staff Console</a>' : ''}
+      ${state.me.hosted ? '<button class="btn sm" id="ub-billing">' + ic('card') + ' Billing</button>' : ''}
+      ${isTeam() && hasPerm('console.access') ? '<a class="btn sm" href="/admin">' + ic('tools') + ' Staff Console</a>' : ''}
       <button class="btn sm" id="ub-switch" title="Switch to another account or add one">⇄ Switch</button>
       <button class="btn sm" id="ub-logout">Sign out</button>
     </div>`;
@@ -623,14 +630,14 @@ function planCardHtml(p, currency) {
   if (p.oneTime) {
     const sl = p.slots || { servers: 0, proxies: 0 };
     return `<div class="plan-card lifetime ${p.soldOut ? 'sold-out' : ''}">
-    <div class="plan-ribbon">♾️ Pay once, keep forever</div>
+    <div class="plan-ribbon">${ic('infinity')} Pay once, keep forever</div>
     <div class="plan-name">${esc(p.name)}</div>
     <div class="plan-price">${money(p.priceCents, currency)}<span> once</span></div>
     <ul class="plan-specs">
       <li><b>${sl.servers} servers</b> of any type and version · ${+(p.ramMb / 1024).toFixed(1)} GB each</li>
       <li><b>${sl.proxies} prox${sl.proxies === 1 ? 'y' : 'ies'}</b> (Velocity, BungeeCord, Waterfall) · ${+((p.proxyRamMb || 1024) / 1024).toFixed(1)} GB each</li>
       <li><b>${p.cpus}</b> CPU core${p.cpus === 1 ? '' : 's'} and <b>${p.diskGb} GB</b> disk per server</li>
-      ${p.prioritySupport ? '<li><b>⭐ Priority support</b></li>' : ''}
+      ${p.prioritySupport ? '<li><b>' + ic('star') + ' Priority support</b></li>' : ''}
       <li>No monthly bills, ever</li>
     </ul>
     <p class="small muted">${esc(p.description)}</p>
@@ -691,14 +698,14 @@ function lifetimeCardHtml(x) {
   const bar = (used, max) => `<div class="slot-bar"><span style="width:${max ? Math.min(100, (used / max) * 100) : 0}%"></span></div>`;
   return `<div class="card lifetime-card">
     <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <div><div class="lifetime-kicker">♾️ LIFETIME MEMBER</div><h3 style="margin:2px 0 0">${esc(x.planName)}${x.free ? ' <span class="muted small">(gift)</span>' : ''}</h3></div>
+      <div><div class="lifetime-kicker">${ic('infinity')} LIFETIME MEMBER</div><h3 style="margin:2px 0 0">${esc(x.planName)}${x.free ? ' <span class="muted small">(gift)</span>' : ''}</h3></div>
       <span class="badge lifetime-badge">Paid once · yours forever</span>
     </div>
     <div class="lifetime-slots">
       <div><div class="small"><b>Servers</b> ${x.slotsUsed.servers} of ${x.slots.servers} · ${+(x.ramMb / 1024).toFixed(1)} GB each</div>${bar(x.slotsUsed.servers, x.slots.servers)}</div>
       <div><div class="small"><b>Proxies</b> ${x.slotsUsed.proxies} of ${x.slots.proxies} · ${+((x.proxyRamMb || 1024) / 1024).toFixed(1)} GB each</div>${bar(x.slotsUsed.proxies, x.slots.proxies)}</div>
     </div>
-    ${x.prioritySupport ? `<div class="small" style="margin-top:10px">⭐ <b>Priority support</b>: your tickets and emails go to the front of the line. Write to <a href="mailto:support@treehost.online">support@treehost.online</a> or open a ticket on Discord.</div>` : ''}
+    ${x.prioritySupport ? `<div class="small" style="margin-top:10px">${ic('star')} <b>Priority support</b>: your tickets and emails go to the front of the line. Write to <a href="mailto:support@treehost.online">support@treehost.online</a> or open a ticket on Discord.</div>` : ''}
   </div>`;
 }
 
@@ -735,7 +742,7 @@ async function openBilling() {
               .map((x) => {
                 const [cls, label] = SUB_STATUS[x.status] || ['', x.status];
                 return `<tr>
-                  <td><b>${esc(x.planName)}</b>${x.oneTime ? ' <span class="badge lifetime-badge">♾️ Lifetime</span>' : ''} <span class="muted small">${+(x.ramMb / 1024).toFixed(1)} GB · ${x.free ? 'free' : x.oneTime ? `${money(x.priceCents, x.currency)} once` : `${money(x.priceCents, x.currency)}/mo`}</span></td>
+                  <td><b>${esc(x.planName)}</b>${x.oneTime ? ' <span class="badge lifetime-badge">' + ic('infinity') + ' Lifetime</span>' : ''} <span class="muted small">${+(x.ramMb / 1024).toFixed(1)} GB · ${x.free ? 'free' : x.oneTime ? `${money(x.priceCents, x.currency)} once` : `${money(x.priceCents, x.currency)}/mo`}</span></td>
                   <td><span class="badge ${cls}">${label}</span>${
                     x.status === 'past_due' ? '<div class="small muted">Update your card to keep the server running.</div>' : ''
                   }${x.deleteAt ? `<div class="small muted">Server deleted on ${new Date(x.deleteAt).toLocaleDateString()}</div>` : ''}${
@@ -816,7 +823,7 @@ async function adminPeople(body) {
     $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
       .map(
         (u) => `<tr>
-          <td><b>${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">♾️ Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">⭐ Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">🔗 ${u.linked.length} linked</span>` : ''}
+          <td><b>${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">${u.linked.length} linked</span>` : ''}
             <div class="small muted">${esc(u.email) || 'no email'} · joined ${new Date(u.createdAt).toLocaleDateString()}${u.lastLogin ? ` · last seen ${new Date(u.lastLogin).toLocaleDateString()}` : ''}</div></td>
           <td>${
             u.id !== me.id && canRoles && outranks(u)
@@ -828,15 +835,15 @@ async function adminPeople(body) {
             if (u.id === me.id) return '<span class="muted small">you</span>';
             const manage = canManage && outranks(u);
             const items = [
-              hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">🎟️ Give a free server code</button>` : '',
+              hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">${ic('ticket')} Give a free server code</button>` : '',
               canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan now</button>` : '',
               manage
                 ? u.firebase
                   ? `<button class="btn sm" data-reset="${esc(u.email)}">Send password reset email</button>`
                   : `<button class="btn sm" data-temp="${esc(u.id)}">Temporary password</button>`
                 : '',
-              hasPerm('messages.send') ? `<button class="btn sm" data-msg="${esc(u.id)}">✉️ Send message</button>` : '',
-              outranks(u) && canTakeAction('account') ? `<button class="btn sm" data-take="${esc(u.id)}">🛡️ Take action (warn, suspend, ban, delete)</button>` : '',
+              hasPerm('messages.send') ? `<button class="btn sm" data-msg="${esc(u.id)}">${ic('mail')} Send message</button>` : '',
+              outranks(u) && canTakeAction('account') ? `<button class="btn sm" data-take="${esc(u.id)}">${ic('shield')} Take action (warn, suspend, ban, delete)</button>` : '',
               u.restriction && !u.restriction.actionId && hasPerm('moderation.act') && outranks(u) ? `<button class="btn sm" data-legacy="${esc(u.id)}">Lift old suspension</button>` : '',
             ].join('');
             return items ? `<details class="menu"><summary class="btn sm">More</summary><div class="menu-body">${items}</div></details>` : '';
@@ -950,7 +957,7 @@ async function adminBilling(body) {
     }
     <div class="stat-row">
       <div class="stat"><div class="stat-num">${mrr}</div><div class="stat-label">per month (MRR)</div></div>
-      <div class="stat"><div class="stat-num">${Object.entries(d.oneTime || {}).map(([c, v]) => money(v, c)).join(' + ') || money(0, d.currency)}</div><div class="stat-label">♾️ lifetime sales (${d.lifetimeCount || 0} active)</div></div>
+      <div class="stat"><div class="stat-num">${Object.entries(d.oneTime || {}).map(([c, v]) => money(v, c)).join(' + ') || money(0, d.currency)}</div><div class="stat-label">${ic('infinity')} lifetime sales (${d.lifetimeCount || 0} active)</div></div>
       <div class="stat"><div class="stat-num">${d.activeCount}</div><div class="stat-label">active plans${d.pastDueCount ? ` · ${d.pastDueCount} unpaid` : ''}</div></div>
       <div class="stat"><div class="stat-num">${+(d.soldMb / 1024).toFixed(1)} / ${+(d.capacityMb / 1024).toFixed(1)} GB</div><div class="stat-label">memory sold</div>
         <div class="mem-bar ${pct > 90 ? 'high' : pct > 75 ? 'mid' : ''}"><div style="width:${pct}%"></div></div></div>
@@ -989,7 +996,7 @@ async function adminBilling(body) {
 // ---------- how long a free server lasts ----------
 const FREE_DURATIONS = [
   [7, '1 week'], [14, '2 weeks'], [30, '1 month'], [90, '3 months'], [180, '6 months'], [365, '1 year'],
-  [0, '♾️ Lifetime (never ends)'], ['custom', 'Custom number of days…'],
+  [0, '' + ic('infinity') + ' Lifetime (never ends)'], ['custom', 'Custom number of days…'],
 ];
 /** A "How long" field: presets, Lifetime, or a custom number of days. Read it with durationDays(form). */
 function durationFieldHtml(defaultDays = 30) {
@@ -1114,7 +1121,7 @@ async function adminPromos(body) {
                 (c) => `<tr>
                   <td><code class="copy" data-copy="${esc(c.code)}" title="Click to copy">${esc(c.code)}</code>
                     ${c.active ? '<span class="badge green">active</span>' : `<span class="badge">${c.disabled ? 'disabled' : 'used up / expired'}</span>`}</td>
-                  <td class="small">${esc(c.planName)} · ${c.days ? esc(c.length) : '♾️ lifetime'}${c.forUsername ? `<div><span class="badge blue" title="Only this account can redeem it">only for ${esc(c.forUsername)}</span></div>` : ''}${c.expiresAt ? `<div class="muted">redeem by ${new Date(c.expiresAt).toLocaleDateString()}</div>` : ''}</td>
+                  <td class="small">${esc(c.planName)} · ${c.days ? esc(c.length) : 'lifetime'}${c.forUsername ? `<div><span class="badge blue" title="Only this account can redeem it">only for ${esc(c.forUsername)}</span></div>` : ''}${c.expiresAt ? `<div class="muted">redeem by ${new Date(c.expiresAt).toLocaleDateString()}</div>` : ''}</td>
                   <td class="small">${c.uses} / ${c.maxUses}${c.redeemedBy.length ? `<div class="muted">${c.redeemedBy.map((u) => esc(u.username)).join(', ')}</div>` : ''}</td>
                   <td class="small">${esc(c.note) || '<span class="muted">-</span>'}</td>
                   <td class="actions-cell">${c.disabled ? '' : `<button class="btn sm danger" data-pdis="${esc(c.code)}">Disable</button>`}</td>
@@ -1156,7 +1163,7 @@ async function adminPlans(body) {
   const row = (p = {}) => `<tr class="plan-row">
     <td><input type="text" data-k="name" value="${esc(p.name || '')}" placeholder="Name">${
       p.oneTime
-        ? `<input type="hidden" data-k="oneTime" value="1"><div class="small muted" style="margin-top:4px;white-space:nowrap">♾️ Paid once ·
+        ? `<input type="hidden" data-k="oneTime" value="1"><div class="small muted" style="margin-top:4px;white-space:nowrap">${ic('infinity')} Paid once ·
             <input type="number" data-k="slotServers" value="${p.slots ? p.slots.servers : 4}" min="0" style="width:52px"> servers +
             <input type="number" data-k="slotProxies" value="${p.slots ? p.slots.proxies : 2}" min="0" style="width:52px"> proxies of
             <input type="number" data-k="proxyGb" value="${+((p.proxyRamMb || 1024) / 1024).toFixed(2)}" min="0.5" step="0.5" style="width:60px"> GB ·
@@ -1169,12 +1176,12 @@ async function adminPlans(body) {
     <td><input type="number" data-k="price" value="${p.priceCents !== undefined ? (p.priceCents / 100).toFixed(2) : ''}" min="0" step="0.01" style="width:90px"></td>
     <td><input type="text" data-k="description" value="${esc(p.description || '')}" placeholder="Who it's for"></td>
     <td><input type="checkbox" data-k="active" ${p.active !== false ? 'checked' : ''} title="Shown for sale"></td>
-    <td><input type="hidden" data-k="id" value="${esc(p.id || '')}"><button type="button" class="btn sm danger" data-rm>✕</button></td>
+    <td><input type="hidden" data-k="id" value="${esc(p.id || '')}"><button type="button" class="btn sm danger" data-rm>${ic('x')}</button></td>
   </tr>`;
   body.innerHTML = `
     <div class="card">
       <h3 style="margin-bottom:4px">Plans</h3>
-      <p class="hint small" style="margin:0 0 10px">Prices are monthly in ${esc(d.currency.toUpperCase())} (the ♾️ Lifetime plan is a one-time price; its RAM is per server).
+      <p class="hint small" style="margin:0 0 10px">Prices are monthly in ${esc(d.currency.toUpperCase())} (the ${ic('infinity')} Lifetime plan is a one-time price; its RAM is per server).
         Monthly plans run any number of servers. Changes apply to new purchases; existing customers keep what they bought.
         Untick "for sale" to hide a plan.</p>
       <div style="overflow-x:auto"><table class="plans-edit"><thead><tr><th>Name</th><th>RAM (GB)</th><th>CPUs</th><th>Disk (GB)</th><th>Price</th><th>Description</th><th>For sale</th><th></th></tr></thead>

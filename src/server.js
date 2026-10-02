@@ -151,7 +151,7 @@ const EMAIL = {
     ],
     verifyLink ? { text: 'Confirm my email', url: verifyLink } : { text: 'Open my dashboard', url: `${base}/dashboard` },
     {
-      heading: `Welcome, ${user.username}! 🌳`,
+      heading: `Welcome, ${user.username}!`,
       preheader: 'Your Tree Host account is ready. Here is how to start your server.',
       details: [['1. Pick a plan', 'Sapling, Oak or Redwood, in Billing'], ['2. Create your server', 'Any type and version, ready in about a minute'], ['3. Join it', 'Copy the address into Minecraft → Multiplayer']],
       after: [`Guides for everything are at ${base}/help.html. Happy building!`],
@@ -178,7 +178,7 @@ const EMAIL = {
     [`Thanks, **${user.username}**! Your ${sub.free ? 'free ' : ''}${sub.planName} plan is ready.`, 'Create your server from the dashboard: pick any server type and version and it is running in about a minute.'],
     { text: 'Create my server', url: `${base}/dashboard` },
     {
-      heading: 'Your plan is ready 🎉',
+      heading: 'Your plan is ready',
       details: [
         ['Plan', sub.planName],
         ['Memory', `${+(sub.ramMb / 1024).toFixed(1)} GB RAM`],
@@ -420,8 +420,18 @@ function requirePerm(req, permission) {
 function canView(user, inst) {
   if (!TEAM) return true;
   if (!user || !inst) return false;
-  return inst.cfg.owner === user.id || can(user, 'servers.viewAll');
+  return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, 'servers.viewAll');
 }
+
+// ---------- sharing a server with friends ----------
+// Co-owner: everything except deleting the server, resetting worlds or changing its version (and billing).
+// Helper: console, start/stop/restart, commands. Viewer: watch the console and status.
+const MEMBER_ROLES = {
+  coowner: { label: 'Co-owner', actions: ['view', 'control', 'command', 'plugins', 'files', 'settings', 'deploy'] },
+  helper: { label: 'Helper', actions: ['view', 'control', 'command'] },
+  viewer: { label: 'Viewer', actions: ['view'] },
+};
+const memberOf = (inst, user) => (user && inst.cfg.members ? inst.cfg.members.find((m) => m.userId === user.id && auth.userById(m.userId)) : null) || null;
 
 /**
  * What someone may do with a server they can see. Everyone may do everything on their own servers (host-level
@@ -450,6 +460,10 @@ function permissionError(user, action, inst) {
   if (!TEAM) return null;
   if (!user) return 'Please sign in.';
   if (action === 'view' || (inst && inst.cfg.owner === user.id)) return null;
+  const member = inst ? memberOf(inst, user) : null;
+  if (member && !rbac.isStaff(user)) {
+    return MEMBER_ROLES[member.role].actions.includes(action) ? null : `As a ${MEMBER_ROLES[member.role].label} on this server you can't ${ACTION_TEXT[action] || action}. Ask the owner.`;
+  }
   if (!rbac.isStaff(user)) return 'That is not your server.';
   const perm = ACTION_PERMISSION[action];
   return perm && !can(user, perm) ? `Your role can't ${ACTION_TEXT[action] || action} on other people's servers.` : null;
@@ -518,6 +532,8 @@ function canSeeEvent(user, e) {
   if (e.kind === 'moderation') return can(user, 'moderation.view');
   if (e.kind === 'people' || e.kind === 'billing') return can(user, 'activity.viewAll');
   if (e.owner && e.owner === user.id) return true;
+  const inst = e.serverId ? manager.instances.get(e.serverId) : null;
+  if (inst && memberOf(inst, user)) return true;
   return can(user, 'servers.viewAll') || can(user, 'activity.viewAll');
 }
 activity.listeners.add((e) => {
@@ -915,6 +931,8 @@ async function enforceAccountAction(a, user, byName, { email = true } = {}) {
     for (const s of [...manager.instances.values()]) if (s.cfg.owner === user.id && s.isCustomer) await manager.remove(s.cfg.id);
     await auth.removeUser(user.id);
     await moderation.dropInbox(user.id);
+    for (const s2 of manager.instances.values()) if (s2.cfg.members) s2.cfg.members = s2.cfg.members.filter((m) => m.userId !== user.id);
+    manager.save();
     if (user.firebaseUid) await firebase.deleteAuthUser(user.firebaseUid).catch(() => {});
   } else {
     await tellCustomer(a, user, { ...notice, email });
@@ -1308,10 +1326,10 @@ route('POST', '/api/admin/promos', async (req) => {
   // Optionally email the code straight to them.
   if (target && body.email && target.email && mail.enabled()) {
     await mail.send(target.email, 'A free Tree Host server for you', [
-      `Hi **${target.username}**, you've been given a free ${c.planName} plan on Tree Host${c.days ? ` for ${c.length}` : ' for life'}! 🎁`,
+      `Hi **${target.username}**, you've been given a free ${c.planName} plan on Tree Host${c.days ? ` for ${c.length}` : ' for life'}!`,
       'Open Billing, choose **Have a code?**, and paste your code. It only works for your account.',
     ], PUBLIC_URL ? { text: 'Claim my server', url: `${PUBLIC_URL}/dashboard?billing` } : null, {
-      heading: 'A free server for you 🎁', replyTo: EMAILS.promo,
+      heading: 'A free server for you', replyTo: EMAILS.promo,
       details: [['Your code', `**${c.code}**`], ['Plan', c.planName], ['For', c.days ? c.length : 'Life']],
     }).then(() => (c.emailed = true)).catch(() => (c.emailed = false));
   }
@@ -1507,9 +1525,9 @@ route('POST', '/api/admin/emails/test', async (req) => {
 // Staff docs: kept out of public/ (so they can't be fetched as static files) and served only to staff.
 const STAFF_DOCS_DIR = path.join(__dirname, '..', 'staff-docs');
 const STAFF_DOCS = [
-  { id: 'support-playbook', title: 'Support playbook', icon: '🎧', group: 'Support', perm: 'console.access' },
-  { id: 'roles', title: 'Roles & permissions', icon: '🔑', group: 'Support', perm: 'console.access' },
-  { id: 'hosting-guide', title: 'Running Tree Host', icon: '🛠', group: 'Technical', perm: 'system.view' },
+  { id: 'support-playbook', title: 'Support playbook', icon: 'lifebuoy', group: 'Support', perm: 'console.access' },
+  { id: 'roles', title: 'Roles & permissions', icon: 'key', group: 'Support', perm: 'console.access' },
+  { id: 'hosting-guide', title: 'Running Tree Host', icon: 'tools', group: 'Technical', perm: 'system.view' },
 ];
 const staffDocsFor = (user) => STAFF_DOCS.filter((d) => can(user, d.perm)).map(({ perm, ...d }) => d);
 route('GET', '/api/staff/docs', (req) => ({ docs: staffDocsFor(req.user) }), { perm: 'console.access' });
@@ -1723,7 +1741,14 @@ async function syncStaffPlugin(inst) {
   return restored;
 }
 
-manager.beforeStart = (inst) => syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
+manager.beforeStart = async (inst) => {
+  if (inst.cfg.sleeping || wakers.has(inst.cfg.id)) {
+    inst.cfg.sleeping = false;
+    manager.save();
+    await closeWaker(inst);
+  }
+  await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
+};
 setInterval(() => {
   for (const inst of manager.instances.values()) syncStaffPlugin(inst).catch(() => {});
 }, 30 * 1000);
@@ -1786,7 +1811,7 @@ function staffWelcome(inst, name, user) {
   inst.write(`team modify ${STAFF_TEAM} prefix ${component(inst, [badge])}`);
   inst.write(`team join ${STAFF_TEAM} ${name}`);
   inst.write(`tellraw @a ${component(inst, [
-    { text: '🌳 Tree Host ', color: 'green', bold: true },
+    { text: 'Tree Host ', color: 'green', bold: true },
     { text: `» ${name} `, color: 'gold', bold: true },
     { text: `(${role}) joined. `, color: 'gold' },
     { text: `A Tree Host ${role} has joined your server.`, color: 'green', hover: 'Official Tree Host Staff' },
@@ -1836,13 +1861,13 @@ manager.onConsoleLine = (inst, line) => {
   m = /: (?:\[[A-Za-z0-9_]{1,16}: )?Banned ([A-Za-z0-9_]{3,16})[:,]/.exec(line); // console or op feedback, never chat
   if (m && staffFor(m[1])) {
     inst.write(`pardon ${m[1]}`);
-    inst.write(`tellraw @a ${component(inst, [{ text: '🌳 Tree Host ', color: 'green', bold: true }, { text: `» ${m[1]} is Tree Host staff and can't be banned.`, color: 'gold' }])}`);
+    inst.write(`tellraw @a ${component(inst, [{ text: 'Tree Host ', color: 'green', bold: true }, { text: `» ${m[1]} is Tree Host staff and can't be banned.`, color: 'gold' }])}`);
     inst.sysLog(`Someone tried to ban Tree Host staff ${m[1]}; the ban was undone.`);
     return;
   }
   m = /: (?:\[[A-Za-z0-9_]{1,16}: )?Kicked ([A-Za-z0-9_]{3,16})[:,]/.exec(line);
   if (m && staffFor(m[1])) {
-    inst.write(`tellraw @a ${component(inst, [{ text: '🌳 Tree Host ', color: 'green', bold: true }, { text: `» ${m[1]} is Tree Host staff. Please don't kick staff while they help you.`, color: 'gold' }])}`);
+    inst.write(`tellraw @a ${component(inst, [{ text: 'Tree Host ', color: 'green', bold: true }, { text: `» ${m[1]} is Tree Host staff. Please don't kick staff while they help you.`, color: 'gold' }])}`);
     inst.sysLog(`Tree Host staff ${m[1]} was kicked. They can join again at any time.`);
     return;
   }
@@ -1964,6 +1989,465 @@ route('PUT', '/api/servers/:id/network', async (req, res, p) => {
   proxy.logActivity('server', who(req), `updated the network (${ids.length} server${ids.length === 1 ? '' : 's'})`);
   proxy.emitStatus();
   return { ok: true, restart, mode: proxy.cfg.network ? networkMode(proxy) : null };
+});
+
+// ---------- sleep when nobody is online, wake up when someone joins ----------
+// A sleeping server uses no memory or CPU. Tree Host answers on its port meanwhile: the server list shows
+// "Sleeping - join to wake it up", and joining starts the real server (players join again ~30 seconds later).
+
+const { Waker } = require('./waker');
+const wakers = new Map(); // server id -> Waker
+const canSleep = (inst) => inst.provider.kind !== 'proxy';
+
+function iconDataUrl(inst) {
+  try {
+    return `data:image/png;base64,${fs.readFileSync(path.join(inst.dir, 'server-icon.png')).toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
+async function closeWaker(inst) {
+  const w = wakers.get(inst.cfg.id);
+  if (!w) return;
+  wakers.delete(inst.cfg.id);
+  await w.close();
+}
+
+async function startWaker(inst) {
+  if (wakers.has(inst.cfg.id) || inst.proc || !manager.instances.has(inst.cfg.id)) return;
+  if (!inst.cfg.sleep || !inst.cfg.sleep.enabled) {
+    inst.cfg.sleeping = false;
+    manager.save();
+    return;
+  }
+  const firstLine = inst.cfg.motd && inst.cfg.motd.frames && inst.cfg.motd.frames[0] ? MOTD.toClassic(inst.cfg.motd.frames[0].split('\n')[0]) : `§f${inst.cfg.name}`;
+  const w = new Waker({
+    port: inst.cfg.port,
+    status: () => ({
+      motd: `${firstLine}\n§7Zz Sleeping §8· §aJoin to wake it up!`,
+      favicon: iconDataUrl(inst),
+      maxPlayers: inst.maxPlayers || 20,
+      versionName: `Sleeping · ${inst.cfg.version}`,
+    }),
+    onJoin: (name) => {
+      const blocked = manager.startBlock(inst);
+      if (blocked) return `§cThis server can't start right now: ${blocked}`;
+      // Wake up just after the "waking up" reply has gone out to the player.
+      setTimeout(() => wake(inst, name || 'A player').catch((e) => inst.sysLog(`Could not wake up: ${e.message}`)), 300);
+      return '§a§lWaking the server up!\n\n§7It takes about 30 seconds. §fJoin again in a moment.';
+    },
+  });
+  try {
+    await w.start();
+    wakers.set(inst.cfg.id, w);
+  } catch (e) {
+    inst.sysLog(`Sleeping, but could not answer on port ${inst.cfg.port} (${e.code || e.message}). Start the server from the dashboard.`);
+  }
+}
+
+async function wake(inst, by) {
+  inst.cfg.sleeping = false;
+  manager.save();
+  await closeWaker(inst);
+  inst.sysLog(`${by} wants to play: waking up...`);
+  inst.logActivity('start', by, 'woke the server up by joining');
+  inst.crashTimes = [];
+  inst.start();
+}
+
+function goToSleep(inst, minutes) {
+  inst.cfg.sleeping = true;
+  manager.save();
+  inst.sysLog(`Nobody has been online for ${minutes} minutes, so the server is going to sleep. It wakes up when someone joins.`);
+  inst.logActivity('stop', 'Tree Host', `put the server to sleep (empty for ${minutes} minutes)`);
+  inst.stop();
+}
+
+// After a sleeping server has stopped, answer on its port.
+manager.on('status', (inst) => {
+  // Status updates come often (memory readings): only a fresh start resets the "empty since" clock.
+  if (inst.status === 'running' && inst.lastSeenStatus !== 'running') inst.emptySince = Date.now();
+  inst.lastSeenStatus = inst.status;
+  if (inst.cfg.sleeping && inst.status === 'stopped' && !inst.proc) startWaker(inst).catch(() => {});
+});
+
+setInterval(() => {
+  for (const inst of manager.instances.values()) {
+    const sl = inst.cfg.sleep;
+    if (!sl || !sl.enabled || !canSleep(inst) || inst.status !== 'running') continue;
+    if (inst.players.size > 0) {
+      inst.emptySince = Date.now();
+      continue;
+    }
+    inst.emptySince = inst.emptySince || Date.now();
+    if (Date.now() - inst.emptySince >= sl.minutes * 60000) goToSleep(inst, sl.minutes);
+  }
+  for (const id of wakers.keys()) if (!manager.instances.has(id)) closeWaker({ cfg: { id } }).catch(() => {});
+}, 30 * 1000);
+
+route('PUT', '/api/servers/:id/sleep', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  if (!canSleep(inst)) throw httpError(400, "Proxies can't sleep (they don't know when your players leave).");
+  const b = await readJson(req);
+  const minutes = [5, 10, 15, 30, 60, 120].includes(Number(b.minutes)) ? Number(b.minutes) : 15;
+  inst.cfg.sleep = { enabled: !!b.enabled, minutes };
+  if (!b.enabled && inst.cfg.sleeping) {
+    inst.cfg.sleeping = false;
+    await closeWaker(inst);
+  }
+  manager.save();
+  inst.emitStatus();
+  inst.logActivity('server', who(req), b.enabled ? `turned on sleep when empty (${minutes} min)` : 'turned off sleep when empty');
+  return inst.toJSON();
+});
+
+// ---------- scheduled tasks: restarts (with countdown warnings), stops, starts, backups, commands, messages ----------
+
+const TASK_ACTIONS = { restart: 'Restart', stop: 'Stop', start: 'Start', backup: 'Back up', command: 'Run a command', broadcast: 'Send a message' };
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function localParts(tz, t = Date.now()) {
+  let parts;
+  try {
+    parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'UTC', hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      .formatToParts(new Date(t)).map((x) => [x.type, x.value]));
+  } catch {
+    return localParts('UTC', t);
+  }
+  return { day: WEEKDAYS.indexOf(parts.weekday), time: `${parts.hour}:${parts.minute}`, date: `${parts.year}-${parts.month}-${parts.day}` };
+}
+
+function cleanTask(t) {
+  const action = TASK_ACTIONS[t.action] ? t.action : null;
+  if (!action) throw httpError(400, 'Pick what the task does.');
+  const when = t.when && t.when.type === 'every'
+    ? { type: 'every', hours: [1, 2, 3, 4, 6, 8, 12, 24].includes(Number(t.when.hours)) ? Number(t.when.hours) : 6 }
+    : { type: 'daily', time: /^([01]\d|2[0-3]):[0-5]\d$/.test(t.when && t.when.time) ? t.when.time : '04:00', days: [...new Set((t.when && t.when.days) || [])].filter((d) => d >= 0 && d <= 6).sort() };
+  const text = String(t.text || '').replace(/[\r\n]/g, ' ').trim().slice(0, 200);
+  if ((action === 'command' || action === 'broadcast') && !text) throw httpError(400, action === 'command' ? 'Type the command to run.' : 'Type the message.');
+  return { id: t.id && /^[a-z0-9]{6,16}$/.test(t.id) ? t.id : crypto.randomBytes(5).toString('hex'), action, when, text: text.replace(/^\//, ''), warn: t.warn !== false, enabled: t.enabled !== false, lastRun: t.lastRun || null, lastKey: t.lastKey || null };
+}
+
+const say = (inst, text) => {
+  if (inst.provider.kind === 'proxy' || !inst.proc) return;
+  try {
+    if (versionAtLeast(inst.cfg.version, [1, 13])) inst.write(`tellraw @a ${component(inst, [{ text: '[Server] ', color: 'gold', bold: true }, { text, color: 'yellow' }])}`);
+    else inst.write(`say ${text}`);
+  } catch {}
+};
+
+/** Restarts/stops warn players first: 60, 30, 10 and 5..1 seconds before. */
+async function countdown(inst, verb) {
+  for (const [left, wait] of [[60, 30], [30, 20], [10, 5], [5, 1], [4, 1], [3, 1], [2, 1], [1, 1]]) {
+    if (!inst.proc) return false;
+    say(inst, `The server ${verb} in ${left} second${left === 1 ? '' : 's'}.`);
+    await new Promise((r) => setTimeout(r, wait * 1000));
+  }
+  return !!inst.proc;
+}
+
+async function runTask(inst, task) {
+  const label = TASK_ACTIONS[task.action];
+  const running = inst.proc && inst.status === 'running';
+  switch (task.action) {
+    case 'restart':
+      if (!running) return inst.sysLog('Scheduled restart skipped: the server is not running.');
+      if (task.warn && !(await countdown(inst, 'restarts'))) return;
+      inst.sysLog('Scheduled restart.');
+      inst.crashTimes = [];
+      inst.restart();
+      break;
+    case 'stop':
+      if (!running) return;
+      if (task.warn && !(await countdown(inst, 'stops'))) return;
+      inst.sysLog('Scheduled stop.');
+      inst.stop();
+      break;
+    case 'start':
+      if (inst.proc || inst.cfg.sleeping) return;
+      if (manager.startBlock(inst)) return inst.sysLog(`Scheduled start skipped: ${manager.startBlock(inst)}`);
+      inst.sysLog('Scheduled start.');
+      inst.start();
+      break;
+    case 'backup':
+      await backups.create(inst, { label: 'Scheduled backup', by: 'Schedule', automatic: true }).catch((e) => inst.sysLog(`Scheduled backup failed: ${e.message}`));
+      break;
+    case 'command':
+      if (!running) return;
+      inst.command(task.text);
+      break;
+    case 'broadcast':
+      if (running) say(inst, task.text);
+      break;
+    default:
+      return;
+  }
+  inst.logActivity('server', 'Schedule', `ran the scheduled task "${label}${task.text ? `: ${task.text}` : ''}"`);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const inst of manager.instances.values()) {
+    if (!inst.cfg.schedules || !inst.cfg.schedules.length) continue;
+    const local = localParts(inst.cfg.timeZone);
+    for (const task of inst.cfg.schedules) {
+      if (!task.enabled) continue;
+      let due = false;
+      if (task.when.type === 'daily') {
+        const key = `${local.date} ${task.when.time}`;
+        due = local.time === task.when.time && (!task.when.days.length || task.when.days.includes(local.day)) && task.lastKey !== key;
+        if (due) task.lastKey = key;
+      } else {
+        due = !task.lastRun ? false : now - task.lastRun >= task.when.hours * 3600000;
+        if (!task.lastRun) task.lastRun = now; // "every N hours" counts from when it was set up
+      }
+      if (!due) continue;
+      task.lastRun = now;
+      manager.save();
+      runTask(inst, task).catch((e) => inst.sysLog(`Scheduled task failed: ${e.message}`));
+    }
+  }
+}, 20 * 1000);
+
+route('PUT', '/api/servers/:id/schedules', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  const b = await readJson(req);
+  const list = (Array.isArray(b.schedules) ? b.schedules : []).slice(0, 20).map(cleanTask);
+  inst.cfg.schedules = list;
+  if (b.timeZone && typeof b.timeZone === 'string' && b.timeZone.length < 60) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: b.timeZone });
+      inst.cfg.timeZone = b.timeZone;
+    } catch {}
+  }
+  manager.save();
+  inst.emitStatus();
+  inst.logActivity('server', who(req), `updated the scheduled tasks (${list.length})`);
+  return inst.toJSON();
+});
+
+route('POST', '/api/servers/:id/schedules/:tid/run', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'settings');
+  const task = (inst.cfg.schedules || []).find((t) => t.id === p.tid);
+  if (!task) throw httpError(404, 'No such task.');
+  runTask(inst, task).catch((e) => inst.sysLog(`Task failed: ${e.message}`));
+  return { ok: true };
+});
+
+// ---------- performance history (memory, CPU, players) for the Performance tab ----------
+// One sample a minute while a server runs, the last 24 hours, kept in memory.
+
+const STATS_KEEP = 24 * 60;
+setInterval(() => {
+  const t = Date.now();
+  for (const inst of manager.instances.values()) {
+    if (!inst.proc || inst.status !== 'running') continue;
+    inst.stats = inst.stats || [];
+    inst.stats.push({ t, mem: inst.memUsedMb || null, cpu: typeof inst.cpuPct === 'number' ? inst.cpuPct : null, players: inst.players.size });
+    if (inst.stats.length > STATS_KEEP) inst.stats.splice(0, inst.stats.length - STATS_KEEP);
+  }
+}, 60 * 1000);
+
+route('GET', '/api/servers/:id/stats', (req, res, p) => {
+  const inst = getFor(req, p.id);
+  const plan = manager.planInfo(inst);
+  return {
+    samples: inst.stats || [],
+    memLimitMb: Number(inst.cfg.memoryMb) || null,
+    cpuLimit: plan && plan.cpus ? plan.cpus * 100 : null,
+    maxPlayers: inst.maxPlayers || null,
+    now: { mem: inst.proc ? inst.memUsedMb || null : null, cpu: inst.proc && typeof inst.cpuPct === 'number' ? inst.cpuPct : null, players: inst.players.size, running: !!inst.proc },
+  };
+});
+
+// ---------- download / upload the world as a zip ----------
+
+const { writeZip, extractZip } = require('./zip');
+
+async function worldFolders(inst) {
+  const level = (await inst.getProperties())['level-name'] || 'world';
+  const out = [];
+  for (const f of [level, `${level}_nether`, `${level}_the_end`]) if (await fsp.stat(path.join(inst.dir, f)).then((s) => s.isDirectory(), () => false)) out.push(f);
+  return { level, folders: out };
+}
+
+route('GET', '/api/servers/:id/world.zip', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'files');
+  if (inst.provider.kind === 'proxy') throw httpError(400, 'Proxies have no world.');
+  const { folders } = await worldFolders(inst);
+  if (!folders.length) throw httpError(404, 'This server has no world yet. Start it once to create one.');
+  // A running server saves everything to disk first, and pauses saving while the zip is made.
+  const running = inst.proc && inst.status === 'running';
+  if (running) {
+    inst.write('save-off');
+    inst.write('save-all flush');
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename="${(inst.cfg.name || 'world').replace(/[^\w.-]+/g, '-')}-world.zip"`,
+    'Cache-Control': 'no-store',
+  });
+  try {
+    await writeZip(res, inst.dir, folders);
+  } catch (e) {
+    inst.sysLog(`World download failed: ${e.message}`);
+  } finally {
+    if (running && inst.proc) inst.write('save-on');
+    res.end();
+  }
+  inst.logActivity('backup', who(req), 'downloaded the world');
+  return HANDLED;
+});
+
+route('POST', '/api/servers/:id/world', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'files');
+  if (inst.provider.kind === 'proxy') throw httpError(400, 'Proxies have no world.');
+  if (inst.proc) throw httpError(400, 'Stop the server first, then upload the world.');
+  const tmpZip = path.join(inst.dir, `.upload-world-${crypto.randomBytes(4).toString('hex')}.zip`);
+  const tmpDir = path.join(inst.dir, `.upload-world-${crypto.randomBytes(4).toString('hex')}`);
+  const LIMIT = 4 * 1024 ** 3;
+  try {
+    await new Promise((resolve, reject) => {
+      let size = 0;
+      const out = fs.createWriteStream(tmpZip);
+      req.on('data', (c) => {
+        size += c.length;
+        if (size > LIMIT) {
+          req.destroy();
+          reject(httpError(413, 'That zip is too big (4 GB at most).'));
+        }
+      });
+      req.pipe(out);
+      out.on('finish', resolve);
+      out.on('error', reject);
+      req.on('error', reject);
+    });
+    await extractZip(tmpZip, tmpDir);
+    // The world is the folder with level.dat in it (at the top of the zip, or one level down).
+    const find = async (dir, depth) => {
+      if (await fsp.stat(path.join(dir, 'level.dat')).then(() => true, () => false)) return dir;
+      if (depth >= 3) return null;
+      for (const e of await fsp.readdir(dir, { withFileTypes: true })) {
+        if (!e.isDirectory() || e.name === '__MACOSX') continue;
+        const hit = await find(path.join(dir, e.name), depth + 1);
+        if (hit) return hit;
+      }
+      return null;
+    };
+    const worldDir = await find(tmpDir, 0);
+    if (!worldDir) throw httpError(400, "That zip has no Minecraft world in it (there's no level.dat). Zip the world folder itself.");
+    const { level, folders } = await worldFolders(inst);
+    if (folders.length) await backups.create(inst, { label: 'Before uploading a world', by: who(req) });
+    for (const f of folders) await fsp.rm(path.join(inst.dir, f), { recursive: true, force: true });
+    await fsp.rename(worldDir, path.join(inst.dir, level));
+    inst.cfg.worldVersion = null; // unknown until it runs once
+    manager.save();
+    inst.sysLog(`${who(req)} uploaded a world${folders.length ? ' (the old one is in Backups)' : ''}. Start the server to play it. Single-player nether and end are moved into place on the first start.`);
+    inst.logActivity('backup', who(req), 'uploaded a world');
+    return { ok: true, backedUp: folders.length > 0 };
+  } finally {
+    await fsp.rm(tmpZip, { force: true }).catch(() => {});
+    await fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+// ---------- Bedrock crossplay: Geyser + Floodgate, installed in one click ----------
+
+const GEYSER = {
+  'Geyser-Spigot.jar': 'https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot',
+  'floodgate-spigot.jar': 'https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot',
+};
+const geyserCache = path.join(DATA, 'cache', 'geyser');
+
+/** The latest Geyser and Floodgate for Spigot/Paper, downloaded at most once a day and shared by every server. */
+async function geyserJars(log) {
+  await fsp.mkdir(geyserCache, { recursive: true });
+  const out = {};
+  for (const [name, url] of Object.entries(GEYSER)) {
+    const file = path.join(geyserCache, name);
+    const st = await fsp.stat(file).catch(() => null);
+    if (!st || Date.now() - st.mtimeMs > 86400000) {
+      log(`Downloading ${name.replace('.jar', '')}...`);
+      const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(180000) });
+      if (!res.ok) throw httpError(502, `Could not download ${name} (HTTP ${res.status}). Try again in a minute.`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length < 100000 || buf[0] !== 0x50 || buf[1] !== 0x4b) throw httpError(502, `The ${name} download looks broken. Try again in a minute.`);
+      await fsp.writeFile(`${file}.tmp`, buf);
+      await fsp.rename(`${file}.tmp`, file);
+    }
+    out[name] = file;
+  }
+  return out;
+}
+
+route('POST', '/api/servers/:id/bedrock', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'plugins');
+  if (inst.provider.family !== 'bukkit') throw httpError(400, 'Bedrock crossplay works on Paper, Purpur, Folia and Spigot servers.');
+  if (!versionAtLeast(inst.cfg.version, [1, 16, 5])) throw httpError(400, 'Geyser needs Minecraft 1.16.5 or newer.');
+  if (proxyOf(inst)) throw httpError(400, "This server is behind your proxy, so Bedrock players would have to come through the proxy. Turn it on for a standalone server.");
+  const { enabled } = await readJson(req);
+  const dir = path.join(inst.dir, inst.pluginDirName);
+  if (enabled) {
+    const jars = await geyserJars((m) => inst.sysLog(m));
+    await fsp.mkdir(dir, { recursive: true });
+    for (const [name, file] of Object.entries(jars)) await fsp.copyFile(file, path.join(dir, name));
+    inst.cfg.bedrock = true;
+    await inst.applyBedrock();
+    inst.sysLog(`Bedrock crossplay is on: phones, consoles and Windows players join with the same address (port ${inst.cfg.port}).${inst.proc ? ' Restart the server to start it.' : ''}`);
+  } else {
+    for (const name of Object.keys(GEYSER)) await fsp.rm(path.join(dir, name), { force: true }).catch(() => {});
+    inst.cfg.bedrock = false;
+    inst.sysLog(`Bedrock crossplay is off.${inst.proc ? ' Restart the server to finish.' : ''}`);
+  }
+  manager.save();
+  inst.logActivity('server', who(req), enabled ? 'turned on Bedrock crossplay (Geyser + Floodgate)' : 'turned off Bedrock crossplay');
+  inst.emitStatus();
+  return { ...inst.toJSON(), restartNeeded: !!inst.proc };
+});
+
+// ---------- people the owner shares a server with ----------
+
+route('POST', '/api/servers/:id/members', async (req, res, p) => {
+  const inst = getFor(req, p.id);
+  if (TEAM && inst.cfg.owner !== req.user.id && !can(req.user, 'servers.edit')) throw httpError(403, 'Only the owner can share this server.');
+  const b = await readJson(req);
+  if (!MEMBER_ROLES[b.role]) throw httpError(400, 'Pick a role: Co-owner, Helper or Viewer.');
+  const who2 = String(b.user || '').trim().toLowerCase();
+  const user = auth.users.find((u) => u.username.toLowerCase() === who2 || (u.email && u.email === who2));
+  if (!user) throw httpError(404, `No Tree Host account called "${b.user}". They need to sign up first (it's free).`);
+  if (user.id === inst.cfg.owner) throw httpError(400, "That's the owner.");
+  inst.cfg.members = (inst.cfg.members || []).filter((m) => auth.userById(m.userId));
+  const existing = inst.cfg.members.find((m) => m.userId === user.id);
+  if (!existing && inst.cfg.members.length >= 20) throw httpError(400, 'A server can be shared with up to 20 people.');
+  if (existing) existing.role = b.role;
+  else inst.cfg.members.push({ userId: user.id, role: b.role, addedAt: Date.now(), addedBy: req.user.id });
+  manager.save();
+  inst.emitStatus();
+  inst.logActivity('server', who(req), `${existing ? 'changed' : 'shared the server with'} ${user.username} (${MEMBER_ROLES[b.role].label})`);
+  if (!existing) {
+    await moderation.message(user.id, {
+      title: `${req.user.username} shared "${inst.cfg.name}" with you`,
+      body: `You're now a ${MEMBER_ROLES[b.role].label} on ${inst.cfg.name}. Find it in your server list on the dashboard.`,
+      kind: 'message',
+      from: req.user.username,
+    }).catch(() => {});
+  }
+  return inst.toJSON();
+});
+
+route('DELETE', '/api/servers/:id/members/:uid', async (req, res, p) => {
+  const inst = getFor(req, p.id);
+  const self = p.uid === req.user.id;
+  if (TEAM && !self && inst.cfg.owner !== req.user.id && !can(req.user, 'servers.edit')) throw httpError(403, 'Only the owner can change who has access.');
+  const before = (inst.cfg.members || []).length;
+  inst.cfg.members = (inst.cfg.members || []).filter((m) => m.userId !== p.uid);
+  if (inst.cfg.members.length === before) throw httpError(404, 'That person has no access to this server.');
+  manager.save();
+  inst.emitStatus();
+  inst.logActivity('server', who(req), self ? 'left the server' : `removed ${manager.ownerName(p.uid) || 'someone'}'s access`);
+  return { ok: true };
 });
 
 // ---------- MOTD (the message under the server's name in the server list) ----------
@@ -2377,6 +2861,7 @@ const PAGES = {
   '/staff-docs': 'help.html', // the guides themselves come from /api/staff/docs (staff only)
   '/features': 'features.html',
   '/servers': 'servers.html',
+  '/why': 'why.html',
   '/pricing': 'pricing.html',
   '/support': 'support.html',
   '/about': 'about.html',
@@ -2483,6 +2968,7 @@ async function main() {
   }
   await activity.init();
   await manager.init();
+  for (const inst of manager.instances.values()) if (inst.cfg.sleeping && !inst.proc) startWaker(inst).catch(() => {});
   const url = `http://localhost:${PORT}`;
   server.on('error', (e) => {
     if (e.code === 'EADDRINUSE') {

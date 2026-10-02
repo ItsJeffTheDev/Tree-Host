@@ -5,10 +5,10 @@
 
 const STAFF = location.pathname.replace(/\/$/, '') === '/staff-docs';
 const PUBLIC_DOCS = [
-  { id: 'getting-started', title: 'Getting started', icon: '👋', group: 'Start here' },
-  { id: 'servers', title: 'Your server', icon: '🧱', group: 'Using Tree Host' },
-  { id: 'billing', title: 'Billing', icon: '💳', group: 'Using Tree Host' },
-  { id: 'troubleshooting', title: 'Troubleshooting', icon: '🩹', group: 'Help' },
+  { id: 'getting-started', title: 'Getting started', icon: '' + ic('hand') + '', group: 'Start here' },
+  { id: 'servers', title: 'Your server', icon: '' + ic('blocks') + '', group: 'Using Tree Host' },
+  { id: 'billing', title: 'Billing', icon: '' + ic('card') + '', group: 'Using Tree Host' },
+  { id: 'troubleshooting', title: 'Troubleshooting', icon: '' + ic('lifebuoy') + '', group: 'Help' },
 ];
 let DOCS = STAFF ? [] : PUBLIC_DOCS; // staff: filled from /api/staff/docs (only the guides your role may read)
 
@@ -352,7 +352,7 @@ async function start() {
         <a class="btn" href="/help.html">Customer help &amp; guides</a></p>`;
       return;
     }
-    DOCS = (await r.json()).docs;
+    DOCS = (await r.json()).docs.map((d) => ({ ...d, icon: typeof ic === 'function' ? ic(d.icon) : '' }));
   }
   setupSearch();
   show();

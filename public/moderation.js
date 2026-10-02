@@ -75,7 +75,7 @@ const EVIDENCE_FIELD = `
 function bindEvidencePicker(form) {
   const input = $('[name=files]', form);
   input.addEventListener('change', () => {
-    $('.ev-picked', form).textContent = [...input.files].map((f) => `📎 ${f.name}`).join('   ');
+    $('.ev-picked', form).textContent = [...input.files].map((f) => `${f.name}`).join('   ');
   });
 }
 
@@ -96,10 +96,10 @@ function openTakeAction(opts) {
     delete: target === 'server' ? 'The server and all its files are deleted. This cannot be undone. The console log is saved in the report first.' : 'The account, its servers and files are deleted and its plans are canceled. This cannot be undone. They are told by email.',
   };
   const { root, close } = openModal(`
-    <h2>🛡️ Take action on ${subject}</h2>
+    <h2>${ic('shield')} Take action on ${subject}</h2>
     <form id="ta-form" class="stack">
       <div class="row" style="flex-wrap:wrap;gap:8px" id="ta-types">${types
-        .map((t, i) => `<label class="ta-type"><input type="radio" name="type" value="${t}" ${(opts.type ? t === opts.type : i === 0) ? 'checked' : ''}> ${{ warn: '⚠️ Warn', suspend: '⏸️ Suspend', ban: '⛔ Ban', delete: '🗑️ Delete' }[t]}</label>`)
+        .map((t, i) => `<label class="ta-type"><input type="radio" name="type" value="${t}" ${(opts.type ? t === opts.type : i === 0) ? 'checked' : ''}> ${{ warn: '' + ic('alert') + ' Warn', suspend: '' + ic('pause') + ' Suspend', ban: '' + ic('ban') + ' Ban', delete: '' + ic('trash') + ' Delete' }[t]}</label>`)
         .join('')}</div>
       <div class="warn-box" id="ta-effect"></div>
       <div class="grid2">
@@ -167,7 +167,7 @@ function openTakeAction(opts) {
 /** A message to someone's Tree Host inbox (and email). */
 function openSendMessage(user) {
   const { root, close } = openModal(`
-    <h2>✉️ Message ${esc(user.username)}</h2>
+    <h2>${ic('mail')} Message ${esc(user.username)}</h2>
     <form id="sm-form" class="stack">
       <label class="field">Subject <input type="text" name="title" maxlength="200" required placeholder="e.g. About your server's lag"></label>
       <label class="field">Message <textarea name="body" rows="6" required></textarea></label>
@@ -197,7 +197,7 @@ function restrictionBadge(r) {
 
 // ---------- Staff Console: Action logs ----------
 
-const TYPE_CHIP = { warn: '⚠️ Warnings', suspend: '⏸️ Suspensions', ban: '⛔ Bans', delete: '🗑️ Deletions' };
+const TYPE_CHIP = { warn: '' + ic('alert') + ' Warnings', suspend: '' + ic('pause') + ' Suspensions', ban: '' + ic('ban') + ' Bans', delete: '' + ic('trash') + ' Deletions' };
 const isoDay = (d) => d.toISOString().slice(0, 10);
 
 /** Every action taken, filtered by type, action number, username, email, staff member, server, reason, status, appeal and date. */
@@ -244,7 +244,7 @@ async function consoleActions(body, sub) {
         <button type="button" class="btn sm" data-range="all">All time</button>
         <span style="flex:1"></span>
         <button type="button" class="btn sm" id="act-clear">Clear filters</button>
-        <a class="btn sm" id="act-csv" download>⬇ Export these (CSV)</a>
+        <a class="btn sm" id="act-csv" download>${ic('download')} Export these (CSV)</a>
       </div>
     </form>
     <div class="small muted" id="act-count" style="margin:0 0 8px"></div>
@@ -272,9 +272,9 @@ async function consoleActions(body, sub) {
     $('#act-list', body).innerHTML = d.actions.length
       ? `<table><thead><tr><th>Action</th><th>Customer</th><th>Reason</th><th>Taken by</th><th>Date</th><th>Status</th><th></th></tr></thead><tbody>${d.actions
           .map((a) => `<tr>
-            <td><b>${esc(a.id)}</b><div class="small muted">${MOD_TYPES[a.type]} · ${a.target === 'server' ? `🖥️ ${esc(a.server ? a.server.name : 'server')}` : '👤 account'}</div></td>
+            <td><b>${esc(a.id)}</b><div class="small muted">${MOD_TYPES[a.type]} · ${a.target === 'server' ? `${ic('server')} ${esc(a.server ? a.server.name : 'server')}` : '' + ic('user') + ' account'}</div></td>
             <td class="small">${a.customer.username ? `<a href="#" data-filter="username" data-val="${esc(a.customer.username)}" title="Show every action for ${esc(a.customer.username)}">${esc(a.customer.username)}</a>` : '-'}${a.customer.email ? `<div><a href="#" class="muted" data-filter="email" data-val="${esc(a.customer.email)}">${esc(a.customer.email)}</a></div>` : ''}</td>
-            <td class="small">${esc(a.reasonLabel)}${a.evidence ? `<div class="muted">📎 ${a.evidence} evidence</div>` : ''}</td>
+            <td class="small">${esc(a.reasonLabel)}${a.evidence ? `<div class="muted">${ic('clip')} ${a.evidence} evidence</div>` : ''}</td>
             <td class="small"><a href="#" data-filter="by" data-val="${esc(a.by)}" title="Show every action by ${esc(a.by)}">${esc(a.by)}</a></td>
             <td class="small">${when(a.createdAt)}</td>
             <td>${badge(MOD_STATUS[a.status])}${a.appeal ? ` ${badge(APPEAL_BADGE[a.appeal])}` : ''}</td>
@@ -339,8 +339,8 @@ async function openActionDetail(id, onChange) {
     const src = `/api/admin/actions/${encodeURIComponent(a.id)}/evidence/${e.id}`;
     const meta = `<div class="small muted">${{ image: 'Screenshot', text: 'Text file', log: 'Console log', note: 'Note' }[e.kind]} · ${esc(e.addedBy)} · ${when(e.addedAt)}</div>`;
     if (e.kind === 'image') return `<div class="ev-item"><a href="${src}" target="_blank"><img src="${src}" alt="${esc(e.name)}" loading="lazy"></a><b class="small">${esc(e.name)}</b>${meta}</div>`;
-    if (e.kind === 'note') return `<div class="ev-item ev-text"><b class="small">📝 ${esc(e.name)}</b>${meta}<div class="small pre">${esc(e.text)}</div></div>`;
-    return `<div class="ev-item ev-text"><b class="small">📄 ${esc(e.name)}</b>${meta}<a class="btn sm" href="${src}" target="_blank">Open</a></div>`;
+    if (e.kind === 'note') return `<div class="ev-item ev-text"><b class="small">${ic('note')} ${esc(e.name)}</b>${meta}<div class="small pre">${esc(e.text)}</div></div>`;
+    return `<div class="ev-item ev-text"><b class="small">${ic('file')} ${esc(e.name)}</b>${meta}<a class="btn sm" href="${src}" target="_blank">Open</a></div>`;
   };
   const canLift = a.status === 'active' && hasPerm(a.type === 'ban' ? 'moderation.ban' : 'moderation.act');
   const canDecide = a.appeal && a.appeal.status === 'pending' && hasPerm('moderation.appeals');
@@ -350,8 +350,8 @@ async function openActionDetail(id, onChange) {
       <h2 style="margin:0">${esc(a.id)}</h2>
       ${badge(MOD_STATUS[a.status])} ${a.appeal ? badge(APPEAL_BADGE[a.appeal.status]) : ''}
       <span style="flex:1"></span>
-      <a class="btn" href="${pdf}" target="_blank">📄 View PDF report</a>
-      <a class="btn primary" href="${pdf}?download=1">⬇ Download PDF</a>
+      <a class="btn" href="${pdf}" target="_blank">${ic('file')} View PDF report</a>
+      <a class="btn primary" href="${pdf}?download=1">${ic('download')} Download PDF</a>
     </div>
     <div class="card">
       <div class="kv">
@@ -454,7 +454,7 @@ async function refreshInboxBadge(announce = false) {
     el.classList.toggle('hidden', !inboxCache.unread);
   }
   if (announce && inboxCache.unread) {
-    toast(`📬 You have ${inboxCache.unread} new message${inboxCache.unread === 1 ? '' : 's'} from Tree Host. Open your Inbox.`);
+    toast(`You have ${inboxCache.unread} new message${inboxCache.unread === 1 ? '' : 's'} from Tree Host. Open your Inbox.`);
   }
 }
 
@@ -462,7 +462,7 @@ async function openInbox(focusAction) {
   const [inbox, mine] = await Promise.all([api('GET', '/api/inbox'), api('GET', '/api/moderation/mine')]);
   const actions = new Map(mine.actions.map((x) => [x.id, x]));
   const { root, close } = openModal(`
-    <h2>📬 Inbox</h2>
+    <h2>${ic('inbox')} Inbox</h2>
     <p class="hint" style="margin-top:-8px">Messages from the Tree Host team. Questions? Write to <a href="mailto:${esc(mine.supportEmail || '')}">${esc(mine.supportEmail || '')}</a>.</p>
     <div class="stack" id="inbox-list">${
       inbox.messages.length
@@ -541,7 +541,7 @@ async function showRestricted() {
     <div class="restricted-page">
       <div class="brand" style="margin-bottom:22px"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">${esc(state.me.user.username)}</div></div></div>
       <div class="card restricted-card">
-        <div class="restricted-icon">${r.type === 'banned' ? '⛔' : '⏸️'}</div>
+        <div class="restricted-icon">${r.type === 'banned' ? '' + ic('ban') + '' : '' + ic('pause') + ''}</div>
         <h1>Your account is ${r.type}</h1>
         ${r.type === 'suspended' ? `<p class="lead">${r.until ? `Until <b>${when(r.until)}</b>. After that, everything works again by itself.` : 'Until our team lifts the suspension.'} Your servers and files are kept.</p>`
           : '<p class="lead">You can no longer use Tree Host. If you think this is a mistake, you can appeal below.</p>'}
@@ -552,10 +552,10 @@ async function showRestricted() {
           <div class="card" style="margin:0 0 14px"><div class="pre">${esc(a.message)}</div></div>
           ${actionFooter(a)}` : `<p class="muted">Contact <a href="mailto:${esc(mine.supportEmail)}">${esc(mine.supportEmail)}</a> to find out more.</p>`}
       </div>
-      <h3 style="margin:22px 0 10px">📬 Messages from Tree Host</h3>
+      <h3 style="margin:22px 0 10px">${ic('inbox')} Messages from Tree Host</h3>
       <div class="stack">${inbox.messages.map((m) => inboxItem(m, actions.get(m.actionId))).join('') || '<p class="muted">No messages.</p>'}</div>
       <div class="row" style="margin-top:22px;flex-wrap:wrap">
-        <a class="btn" href="mailto:${esc(mine.supportEmail)}">✉️ Email support</a>
+        <a class="btn" href="mailto:${esc(mine.supportEmail)}">${ic('mail')} Email support</a>
         <button class="btn" id="rs-switch">⇄ Switch account</button>
         <button class="btn" id="rs-logout">Sign out</button>
         <a class="btn" href="/terms" target="_blank">Terms of Service</a>
@@ -572,6 +572,6 @@ function serverModerationBox(s) {
   const m = s.moderation;
   if (!m) return '';
   const staffView = !isCustomer() && hasPerm('moderation.view');
-  return `<div class="suspended-box">${m.type === 'banned' ? '⛔' : '⏸️'} This server is <b>${esc(m.type)}</b> by Tree Host staff${m.until ? ` until ${when(m.until)}` : ''} (action ${esc(m.actionId)}).
+  return `<div class="suspended-box">${m.type === 'banned' ? '' + ic('ban') + '' : '' + ic('pause') + ''} This server is <b>${esc(m.type)}</b> by Tree Host staff${m.until ? ` until ${when(m.until)}` : ''} (action ${esc(m.actionId)}).
     ${staffView ? `<a href="/admin#actions/${esc(m.actionId)}">Open the action</a>` : `<a href="#" data-mod-inbox="${esc(m.actionId)}">See why / appeal</a>`}</div>`;
 }

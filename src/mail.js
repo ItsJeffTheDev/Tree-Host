@@ -72,7 +72,7 @@ function render(subject, paragraphs, button, opts = {}) {
     ? ''
     : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 6px;background:#f1f3fd;border:1px solid #dde1fa;border-radius:12px">
         <tr><td style="padding:18px 20px">
-          <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:#1f2550">💬 Join the Tree Host Discord</p>
+          <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:#1f2550">Join the Tree Host Discord</p>
           <p style="margin:0 0 14px;font-size:14px;line-height:1.5;color:#4a5175">Get help fast, hear about updates first and show off your builds.</p>
           <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border-radius:8px;background:#5865f2">
             <a href="${DISCORD}" style="display:inline-block;padding:10px 18px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px">Join our Discord</a>

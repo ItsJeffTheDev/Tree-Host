@@ -9,6 +9,7 @@
 
   const NAV = [
     ['features', '/features', 'Features'],
+    ['why', '/why', 'Why Tree Host'],
     ['servers', '/servers', 'Servers'],
     ['pricing', '/pricing', 'Pricing'],
     ['support', '/support', 'Support'],
@@ -26,7 +27,7 @@
         <div class="nav-actions" id="nav-actions">
           <a href="/dashboard" class="btn-ghost btn-sm hide-sm">Sign in</a>
           <a href="/dashboard?signup" class="btn-cta btn-sm">Get started</a>
-          <button class="nav-toggle" id="nav-toggle" aria-label="Menu">☰</button>
+          <button class="nav-toggle" id="nav-toggle" aria-label="Menu"></button>
         </div>
       </div>`;
     document.getElementById('nav-toggle').addEventListener('click', () => document.getElementById('nav-links').classList.toggle('open'));
@@ -46,7 +47,7 @@
             <p>Minecraft server hosting that grows with you. Every server type and version, one-click plugins and automatic backups.</p>
           </div>
           <div class="footer-col"><h4>Product</h4>
-            <a href="/features">Features</a><a href="/servers">Server list</a><a href="/pricing">Pricing</a><a href="/dashboard?signup">Create a server</a><a href="/dashboard">Dashboard</a></div>
+            <a href="/features">Features</a><a href="/why">Why Tree Host</a><a href="/servers">Server list</a><a href="/pricing">Pricing</a><a href="/dashboard?signup">Create a server</a><a href="/dashboard">Dashboard</a></div>
           <div class="footer-col"><h4>Help</h4>
             <a href="/help.html">Guides</a><a href="/support">Contact &amp; FAQ</a><a href="/help.html?doc=billing">Billing help</a><span id="ft-discord"></span></div>
           <div class="footer-col"><h4>Company</h4>
@@ -66,7 +67,7 @@
       if (!me.user) return;
       const actions = document.getElementById('nav-actions');
       if (actions) {
-        actions.innerHTML = `<a href="/dashboard" class="btn-cta btn-sm">Dashboard →</a><button class="nav-toggle" id="nav-toggle" aria-label="Menu">☰</button>`;
+        actions.innerHTML = `<a href="/dashboard" class="btn-cta btn-sm">Dashboard →</a><button class="nav-toggle" id="nav-toggle" aria-label="Menu"></button>`;
         document.getElementById('nav-toggle').addEventListener('click', () => document.getElementById('nav-links').classList.toggle('open'));
       }
       document.querySelectorAll('[data-signed-in-href]').forEach((a) => (a.href = a.dataset.signedInHref));
@@ -146,7 +147,7 @@
           .join('') + lifetime
           .map(
             (p) => `<div class="plan lifetime reveal">
-              <div class="tag">♾️ Pay once, keep forever</div>
+              <div class="tag">${ic('infinity')} Pay once, keep forever</div>
               <div class="lifetime-body">
                 <div>
                   <h3>${esc(p.name)}</h3>
