@@ -604,7 +604,7 @@ async function openBilling() {
                     x.status === 'canceled'
                       ? '<span class="muted">-</span>'
                       : x.free
-                        ? x.freeUntil ? `Free until ${new Date(x.freeUntil).toLocaleDateString()}` : 'Free'
+                        ? x.freeUntil ? `Free until ${new Date(x.freeUntil).toLocaleDateString()}` : 'Free (lifetime)'
                         : x.renewsAt ? new Date(x.renewsAt).toLocaleDateString() : '<span class="muted">-</span>'
                   }</td>
                 </tr>`;
@@ -714,18 +714,7 @@ async function adminPeople(body) {
       }),
     );
     $$('[data-grant]', body).forEach((b) =>
-      b.addEventListener('click', () => {
-        const names = plans.plans.map((p) => p.id).join(', ');
-        const id = prompt(`Which plan? (${names})`, plans.plans[0]?.id || '');
-        if (!id) return;
-        const months = prompt('For how many months? (0 = no end date)', '0');
-        if (months === null) return;
-        attempt(async () => {
-          await api('POST', '/api/admin/subscriptions', { userId: b.dataset.grant, planId: id.trim(), months: Number(months) || 0 });
-          toast(Number(months) > 0 ? `Free plan given for ${Number(months)} month(s)` : 'Free plan given');
-          reload();
-        });
-      }),
+      b.addEventListener('click', () => openGrantPlan(all.find((x) => x.id === b.dataset.grant), plans.plans, reload)),
     );
     $$('[data-code]', body).forEach((b) => b.addEventListener('click', () => openAccountCode(all.find((x) => x.id === b.dataset.code), plans.plans)));
     $$('[data-reset]', body).forEach((b) =>
@@ -852,6 +841,64 @@ async function adminBilling(body) {
   );
 }
 
+// ---------- how long a free server lasts ----------
+const FREE_DURATIONS = [
+  [7, '1 week'], [14, '2 weeks'], [30, '1 month'], [90, '3 months'], [180, '6 months'], [365, '1 year'],
+  [0, '♾️ Lifetime (never ends)'], ['custom', 'Custom number of days…'],
+];
+/** A "How long" field: presets, Lifetime, or a custom number of days. Read it with durationDays(form). */
+function durationFieldHtml(defaultDays = 30) {
+  return `<label class="small">How long<br>
+    <select name="duration" style="width:auto">${FREE_DURATIONS.map(([v, l]) => `<option value="${v}" ${v === defaultDays ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <input type="number" name="customDays" min="1" max="3650" placeholder="days" class="hidden" style="width:90px"></label>`;
+}
+function bindDuration(form) {
+  const sel = $('[name=duration]', form);
+  const custom = $('[name=customDays]', form);
+  sel.addEventListener('change', () => {
+    custom.classList.toggle('hidden', sel.value !== 'custom');
+    if (sel.value === 'custom') custom.focus();
+  });
+}
+/** Days from the field (0 = lifetime). Throws a friendly error for an empty custom value. */
+function durationDays(form) {
+  const v = $('[name=duration]', form).value;
+  if (v !== 'custom') return Number(v);
+  const d = Math.round(Number($('[name=customDays]', form).value));
+  if (!(d >= 1 && d <= 3650)) throw new Error('Enter how many days (1 to 3650), or pick Lifetime.');
+  return d;
+}
+const durationLabel = (days) => (days ? (FREE_DURATIONS.find(([v]) => v === days) || [0, `${days} days`])[1] : 'Lifetime');
+
+/** Give someone a free plan right away (no code needed). */
+function openGrantPlan(user, planList, onDone) {
+  const { root, close } = openModal(`
+    <h2>Free plan for ${esc(user.username)}</h2>
+    <p class="hint" style="margin-top:0">Activates right away in their Billing; they can create the server immediately.
+      To let them claim it themselves, use <b>Give a free server code</b> instead.</p>
+    <form id="gp-form" class="card stack">
+      <div class="row" style="flex-wrap:wrap;align-items:flex-end">
+        <label class="small">Plan<br><select name="planId" style="width:auto">${planList.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${+(p.ramMb / 1024).toFixed(1)} GB)</option>`).join('')}</select></label>
+        ${durationFieldHtml(30)}
+        <label class="small" style="flex:1;min-width:180px">Note<br><input type="text" name="note" placeholder="e.g. Staff server, partner"></label>
+      </div>
+      <div class="row"><button class="btn primary">Give free plan</button></div>
+    </form>
+    <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+  const form = $('#gp-form', root);
+  bindDuration(form);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    attempt(async () => {
+      const days = durationDays(form);
+      await api('POST', '/api/admin/subscriptions', { userId: user.id, planId: form.planId.value, days, note: form.note.value });
+      toast(`${user.username} got a free plan (${durationLabel(days)})`);
+      close();
+      if (onDone) onDone();
+    });
+  });
+}
+
 /** One-time code for one account: only that person can redeem it, once (Billing → Have a code?). */
 function openAccountCode(user, planList) {
   const canEmail = !!(state.me.mailEnabled && user.email);
@@ -862,7 +909,7 @@ function openAccountCode(user, planList) {
     <form id="ac-form" class="card stack">
       <div class="row" style="flex-wrap:wrap;align-items:flex-end">
         <label class="small">Plan<br><select name="planId" style="width:auto">${planList.map((p) => `<option value="${esc(p.id)}">${esc(p.name)} (${+(p.ramMb / 1024).toFixed(1)} GB)</option>`).join('')}</select></label>
-        <label class="small">Months free<br><input type="number" name="months" value="1" min="0" max="120" style="width:90px" title="0 = no end date"></label>
+        ${durationFieldHtml(30)}
         <label class="small" style="flex:1;min-width:180px">Note<br><input type="text" name="note" placeholder="e.g. Creator promo, giveaway winner"></label>
       </div>
       ${canEmail ? `<label class="check"><input type="checkbox" name="email" checked> Email the code to ${esc(user.email)}</label>` : ''}
@@ -870,12 +917,14 @@ function openAccountCode(user, planList) {
     </form>
     <div id="ac-result"></div>
     <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+  bindDuration($('#ac-form', root));
   $('#ac-form', root).addEventListener('submit', (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     attempt(async () => {
-      const c = await api('POST', '/api/admin/promos', { planId: f.planId, months: Number(f.months) || 0, note: f.note || `For ${user.username}`, forUserId: user.id, email: !!f.email });
-      const msg = `Here's your free Tree Host server: ${c.planName}${c.months ? ` for ${c.months} month${c.months === 1 ? '' : 's'}` : ''}! Sign in, open Billing → "Have a code?" and enter ${c.code}. It only works for your account.`;
+      const days = durationDays(e.target);
+      const c = await api('POST', '/api/admin/promos', { planId: f.planId, days, note: f.note || `For ${user.username}`, forUserId: user.id, email: !!f.email });
+      const msg = `Here's your free Tree Host server: ${c.planName}${c.days ? ` for ${c.length}` : ', for life'}! Sign in, open Billing → "Have a code?" and enter ${c.code}. It only works for your account.`;
       $('#ac-form', root).classList.add('hidden');
       $('#ac-result', root).innerHTML = `<div class="card stack">
         <div class="small muted">Code (one use, only for ${esc(user.username)})</div>
@@ -896,7 +945,6 @@ function openAccountCode(user, planList) {
 // Promo codes: free plans for creators, partners and giveaways. Customers redeem them in Billing.
 async function adminPromos(body) {
   const [codes, plans] = await Promise.all([api('GET', '/api/admin/promos'), api('GET', '/api/admin/billing')]);
-  const length = (m) => (m ? `${m} month${m === 1 ? '' : 's'}` : 'no end date');
   body.innerHTML = `
     <form class="card stack" id="promo-new">
       <h3>New code</h3>
@@ -904,7 +952,7 @@ async function adminPromos(body) {
       <div class="row" style="flex-wrap:wrap;align-items:flex-end">
         <label class="small">Code<br><input type="text" name="code" placeholder="blank = random" style="max-width:180px;text-transform:uppercase"></label>
         <label class="small">Plan<br><select name="planId" style="width:auto">${plans.plans.filter((p) => p.active).map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label>
-        <label class="small">Months free<br><input type="number" name="months" value="3" min="0" max="120" style="width:80px" title="0 = no end date"></label>
+        ${durationFieldHtml(90)}
         <label class="small">Uses<br><input type="number" name="maxUses" value="1" min="1" style="width:70px"></label>
         <label class="small">Redeem by (optional)<br><input type="date" name="expiresAt" style="width:auto"></label>
         <label class="small">Only for account (optional)<br><input type="text" name="forUser" placeholder="username or email" style="max-width:200px" title="The code then works once, and only for this account"></label>
@@ -921,7 +969,7 @@ async function adminPromos(body) {
                 (c) => `<tr>
                   <td><code class="copy" data-copy="${esc(c.code)}" title="Click to copy">${esc(c.code)}</code>
                     ${c.active ? '<span class="badge green">active</span>' : `<span class="badge">${c.disabled ? 'disabled' : 'used up / expired'}</span>`}</td>
-                  <td class="small">${esc(c.planName)} · ${length(c.months)}${c.forUsername ? `<div><span class="badge blue" title="Only this account can redeem it">only for ${esc(c.forUsername)}</span></div>` : ''}${c.expiresAt ? `<div class="muted">redeem by ${new Date(c.expiresAt).toLocaleDateString()}</div>` : ''}</td>
+                  <td class="small">${esc(c.planName)} · ${c.days ? esc(c.length) : '♾️ lifetime'}${c.forUsername ? `<div><span class="badge blue" title="Only this account can redeem it">only for ${esc(c.forUsername)}</span></div>` : ''}${c.expiresAt ? `<div class="muted">redeem by ${new Date(c.expiresAt).toLocaleDateString()}</div>` : ''}</td>
                   <td class="small">${c.uses} / ${c.maxUses}${c.redeemedBy.length ? `<div class="muted">${c.redeemedBy.map((u) => esc(u.username)).join(', ')}</div>` : ''}</td>
                   <td class="small">${esc(c.note) || '<span class="muted">-</span>'}</td>
                   <td class="actions-cell">${c.disabled ? '' : `<button class="btn sm danger" data-pdis="${esc(c.code)}">Disable</button>`}</td>
@@ -932,10 +980,14 @@ async function adminPromos(body) {
       }
       <p class="hint small" style="margin:8px 0 0">When a free plan with an end date runs out, its server is stopped and the customer is emailed. They can buy a plan to keep it.</p>
     </div>`;
+  bindDuration($('#promo-new', body));
   $('#promo-new', body).addEventListener('submit', (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     attempt(async () => {
+      f.days = durationDays(e.target);
+      delete f.duration;
+      delete f.customDays;
       const c = await api('POST', '/api/admin/promos', f);
       await navigator.clipboard.writeText(c.code).catch(() => {});
       toast(`Code ${c.code} created and copied`);

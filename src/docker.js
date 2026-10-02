@@ -16,8 +16,12 @@ function imageFor(major) {
 }
 
 let availability = null;
-/** True when the Docker engine answers. Checked once, then cached. */
-function available() {
+/**
+ * True when the Docker engine answers. A "yes" is cached; after a "no" you can ask again with fresh=true
+ * (Docker Desktop often finishes starting after Tree Host does).
+ */
+async function available(fresh = false) {
+  if (fresh && availability && !(await availability)) availability = null;
   if (!availability) {
     availability = run('docker', ['version', '--format', '{{.Server.Version}}'])
       .then((r) => !!r.stdout.trim())

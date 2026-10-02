@@ -17,7 +17,8 @@ How plans, payments and canceling work. Open **💳 Billing** at the bottom left
 Got a code from Tree Host (for example as a creator, partner or giveaway winner)? Open **Billing**, type it under
 **Have a code?** and press **Redeem**. The plan is yours right away, for free; create your server from Billing.
 
-Some codes give a plan for a set time. Billing shows **Free until** and the date. When it ends, the server stops and
+Some codes give a plan for a set time (a week, a month, a year...): Billing shows **Free until** and the date.
+Others are for life and show **Free (lifetime)**: they never run out. When it ends, the server stops and
 we email you: buy a plan within 14 days to keep the server and its worlds.
 
 ## Change your card, see invoices, cancel

@@ -120,6 +120,20 @@ function expect(label, got, want) {
   expect('the right customer redeems it', (await call('cust2', 'POST', '/api/billing/redeem', { code: bound.data.code })).status, 200);
   expect('it cannot be used again', (await call('cust2', 'POST', '/api/billing/redeem', { code: bound.data.code })).status, 410);
 
+  // how long a free server lasts: presets, lifetime, custom days, and the older "months"
+  const life = await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', days: 0, forUser: 'cust1' });
+  expect('lifetime code', life.data.length, 'lifetime');
+  const lifeSub = await call('cust1', 'POST', '/api/billing/redeem', { code: life.data.code });
+  expect('lifetime plan has no end date', lifeSub.data.freeUntil, null);
+  expect('lifetime plan is labelled', lifeSub.data.freeLength, 'lifetime');
+  const week = await call('owner1', 'POST', '/api/admin/subscriptions', { userId: id('cust1'), planId: 'sapling', days: 7 });
+  expect('1-week grant ends in 7 days', Math.round((week.data.freeUntil - Date.now()) / 86400000), 7);
+  expect('1-week grant is labelled', week.data.freeLength, '1 week');
+  expect('custom 45 days', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', days: 45 })).data.length, '45 days');
+  expect('older "months" still work (3 = 90 days)', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', months: 3 })).data.days, 90);
+  expect('a year', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', days: 365 })).data.length, '1 year');
+  expect('silly values are capped (10 years max)', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', days: 99999 })).data.days, 3650);
+
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);
   console.log('\nAudit log (newest first):');

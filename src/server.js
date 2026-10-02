@@ -10,7 +10,7 @@ const { PUBLIC, DATA } = require('./paths');
 const { Manager } = require('./instances');
 const { Auth } = require('./auth');
 const { Rbac, PERMISSIONS } = require('./rbac');
-const { Billing } = require('./billing');
+const { Billing, durationText } = require('./billing');
 const mail = require('./mail');
 const firebase = require('./firebase');
 const store = require('./store');
@@ -44,6 +44,8 @@ const rbac = new Rbac();
 const billing = new Billing();
 const activity = new Activity();
 manager.teamMode = TEAM;
+// A test site on this PC (http://localhost...) may run customer servers without Docker; the real site never does.
+if (HOSTED && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/')) manager.allowUnsafe = true;
 manager.activity = activity;
 // Who gets whitelisted on a server: everyone for team servers, only the owner for solo servers.
 // "Whitelist me" on a server whitelists its owner (personal mode: everyone in the old team list).
@@ -691,12 +693,12 @@ route('POST', '/api/admin/promos', async (req) => {
     if (!target) throw httpError(404, `No account called "${body.forUser || body.forUserId}". Use their username or email.`);
   }
   const c = await billing.createPromo({ ...body, forUserId: target ? target.id : null }, req.user.username);
-  audit(req, `created promo code ${c.code} (${c.planName}, ${c.months ? `${c.months} month${c.months === 1 ? '' : 's'}` : 'no end date'}, ${target ? `only for ${target.username}` : `${c.maxUses} use${c.maxUses === 1 ? '' : 's'}`})`);
+  audit(req, `created promo code ${c.code} (${c.planName}, ${c.length}, ${target ? `only for ${target.username}` : `${c.maxUses} use${c.maxUses === 1 ? '' : 's'}`})`);
   if (target) c.forUsername = target.username;
   // Optionally email the code straight to them.
   if (target && body.email && target.email && mail.enabled()) {
     await mail.send(target.email, 'A free Tree Host server for you', [
-      `Hi ${target.username}, you've been given a free ${c.planName} plan on Tree Host${c.months ? ` for ${c.months} month${c.months === 1 ? '' : 's'}` : ''}!`,
+      `Hi ${target.username}, you've been given a free ${c.planName} plan on Tree Host${c.days ? ` for ${c.length}` : ' for life'}!`,
       `Your code is ${c.code}. It only works for your account: open Billing, choose "Have a code?", and paste it.`,
     ], PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null).then(() => (c.emailed = true)).catch(() => (c.emailed = false));
   }
@@ -750,11 +752,11 @@ route(
   'POST',
   '/api/admin/subscriptions',
   async (req) => {
-    const { userId, planId, months, note } = await readJson(req);
+    const { userId, planId, months, days, note } = await readJson(req);
     const u = auth.userById(userId);
     if (!u) throw httpError(404, 'User not found');
-    const s = await billing.grant(u, planId, req.user.username, { months, note });
-    audit(req, `gave ${u.username} a free ${s.planName} plan${Number(months) > 0 ? ` for ${months} months` : ''}`);
+    const s = await billing.grant(u, planId, req.user.username, { months, days, note });
+    audit(req, `gave ${u.username} a free ${s.planName} plan (${durationText(s.freeDays)})`);
     return billing.publicSub(s);
   },
   { perm: 'billing.manage' },

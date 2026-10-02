@@ -54,17 +54,9 @@ if defined STRIPE_SECRET_KEY (
 )
 
 rem ============ Server isolation ============
-rem With Docker Desktop running, servers run isolated like on the real site. Without it, this test site still lets
-rem you start servers directly on this PC (the real site never does that).
-docker info >nul 2>nul
-if not errorlevel 1 (
-  set "TREEHOST_ISOLATION=docker"
-) else (
-  set "TREEHOST_ALLOW_UNSAFE=1"
-  echo.
-  echo  Docker Desktop is not running: test servers run directly on this PC ^(fine for testing^).
-  echo  Start Docker Desktop first if you want them isolated like on the real site.
-)
+rem Servers run isolated in Docker whenever Docker Desktop is running (checked again every time one starts).
+rem Without Docker, this test site runs them directly on this PC; the real site never does.
+set "TREEHOST_ISOLATION=auto"
 
 start "" "http://localhost:8766"
 node src\server.js %*

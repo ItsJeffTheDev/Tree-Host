@@ -73,13 +73,32 @@ const periodEnd = (s) => (s.current_period_end || (s.items && s.items.data && s.
 /** Same for an invoice's subscription. */
 // ----- free plans & promo codes -----
 const MONTH_MS = 30 * 86400000;
-/** Fields for a free subscription; months = 0 means it never runs out. */
-function freeFields(months) {
-  const m = Math.max(0, Math.round(Number(months) || 0));
-  const until = m ? Date.now() + m * MONTH_MS : null;
-  return { free: true, priceCents: 0, freeUntil: until, periodEnd: until };
+const DAY_MS = 86400000;
+/**
+ * How long a free plan lasts, in days; 0 = lifetime (never ends). Accepts { days } or the older { months }
+ * (a month counts as 30 days), so codes made before stay valid.
+ */
+function toDays({ days, months } = {}) {
+  if (days !== undefined && days !== null && days !== '') return Math.max(0, Math.min(3650, Math.round(Number(days) || 0)));
+  return Math.max(0, Math.min(120, Math.round(Number(months) || 0))) * 30;
 }
-const lengthText = (months) => (Number(months) > 0 ? ` for ${months} month${Number(months) === 1 ? '' : 's'}` : ' (no end date)');
+/** "lifetime", "1 year", "3 months", "2 weeks", "10 days" */
+function durationText(days) {
+  if (!days) return 'lifetime';
+  const unit = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  if (days % 365 === 0) return unit(days / 365, 'year');
+  if (days % 30 === 0) return unit(days / 30, 'month');
+  if (days % 7 === 0) return unit(days / 7, 'week');
+  return unit(days, 'day');
+}
+/** Fields for a free subscription that lasts `days` (0 = lifetime). */
+function freeFields(days) {
+  const until = days ? Date.now() + days * DAY_MS : null;
+  return { free: true, priceCents: 0, freeUntil: until, periodEnd: until, freeDays: days };
+}
+const lengthText = (days) => (days ? ` for ${durationText(days)}` : ' (lifetime)');
+/** Older codes stored months; newer ones store days. */
+const promoDays = (p) => (p.days !== undefined ? p.days : (p.months || 0) * 30);
 const cleanCode = (c) => String(c || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32);
 function randomCode() {
   const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O or 1/I mix-ups
@@ -224,6 +243,7 @@ class Billing {
       serverId: s.serverId || null,
       renewsAt: s.periodEnd || null,
       freeUntil: s.freeUntil || null,
+      freeLength: !s.free ? null : s.freeDays !== undefined ? durationText(s.freeDays) : s.freeUntil ? null : 'lifetime',
       promoCode: s.promoCode || null,
       cancelAtPeriodEnd: !!s.cancelAtPeriodEnd,
       pastDueSince: s.pastDueSince || null,
@@ -312,15 +332,16 @@ class Billing {
 
   /**
    * Admins can give a plan for free (staff, partners, creators, giveaways).
-   * months: how long it lasts (0 or empty = forever). When it runs out, the plan ends like a canceled one.
+   * days (or months): how long it lasts; 0 = lifetime. When it runs out, the plan ends like a canceled one.
    */
-  async grant(user, planId, by, { months = 0, note = '' } = {}) {
+  async grant(user, planId, by, { months, days, note = '' } = {}) {
+    const length = toDays({ days, months });
     const plan = this.plan(planId);
     if (!plan) throw httpError(404, 'Plan not found');
-    const s = this.newSub(user, plan, { ...freeFields(months), grantedBy: by, note: String(note || '').slice(0, 100) || undefined });
+    const s = this.newSub(user, plan, { ...freeFields(length), grantedBy: by, note: String(note || '').slice(0, 100) || undefined });
     s.status = 'active';
     await this.save();
-    this.hooks.notify('billing', s, `was given a free ${plan.name} plan by ${by}${lengthText(months)}`);
+    this.hooks.notify('billing', s, `was given a free ${plan.name} plan by ${by}${lengthText(length)}`);
     return s;
   }
 
@@ -336,7 +357,9 @@ class Billing {
       code: p.code,
       planId: p.planId,
       planName: plan ? plan.name : p.planId,
-      months: p.months,
+      days: promoDays(p),
+      length: durationText(promoDays(p)),
+      months: Math.round(promoDays(p) / 30),
       maxUses: p.maxUses,
       uses: p.uses.length,
       redeemedBy: p.uses.map((u) => ({ userId: u.userId, at: u.at })),
@@ -354,7 +377,7 @@ class Billing {
    * Creates a code. Leave `code` empty to get a random one like TREE-7K2P-QX9M.
    * forUserId: the code only works for that one account (and only once).
    */
-  async createPromo({ code, planId, months, maxUses, note, expiresAt, forUserId }, by) {
+  async createPromo({ code, planId, months, days, maxUses, note, expiresAt, forUserId }, by) {
     if (forUserId && !this.hooks.userById(forUserId)) throw httpError(404, 'That account does not exist.');
     const plan = this.plan(planId);
     if (!plan) throw httpError(400, 'Pick a plan for this code.');
@@ -365,7 +388,7 @@ class Billing {
     const p = {
       code: c,
       planId: plan.id,
-      months: Math.max(0, Math.min(120, Math.round(Number(months) || 0))),
+      days: toDays({ days, months }),
       maxUses: forUserId ? 1 : Math.max(1, Math.min(10000, Math.round(Number(maxUses) || 1))),
       forUserId: forUserId || null,
       note: String(note || '').slice(0, 100),
@@ -400,11 +423,11 @@ class Billing {
     const plan = this.plan(p.planId);
     if (!plan) throw httpError(410, 'The plan for this code no longer exists. Please contact support.');
     if (this.freeMb() < plan.ramMb + OVERHEAD_MB) throw httpError(409, `${plan.name} is full right now. Please try again soon or contact support.`, 'SOLD_OUT');
-    const s = this.newSub(user, plan, { ...freeFields(p.months), promoCode: p.code, note: p.note || undefined });
+    const s = this.newSub(user, plan, { ...freeFields(promoDays(p)), promoCode: p.code, note: p.note || undefined });
     s.status = 'active';
     p.uses.push({ userId: user.id, subId: s.id, at: Date.now() });
     await Promise.all([this.save(), this.savePromos()]);
-    this.hooks.notify('billing', s, `redeemed code ${p.code}: free ${plan.name}${lengthText(p.months)}`);
+    this.hooks.notify('billing', s, `redeemed code ${p.code}: free ${plan.name}${lengthText(promoDays(p))}`);
     return s;
   }
 
@@ -571,4 +594,4 @@ class Billing {
   }
 }
 
-module.exports = { Billing, OVERHEAD_MB };
+module.exports = { Billing, OVERHEAD_MB, durationText };

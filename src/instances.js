@@ -667,6 +667,7 @@ class Instance extends EventEmitter {
             'It may run slowly or load the world very slowly. Stop other servers or lower this one\'s memory in Settings.',
         );
       }
+      if (!this.isolated && this.isCustomer) await this.manager.recheckIsolation();
       if (this.isolated) {
         const major = /^\d+$/.test(String(this.cfg.java)) ? Number(this.cfg.java) : await this.provider.java(this.cfg.version, this.dir);
         const { major: m, image } = docker.imageFor(major);
@@ -680,7 +681,8 @@ class Instance extends EventEmitter {
         this.progress = null;
         this.spawnServer('docker', docker.runArgs({ id: this.cfg.id, dir: this.dir, port: this.cfg.port, memLimitMb, cpus: plan ? plan.cpus : null, image }), 'java');
       } else {
-        if (this.isCustomer && !this.manager.allowUnsafe) throw new Error('Customer servers only run isolated in Docker. Install Docker on the host (or set TREEHOST_ALLOW_UNSAFE=1 for local testing).');
+        if (this.isCustomer && !this.manager.allowUnsafe) throw new Error('Customer servers only run isolated in Docker, and Docker is not running. Start Docker (Docker Desktop on Windows/macOS) and press Start again.');
+        if (this.isCustomer) this.sysLog('Docker is not running, so this test server runs directly on this PC. (The real site always isolates servers in Docker.)');
         const javaExe = await this.resolveJavaExe();
         this.progress = null;
         this.spawnServer(javaExe, [], null);
@@ -1337,11 +1339,26 @@ class Manager extends EventEmitter {
       await docker.removeLeftovers((m) => console.log(`  ${m}`));
       await docker.ensureNetwork();
       console.log('  Isolation: every server runs in its own Docker container.');
+    } else if (this.allowUnsafe) {
+      console.log('  Docker is not running: test servers run directly on this PC until it is (checked again at every start).');
     } else if (mode === 'docker') {
       console.log('  TREEHOST_ISOLATION=docker but Docker is not running. Customer servers will not start until it is.');
     } else {
       console.log('  Docker was not found: customer servers will not start. Install Docker (see the hosting guide).');
     }
+  }
+
+  /** Docker may have started after Tree Host did: check again before refusing or running a server without it. */
+  async recheckIsolation() {
+    if (this.docker) return true;
+    const mode = process.env.TREEHOST_ISOLATION || (process.platform === 'linux' ? 'auto' : 'off');
+    if (mode === 'off') return false;
+    if (await docker.available(true)) {
+      this.docker = true;
+      await docker.ensureNetwork();
+      console.log('  Docker is running now: servers start isolated in their own containers.');
+    }
+    return this.docker;
   }
 
   async init() {
