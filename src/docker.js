@@ -34,7 +34,7 @@ async function available(fresh = false) {
 async function ensureImage(image, log) {
   const has = await run('docker', ['image', 'inspect', image]).then(() => true, () => false);
   if (has) return;
-  log(`Downloading the ${image} Java image (one time only)...`);
+  log('Downloading Java for this server (one time only)...');
   await new Promise((resolve, reject) => {
     const p = spawn('docker', ['pull', '-q', image], { windowsHide: true });
     let err = '';

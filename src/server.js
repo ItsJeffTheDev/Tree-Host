@@ -152,10 +152,18 @@ async function readRaw(req, limit) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-/** Error text for the browser: never shows host paths (like the data folder) to anyone but admins. */
+/**
+ * Error text for the browser: never shows host paths (like the data folder) or the names of the services behind
+ * Tree Host to anyone without system info access. They get a plain message; the details go to the server log.
+ */
+const INTERNAL_WORDS = /firebase|realtime database|docker|container|stripe|resend|caddy|service account|ENOENT|EACCES|ECONNREFUSED/i;
 function publicMessage(e, user) {
   let msg = (e && e.message) || String(e);
   if (TEAM && !can(user, 'system.view')) {
+    if (INTERNAL_WORDS.test(msg) || (e && e.status === 500)) {
+      console.error(`[Tree Host] error shown generically to ${user ? user.username : 'a visitor'}: ${msg}`);
+      return 'Something went wrong on our side. Please try again in a minute, and contact support if it keeps happening.';
+    }
     for (const p of [DATA, path.resolve(DATA)]) msg = msg.split(p).join('…');
     msg = msg.replace(/[A-Za-z]:\\[^\s'"]+|\/(?:home|opt|var|srv|root|tmp)\/[^\s'"]+/g, '…');
   }
@@ -415,7 +423,7 @@ route(
 
 /** With Firebase sign-in on, the old password endpoints are closed. */
 function passwordAuthOnly() {
-  if (firebase.authEnabled()) throw httpError(400, 'Please use the sign-in form (Firebase).', 'USE_FIREBASE');
+  if (firebase.authEnabled()) throw httpError(400, 'Please use the sign-in form.', 'USE_FIREBASE');
 }
 
 route(
@@ -556,7 +564,7 @@ route(
   '/api/team/users/:uid/temp-password',
   async (req, res, p) => {
     requireOutranks(req, p.uid);
-    if ((auth.userById(p.uid) || {}).firebaseUid) throw httpError(400, 'This account signs in with Firebase: use "Send password reset email" instead.');
+    if ((auth.userById(p.uid) || {}).firebaseUid) throw httpError(400, 'This account uses the sign-in form: use "Send password reset email" instead.');
     const password = await auth.tempPassword(p.uid);
     audit(req, `set a temporary password for ${(auth.userById(p.uid) || {}).username}`);
     return { password };
@@ -835,6 +843,21 @@ route('GET', '/api/admin/audit', (req, res, p, q) => {
   const limit = Math.min(Number(q.get('limit')) || 200, 1000);
   return activity.events.filter((e) => e.kind === 'audit').slice(-limit).reverse();
 }, { perm: 'audit.view' });
+
+// Staff docs: kept out of public/ (so they can't be fetched as static files) and served only to staff.
+const STAFF_DOCS_DIR = path.join(__dirname, '..', 'staff-docs');
+const STAFF_DOCS = [
+  { id: 'support-playbook', title: 'Support playbook', icon: '🎧', group: 'Support', perm: 'console.access' },
+  { id: 'roles', title: 'Roles & permissions', icon: '🔑', group: 'Support', perm: 'console.access' },
+  { id: 'hosting-guide', title: 'Running Tree Host', icon: '🛠', group: 'Technical', perm: 'system.view' },
+];
+const staffDocsFor = (user) => STAFF_DOCS.filter((d) => can(user, d.perm)).map(({ perm, ...d }) => d);
+route('GET', '/api/staff/docs', (req) => ({ docs: staffDocsFor(req.user) }), { perm: 'console.access' });
+route('GET', '/api/staff/docs/:id', async (req, res, p) => {
+  const doc = STAFF_DOCS.find((d) => d.id === p.id);
+  if (!doc || !can(req.user, doc.perm)) throw httpError(404, 'No such staff guide.');
+  return { ...doc, perm: undefined, markdown: await fsp.readFile(path.join(STAFF_DOCS_DIR, `${doc.id}.md`), 'utf8') };
+}, { perm: 'console.access' });
 
 // ---------- servers API ----------
 
@@ -1130,6 +1153,7 @@ const PAGES = {
   '/dashboard': 'dashboard.html',
   '/app': 'dashboard.html',
   '/admin': 'dashboard.html',
+  '/staff-docs': 'help.html', // the guides themselves come from /api/staff/docs (staff only)
   '/features': 'features.html',
   '/pricing': 'pricing.html',
   '/support': 'support.html',

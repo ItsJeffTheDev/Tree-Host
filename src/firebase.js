@@ -54,7 +54,7 @@ async function googleCerts() {
 
 /** Checks a Firebase ID token and returns its claims (uid, email, email_verified, provider). */
 async function verifyIdToken(token) {
-  if (!authEnabled()) throw httpError(400, 'Firebase sign-in is not set up.');
+  if (!authEnabled()) throw httpError(400, 'Sign-in is not set up yet.');
   const parts = String(token || '').split('.');
   if (parts.length !== 3) throw httpError(401, 'Invalid sign-in. Please sign in again.', 'AUTH');
   let header;

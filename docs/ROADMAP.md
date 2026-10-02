@@ -3,7 +3,7 @@
 ## 🚀 Launch (now)
 
 - [ ] Raise the $50 launch fund
-- [ ] Rent the first server and run `deploy/install.sh` ([hosting guide](../public/docs/hosting-guide.md))
+- [ ] Rent the first server and run `deploy/install.sh` ([hosting guide](../staff-docs/hosting-guide.md))
 - [ ] Point `treehost.online`, `www` and `play` at it; `deploy/doctor.sh` all green
 - [ ] Firebase service account key, Stripe live keys + webhook, Resend email
 - [ ] Have the Terms and Privacy pages reviewed

@@ -59,8 +59,8 @@ settings, backups, delete).
 
 ## Where roles are stored
 
-Accounts (with their role) and the role permissions are saved with the rest of Tree Host's business data: in the
-**Firebase Realtime Database** when Firebase is set up (with a local copy on the server), otherwise in local files.
+Accounts (with their role) and the role permissions are saved with the rest of Tree Host's business data, with a
+copy on the server (details for developers in [Running Tree Host](hosting-guide.md)).
 Changes in **Roles & permissions** apply instantly to everyone with that role, without a restart.
 
 ---

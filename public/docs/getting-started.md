@@ -25,7 +25,7 @@ Each plan is **one Minecraft server**, billed monthly. Plans differ in memory (R
 | Big worlds and long view distances | lower the view distance if the server feels slow |
 
 1. Choose a plan and click **Choose**.
-2. You're sent to our payment page (Stripe). Enter your card and confirm.
+2. You're sent to our secure payment page. Enter your card and confirm.
 3. You land back in your dashboard, ready to create the server.
 
 > **Note:** you can buy more plans later for more servers. Every plan is separate and can be canceled on its own.

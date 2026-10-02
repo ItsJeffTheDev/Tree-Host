@@ -61,26 +61,3 @@ the email on your receipt.
 
 **How do I cancel?**
 **💳 Billing → Payment method & invoices → Cancel**. See [Billing](billing.md).
-
----
-
-## For admins
-
-**The website doesn't load / no padlock**
-Check the DNS records point at the server (`ping treehost.online`), then `sudo systemctl status caddy tree-host` and
-`journalctl -u caddy -n 50`. Caddy can only get a certificate when the domain already points at the server and ports
-80 and 443 are open.
-
-**Players can't reach any server**
-Check the `play` DNS record (and that it's **DNS only** if you use Cloudflare), and that the port range from
-`TREEHOST_PORTS` is open in the firewall (`sudo ufw status`) and in your provider's firewall, if it has one.
-
-**Payments don't activate plans**
-Stripe → Developers → Webhooks → your endpoint → look for failed deliveries. Usually `STRIPE_WEBHOOK_SECRET` is wrong
-or missing. Fix it in `/etc/tree-host.env`, restart, and click **Resend** on the failed events.
-
-**"Docker was not found: customer servers will not start"**
-Docker isn't running: `sudo systemctl start docker`, then `sudo systemctl restart tree-host`.
-
-**Plans show "Sold out"**
-All memory is sold. Raise **capacity** (Staff Console → Plans) only if the machine really has the memory, or rent a bigger server.

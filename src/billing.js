@@ -47,7 +47,11 @@ async function stripe(method, pathname, params) {
   }
   const res = await fetch(url, { method, headers, body, signal: AbortSignal.timeout(20000) });
   const json = await res.json();
-  if (!res.ok) throw httpError(502, json.error ? json.error.message : `Stripe error ${res.status}`);
+  if (!res.ok) {
+    // The details go to the server log; customers get a plain message.
+    console.error(`[billing] payment provider error ${res.status} on ${method} ${pathname}: ${json.error ? json.error.message : ''}`);
+    throw httpError(502, 'The payment service had a problem. Please try again in a minute, or contact billing if it keeps happening.');
+  }
   return json;
 }
 

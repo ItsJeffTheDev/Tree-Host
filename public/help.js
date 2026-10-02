@@ -1,15 +1,16 @@
 'use strict';
 // Tree Host Help: renders the Markdown guides in public/docs with search, an "On this page" menu,
 // callouts (> **Tip:** / **Note:** / **Important:** / **Warning:**), copyable code and previous/next links.
+// At /staff-docs the same page shows the staff guides instead, loaded from a staff-only API (never public files).
 
-const DOCS = [
+const STAFF = location.pathname.replace(/\/$/, '') === '/staff-docs';
+const PUBLIC_DOCS = [
   { id: 'getting-started', title: 'Getting started', icon: '👋', group: 'Start here' },
   { id: 'servers', title: 'Your server', icon: '🧱', group: 'Using Tree Host' },
   { id: 'billing', title: 'Billing', icon: '💳', group: 'Using Tree Host' },
   { id: 'troubleshooting', title: 'Troubleshooting', icon: '🩹', group: 'Help' },
-  { id: 'roles', title: 'Roles & permissions', icon: '🔑', group: 'For admins' },
-  { id: 'hosting-guide', title: 'Running Tree Host', icon: '🛠', group: 'For admins' },
 ];
+let DOCS = STAFF ? [] : PUBLIC_DOCS; // staff: filled from /api/staff/docs (only the guides your role may read)
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const escHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -159,10 +160,15 @@ async function loadDoc(id) {
   if (!cache.has(id)) {
     cache.set(
       id,
-      fetch(`docs/${id}.md`, { cache: 'no-cache' }).then((r) => {
-        if (!r.ok) throw new Error(r.statusText);
-        return r.text();
-      }),
+      STAFF
+        ? fetch(`/api/staff/docs/${encodeURIComponent(id)}`, { cache: 'no-cache' }).then(async (r) => {
+            if (!r.ok) throw new Error(r.statusText);
+            return (await r.json()).markdown;
+          })
+        : fetch(`docs/${id}.md`, { cache: 'no-cache' }).then((r) => {
+            if (!r.ok) throw new Error(r.statusText);
+            return r.text();
+          }),
     );
   }
   return cache.get(id);
@@ -240,7 +246,7 @@ async function show() {
       });
     }),
   );
-  document.title = `${meta.title} · Tree Host Help`;
+  document.title = `${meta.title} · Tree Host ${STAFF ? 'Staff Docs' : 'Help'}`;
   renderToc();
   if (location.hash) {
     const target = document.getElementById(decodeURIComponent(location.hash.slice(1)));
@@ -323,5 +329,32 @@ function setupSearch() {
   });
 }
 
-setupSearch();
-show();
+async function start() {
+  if (STAFF) {
+    document.title = 'Tree Host Staff Docs';
+    const robots = document.createElement('meta');
+    robots.name = 'robots';
+    robots.content = 'noindex, nofollow';
+    document.head.appendChild(robots);
+    $('.brand-sub').textContent = 'Staff docs';
+    $('#q').placeholder = 'Search the staff guides…';
+    const back = $('.back');
+    back.href = '/admin';
+    back.textContent = '← Back to the Staff Console';
+    const r = await fetch('/api/staff/docs', { cache: 'no-cache' }).catch(() => null);
+    if (!r || !r.ok) {
+      $('#nav-links').innerHTML = '';
+      $('.search').classList.add('hidden');
+      back.href = '/dashboard';
+      back.textContent = '← Back to the dashboard';
+      $('#doc').innerHTML = `<h1>Staff only</h1><p class="lead">These guides are for the Tree Host team. Sign in with your staff
+        account, then open them from the Staff Console.</p><p><a class="btn primary" href="/dashboard">Sign in</a>
+        <a class="btn" href="/help.html">Customer help &amp; guides</a></p>`;
+      return;
+    }
+    DOCS = (await r.json()).docs;
+  }
+  setupSearch();
+  show();
+}
+start();

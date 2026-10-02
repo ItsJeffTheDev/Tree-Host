@@ -1,4 +1,6 @@
 User-agent: *
 Disallow: /dashboard
 Disallow: /app
+Disallow: /admin
+Disallow: /staff-docs
 Disallow: /api/

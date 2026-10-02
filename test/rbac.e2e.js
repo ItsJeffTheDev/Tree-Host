@@ -134,6 +134,17 @@ function expect(label, got, want) {
   expect('a year', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', days: 365 })).data.length, '1 year');
   expect('silly values are capped (10 years max)', (await call('owner1', 'POST', '/api/admin/promos', { planId: 'sapling', days: 99999 })).data.days, 3650);
 
+  // staff docs: never public files, only staff, and the technical guide only with system info access
+  for (const f of ['hosting-guide', 'roles', 'support-playbook']) expect(`/docs/${f}.md is not public`, (await call('cust1', 'GET', `/docs/${f}.md`)).status, 404);
+  expect('public guides still load', (await fetch(`${B}/docs/billing.md`)).status, 200);
+  await matrix('GET staff docs list', 'GET', '/api/staff/docs', undefined, [200, 200, 200, 200, 403]);
+  await matrix('GET support playbook', 'GET', '/api/staff/docs/support-playbook', undefined, [200, 200, 200, 200, 403]);
+  await matrix('GET technical guide', 'GET', '/api/staff/docs/hosting-guide', undefined, [200, 200, 200, 404, 403]);
+  expect('signed-out visitors get no staff docs', (await fetch(`${B}/api/staff/docs`)).status, 401);
+  expect('support list leaves out the technical guide', (await call('support1', 'GET', '/api/staff/docs')).data.docs.some((d) => d.id === 'hosting-guide'), false);
+  expect('staff docs come with their text', /Support playbook/.test((await call('support1', 'GET', '/api/staff/docs/support-playbook')).data.markdown), true);
+  expect('no path tricks', (await call('owner1', 'GET', '/api/staff/docs/..%2Fpackage')).status, 404);
+
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);
   console.log('\nAudit log (newest first):');

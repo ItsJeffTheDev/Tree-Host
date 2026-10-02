@@ -79,8 +79,8 @@ const FIREBASE_ERRORS = {
   'auth/popup-closed-by-user': 'The Google window was closed before signing in.',
   'auth/popup-blocked': 'Your browser blocked the Google window. Allow pop-ups for this site and try again.',
   'auth/network-request-failed': 'Could not reach the sign-in service. Check your internet connection.',
-  'auth/unauthorized-domain': 'This website address is not allowed in Firebase yet (Authentication → Settings → Authorized domains).',
-  'auth/operation-not-allowed': 'This sign-in method is not turned on in Firebase yet.',
+  'auth/unauthorized-domain': "Sign-in isn't available on this website address yet. Please contact support.",
+  'auth/operation-not-allowed': "This sign-in method isn't available yet. Try another one, or contact support.",
 };
 const fbMessage = (e) => FIREBASE_ERRORS[e && e.code] || (e && e.message) || String(e);
 
@@ -797,7 +797,7 @@ async function adminBilling(body) {
   body.innerHTML = `
     ${
       d.mode === 'off'
-        ? '<div class="warn-box">Payments are off. Set <code>STRIPE_SECRET_KEY</code> and <code>STRIPE_WEBHOOK_SECRET</code> (see the hosting guide), or <code>BILLING_DEMO=1</code> to test.</div>'
+        ? '<div class="warn-box">Payments are off. Set <code>STRIPE_SECRET_KEY</code> and <code>STRIPE_WEBHOOK_SECRET</code> (see Staff docs → Running Tree Host), or <code>BILLING_DEMO=1</code> to test.</div>'
         : d.mode === 'demo'
           ? '<div class="warn-box">Demo mode: plans activate without payment. Turn it off before going live.</div>'
           : !d.webhookReady

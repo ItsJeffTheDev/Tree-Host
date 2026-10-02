@@ -7,7 +7,7 @@ How plans, payments and canceling work. Open **💳 Billing** at the bottom left
 ## Plans
 
 - One plan = **one server**. The plan decides the server's memory, CPU and disk.
-- Plans are billed **monthly**, starting the day you buy them, by card through Stripe. We never see your card number.
+- Plans are billed **monthly**, starting the day you buy them, by card through our secure payment provider. We never see your card number.
 - Want another server? **Billing → + Buy a plan**. Each plan renews and cancels on its own.
 
 ---
@@ -23,7 +23,7 @@ we email you: buy a plan within 14 days to keep the server and its worlds.
 
 ## Change your card, see invoices, cancel
 
-**Billing → Payment method & invoices** opens Stripe's secure page, where you can:
+**Billing → Payment method & invoices** opens our payment provider's secure page, where you can:
 
 - update your card,
 - download invoices and receipts,
@@ -39,7 +39,7 @@ and **14 days later the server and its backups are deleted**.
 ## If a payment fails
 
 1. We email you and the plan shows **Payment failed** in Billing.
-2. Your server **keeps running for 3 days**. Update your card in **Payment method & invoices** and Stripe retries.
+2. Your server **keeps running for 3 days**. Update your card in **Payment method & invoices** and the payment is tried again automatically.
 3. After 3 days without payment the server is stopped. It starts again as soon as the payment goes through.
 
 ---

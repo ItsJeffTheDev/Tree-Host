@@ -71,7 +71,7 @@ How the code fits together: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - **Developers:** upload plugins straight from Gradle/Maven with personal API tokens.
 - **Staff Console (`/admin`) with role-based access:** Owner, Admin, Developer and Support roles made of permissions
   (editable by the Owner, stored in Firebase), an overview, every server, people, billing, plans, promo codes, an audit
-  log of staff actions, and system info. See [Roles & permissions](public/docs/roles.md).
+  log of staff actions, and system info. See [Roles & permissions](staff-docs/roles.md).
 
 ## Deploy (production)
 
@@ -83,7 +83,7 @@ sudo bash /opt/tree-host/deploy/install.sh
 ```
 
 Settings live in `/etc/tree-host.env` (template: [deploy/tree-host.env.example](deploy/tree-host.env.example)).
-Full steps: [Running Tree Host](public/docs/hosting-guide.md).
+Full steps: [Running Tree Host](staff-docs/hosting-guide.md).
 
 | Command (on the server) | What it does |
 |---|---|
@@ -103,8 +103,15 @@ Also on the website under **Help**.
 | [Your server](public/docs/servers.md) | Customers: console, plugins, backups, files, settings |
 | [Billing](public/docs/billing.md) | Customers: plans, cards, canceling, failed payments |
 | [Troubleshooting](public/docs/troubleshooting.md) | Common problems and fixes |
-| [Roles & permissions](public/docs/roles.md) | Admins: what customers, support staff and admins can do |
-| [Running Tree Host](public/docs/hosting-guide.md) | Admins: rent a server, DNS, install, Stripe, email, go-live checklist |
+
+**Staff-only guides** live in [staff-docs/](staff-docs/) (never in `public/`). Staff read them at `/staff-docs`, behind a
+staff sign-in:
+
+| Guide | For |
+|---|---|
+| [Support playbook](staff-docs/support-playbook.md) | Support staff: inboxes, checking who you're talking to, common fixes, escalation |
+| [Roles & permissions](staff-docs/roles.md) | All staff: what customers, support staff and admins can do |
+| [Running Tree Host](staff-docs/hosting-guide.md) | Developers and admins (needs *See system info*): rent a server, DNS, install, Stripe, email, go-live checklist |
 
 ## License
 

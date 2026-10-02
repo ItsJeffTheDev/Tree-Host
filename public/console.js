@@ -32,7 +32,8 @@ function initConsole() {
     <div class="brand"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Staff Console</div></div></div>
     <nav class="console-nav">${sections.map((s) => `<a href="#${s.id}" data-sec="${s.id}">${s.label}</a>`).join('')}</nav>
     <a class="help-link" href="/dashboard">← Back to dashboard</a>
-    <a class="help-link" href="help.html" target="_blank">📖 Help &amp; guides</a>
+    <a class="help-link" href="/staff-docs" target="_blank">📚 Staff docs</a>
+    <a class="help-link" href="help.html" target="_blank">📖 Customer help &amp; guides</a>
     <div id="user-box" class="user-box"></div>`;
   renderUserBox();
   const show = () => {

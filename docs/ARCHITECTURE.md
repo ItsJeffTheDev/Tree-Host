@@ -61,7 +61,7 @@ Plain HTML/CSS/JS, no build step.
 ## Deploy (`deploy/`)
 
 `install.sh` sets up Ubuntu (Docker, Node, Caddy, firewall, systemd units, nightly backups) and ends with
-`doctor.sh`, the health check. `update.sh` pulls and restarts. Details: [hosting guide](../public/docs/hosting-guide.md).
+`doctor.sh`, the health check. `update.sh` pulls and restarts. Details: [hosting guide](../staff-docs/hosting-guide.md).
 
 ## Discord bot (`discord-bot/`)
 

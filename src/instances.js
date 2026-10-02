@@ -681,16 +681,24 @@ class Instance extends EventEmitter {
         this.progress = null;
         this.spawnServer('docker', docker.runArgs({ id: this.cfg.id, dir: this.dir, port: this.cfg.port, memLimitMb, cpus: plan ? plan.cpus : null, image }), 'java');
       } else {
-        if (this.isCustomer && !this.manager.allowUnsafe) throw new Error('Customer servers only run isolated in Docker, and Docker is not running. Start Docker (Docker Desktop on Windows/macOS) and press Start again.');
+        if (this.isCustomer && !this.manager.allowUnsafe) throw Object.assign(new Error('Customer servers only run isolated in Docker, and Docker is not running. Start Docker (Docker Desktop on Windows/macOS) and press Start again.'), { internal: true });
         if (this.isCustomer) this.sysLog('Docker is not running, so this test server runs directly on this PC. (The real site always isolates servers in Docker.)');
         const javaExe = await this.resolveJavaExe();
         this.progress = null;
         this.spawnServer(javaExe, [], null);
       }
     } catch (e) {
-      this.sysLog(`Could not start: ${e.message}`);
+      // Customers never see how the machine works (Docker, images, paths): they get a plain message, the operator gets the details.
+      const hide = this.hidesInternals() && (e.internal || /docker|container|image/i.test(e.message));
+      if (hide) console.error(`[Tree Host] "${this.cfg.name}" (${this.cfg.id}) could not start: ${e.message}`);
+      this.sysLog(`Could not start: ${hide ? "a problem on our side. Please try again in a few minutes, and contact support if it keeps happening." : e.message}`);
       this.setStatus('stopped');
     }
+  }
+
+  /** True for customer servers on the real site: their console must not show host internals. */
+  hidesInternals() {
+    return this.isCustomer && !this.manager.allowUnsafe;
   }
 
   /** cmd: the program to run (java, or docker); pre: its arguments before the Java ones; javaInside: java's name in the container. */
@@ -734,7 +742,10 @@ class Instance extends EventEmitter {
     proc.stdin.on('error', () => {});
 
     proc.on('error', (e) => {
-      this.sysLog(`Failed to launch ${javaInside ? 'Docker' : 'Java'}: ${e.message}`);
+      if (this.hidesInternals()) {
+        console.error(`[Tree Host] "${this.cfg.name}" (${this.cfg.id}) failed to launch ${cmd}: ${e.message}`);
+        this.sysLog('Failed to launch the server: a problem on our side. Please try again in a few minutes.');
+      } else this.sysLog(`Failed to launch ${javaInside ? 'Docker' : 'Java'}: ${e.message}`);
       if (!proc.pid && this.proc === proc) {
         this.proc = null;
         this.startedAt = null;
