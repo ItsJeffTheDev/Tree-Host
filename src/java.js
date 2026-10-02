@@ -31,6 +31,26 @@ async function systemJavaMajor() {
   return systemJava;
 }
 
+/**
+ * The real java executable behind "java" on the PATH. On Windows that is often Oracle's launcher stub (javapath),
+ * which starts the real java as a child: stopping the stub would leave the server running, and its memory reads ~7 MB.
+ */
+let systemExe;
+async function systemJavaExe() {
+  if (systemExe === undefined) {
+    systemExe = 'java';
+    try {
+      const { stdout, stderr } = await run('java', ['-XshowSettings:properties', '-version'], { timeout: 15000 });
+      const m = /java\.home = (.+)/.exec(stderr + stdout);
+      const exe = m && path.join(m[1].trim(), 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+      if (exe && (await exists(exe))) systemExe = exe;
+    } catch {
+      /* keep plain "java" */
+    }
+  }
+  return systemExe;
+}
+
 async function findJavaExe(dir) {
   const exe = process.platform === 'win32' ? 'java.exe' : 'java';
   const queue = [[dir, 0]];
@@ -94,7 +114,7 @@ async function resolveJava(major, { log = () => {}, progress, jdk = false } = {}
     const exe = await findJavaExe(dir);
     if (exe) return exe;
   }
-  if (!jdk && (await systemJavaMajor()) === major) return 'java';
+  if (!jdk && (await systemJavaMajor()) === major) return systemJavaExe();
   if (!inflight.has(name)) {
     inflight.set(name, downloadJava(major, log, progress, jdk).finally(() => inflight.delete(name)));
   }
