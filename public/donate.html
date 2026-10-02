@@ -30,14 +30,11 @@
           <p class="muted small" id="fund-note" style="margin:10px 0 0"></p>
         </div>
 
-        <div class="card reveal d1">
-          <h3>Where your donation goes</h3>
-          <ul class="donate-uses">
-            <li><svg class="ic" aria-hidden="true"><use href="/icons.svg#server"/></svg><span><b>Faster machines.</b> Better servers and more memory, so worlds load fast and nothing is overcrowded.</span></li>
-            <li><svg class="ic" aria-hidden="true"><use href="/icons.svg#sparkle"/></svg><span><b>New features.</b> Time to build what players ask for in our Discord.</span></li>
-            <li><svg class="ic" aria-hidden="true"><use href="/icons.svg#handshake"/></svg><span><b>Fair prices.</b> Covering our costs keeps plans cheap for everyone.</span></li>
-          </ul>
-        </div>
+        <a class="card reveal d1 costs-teaser" href="#costs">
+          <svg class="ic" aria-hidden="true"><use href="/icons.svg#receipt"/></svg>
+          <span><b>See exactly where it goes.</b> Every cost of running Tree Host is listed below, receipt-style, with what's
+            paid and how far donations have got.</span>
+        </a>
       </div>
 
       <form class="card donate-form reveal d2" id="donate-form">
@@ -64,6 +61,14 @@
             tax-deductible, and they don't buy a plan or anything in return. Questions? <a data-email="billing" href="#">Email billing</a>.</p>
         </div>
       </form>
+    </div>
+  </section>
+
+  <section style="padding-top:0" id="costs">
+    <div class="wrap">
+      <div class="section-head reveal"><h2>What it costs to run Tree Host</h2>
+        <p>No secrets: here's every bill, and how far the donations go toward them.</p></div>
+      <div class="receipt reveal" id="receipt"><p class="muted">Loading...</p></div>
     </div>
   </section>
 
@@ -136,6 +141,67 @@
           <div><b>${esc(s.name)}</b>${s.message ? `<p>${esc(s.message)}</p>` : ''}<span class="small muted">${new Date(s.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
         </div>`).join('');
       label();
+      renderReceipt(d);
+    };
+
+    // ----- the receipt: every cost, the totals, and how far donations go -----
+    const PER = { month: '/mo', year: '/yr', once: '' };
+    const renderReceipt = (d) => {
+      const items = (d.costs && d.costs.items) || [];
+      const box = $('#receipt');
+      if (!items.length) {
+        box.innerHTML = '<p class="muted">The cost list is being written. Check back soon.</p>';
+        return;
+      }
+      const once = items.filter((c) => c.period === 'once');
+      const recurring = items.filter((c) => c.period !== 'once');
+      const onceTotal = once.reduce((n, c) => n + c.cents, 0);
+      const onceDue = once.filter((c) => c.status !== 'paid').reduce((n, c) => n + c.cents, 0);
+      const monthly = recurring.reduce((n, c) => n + (c.period === 'year' ? c.cents / 12 : c.cents), 0);
+      // Stripe keeps about 2.9% + 30 cents of each card payment made through the website.
+      const fees = Math.round(d.siteCents * 0.029 + d.siteCount * 30);
+      const net = Math.max(0, d.raisedCents - fees);
+      // Donations go to unpaid one-time costs first (in order), then to months of running costs.
+      let pool = net;
+      const covered = (cents) => {
+        const c = Math.min(pool, cents);
+        pool -= c;
+        return c;
+      };
+      const onceCover = once.map((c) => (c.status === 'paid' ? undefined : covered(c.cents)));
+      const months = monthly > 0 ? pool / monthly : 0;
+      const status = (c) => (c.status === 'paid' ? '<span class="r-tag paid">Paid</span>' : '<span class="r-tag">Not paid yet</span>');
+      const line = (c, cover) => `
+        <div class="r-line">
+          <div class="r-row"><span class="r-name">${esc(c.name)}</span><span class="r-dots"></span><span class="r-amt">${money(c.cents)}${PER[c.period]}</span></div>
+          <div class="r-sub"><span>${esc(c.detail)}</span>${status(c)}</div>
+          ${cover !== undefined ? `<div class="r-cover"><div class="r-cover-bar"><div style="width:${c.cents ? Math.round((cover / c.cents) * 100) : 0}%"></div></div>
+            <span>${cover >= c.cents ? 'Covered by donations' : `${money(cover)} of ${money(c.cents)} from donations`}</span></div>` : ''}
+        </div>`;
+      const updated = d.costs.updatedAt ? new Date(d.costs.updatedAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) : '';
+      box.innerHTML = `
+        <div class="r-head"><div class="r-brand"><img src="/brand/tree-host-icon.svg" alt="" width="26" height="26">Tree Host</div>
+          <div class="r-meta">Running costs${updated ? `<br>Updated ${esc(updated)}` : ''}</div></div>
+        ${once.length ? `<div class="r-group">One-time</div>${once.map((c, i) => line(c, onceCover[i])).join('')}` : ''}
+        ${recurring.length ? `<div class="r-group">Ongoing</div>${recurring.map((c) => line(c)).join('')}` : ''}
+        <div class="r-rule"></div>
+        ${once.length ? `<div class="r-row r-total"><span>One-time total</span><span class="r-dots"></span><span>${money(onceTotal)}</span></div>` : ''}
+        ${recurring.length ? `<div class="r-row r-total"><span>Running costs</span><span class="r-dots"></span><span>${money(Math.round(monthly))}/mo</span></div>
+          <div class="r-row r-small"><span>That's per year</span><span class="r-dots"></span><span>${money(Math.round(monthly * 12))}</span></div>` : ''}
+        <div class="r-rule double"></div>
+        <div class="r-row"><span>Donations so far</span><span class="r-dots"></span><span>${money(d.raisedCents)}</span></div>
+        ${fees ? `<div class="r-row r-small"><span>Stripe's card fee (about 2.9% + 30¢ each)</span><span class="r-dots"></span><span>&minus;${money(fees)}</span></div>` : ''}
+        <div class="r-row r-total"><span>Goes to the costs above</span><span class="r-dots"></span><span>${money(net)}</span></div>
+        <div class="r-summary">${
+          !net
+            ? 'No donations yet. Yours would be the first!'
+            : onceDue && net < onceDue
+              ? `Donations so far cover <b>${Math.round((net / onceDue) * 100)}%</b> of the one-time costs still to pay. After those, every dollar goes to running costs.`
+              : monthly
+                ? `Donations so far cover ${onceDue ? 'the one-time costs still to pay and ' : ''}<b>${months >= 1 ? `${months.toFixed(1)} months` : `${Math.round(months * 30)} days`}</b> of running costs.`
+                : 'Donations so far cover all of the costs above. Thank you!'
+        }</div>
+        <p class="r-foot">Payments for plans also go toward these costs. This list is kept up to date by the Tree Host team.</p>`;
     };
     const load = () => fetch('/api/donations').then((r) => r.json()).then(render).catch(() => {});
 

@@ -45,6 +45,14 @@ const bundleFields = (p) => (p.oneTime || p.slots
     }
   : {});
 
+// What running Tree Host costs (the donate page's receipt) until staff edit it: the launch machine from the
+// going-live plan and the DMCA agent fee. Staff add the rest (domain, email, the LLC) in the Staff Console.
+const DEFAULT_COSTS = [
+  { id: 'server', name: 'Game server (OVH RISE-S)', detail: 'Ryzen 7 9700X, 64 GB RAM, NVMe, DDoS protection: the machine every Minecraft server runs on', cents: 7700, period: 'month', status: 'unpaid' },
+  { id: 'setup', name: 'Server setup fee', detail: "OVH's one-time fee to set up the machine", cents: 7700, period: 'once', status: 'unpaid' },
+  { id: 'dmca', name: 'DMCA agent registration', detail: 'U.S. Copyright Office, renewed every 3 years', cents: 600, period: 'once', status: 'unpaid' },
+];
+
 // An unfinished checkout holds its memory this long (Stripe's checkout page expires after 30 minutes to match).
 const PENDING_HOLD_MS = 35 * 60 * 1000;
 /** Plans that use memory on the machine: paid ones, and checkouts started in the last 35 minutes. */
@@ -672,13 +680,41 @@ class Billing {
       targetCents: g.targetCents || 0,
       raisedCents: paid.reduce((n, d) => n + d.amountCents, 0) + (g.extraCents || 0),
       count: paid.length + (g.extraCount || 0),
+      siteCents: paid.reduce((n, d) => n + d.amountCents, 0), // through the website, so Stripe took its fee
+      siteCount: paid.length,
       currency: CURRENCY,
+      costs: this.costs(),
       supporters: paid
         .filter((d) => d.public && !d.hidden)
         .sort((a, b) => b.paidAt - a.paidAt)
         .slice(0, 24)
         .map((d) => ({ name: d.name || 'Someone kind', message: d.hidden ? '' : d.message || '', at: d.paidAt })),
     };
+  }
+
+  /** The costs of running Tree Host, shown as a receipt on the donate page. Staff edit them in the Staff Console. */
+  costs() {
+    return this.settings.costs || { updatedAt: null, items: DEFAULT_COSTS };
+  }
+
+  async setCosts(list) {
+    if (!Array.isArray(list)) throw httpError(400, 'Send a list of costs.');
+    const clean = (v, n) => String(v || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, n);
+    const items = list.slice(0, 40).map((c) => {
+      const item = {
+        id: clean(c.id, 20) || crypto.randomBytes(4).toString('hex'),
+        name: clean(c.name, 60),
+        detail: clean(c.detail, 160),
+        cents: Math.max(0, Math.round(Number(c.cents) || 0)),
+        period: ['month', 'year', 'once'].includes(c.period) ? c.period : 'month',
+        status: ['paid', 'unpaid'].includes(c.status) ? c.status : 'unpaid',
+      };
+      if (!item.name) throw httpError(400, 'Every cost needs a name.');
+      return item;
+    });
+    this.settings.costs = { updatedAt: Date.now(), items };
+    await this.savePlans();
+    return this.settings.costs;
   }
 
   /** Starts a donation: Stripe Checkout (one payment), or straight to "thank you" in demo mode. */

@@ -303,6 +303,9 @@ These are the defaults, so they work without changing anything. Emails are sent 
 - **Donations** (Staff Console → Billing → Launch fund): set the goal, add money raised outside the website (the old Stripe
   payment link, cash) so the total on /donate is right, and hide a public supporter message that shouldn't be there.
   Donors who want the Discord Supporter role open a ticket; check their donation here, then use `/supporter`.
+  The same card holds the **costs receipt** shown on /donate: every bill (name, what it's for, amount, monthly / yearly /
+  one-time, paid or not). Keep it true and current: when you pay a bill, mark it **Paid**; when a price changes, change
+  it. Donations count toward unpaid one-time costs first, then months of running costs, after Stripe's fee.
 - **Team page** (/team): every Owner, Admin and Developer appears automatically. Each sets a title and a short bio in
   **Account → Team page** (or hides themselves); the picture is their Minecraft head, from the Minecraft name in Account.
 

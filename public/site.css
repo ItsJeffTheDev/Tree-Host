@@ -334,3 +334,43 @@ section { padding: 88px 0; position: relative; }
   .team-grid > .member { flex-basis: 100%; }
   .fund-amount b { font-size: 32px; }
 }
+
+/* ---------- donate: the costs receipt ---------- */
+a.costs-teaser { display: flex; gap: 14px; align-items: flex-start; text-decoration: none; color: var(--muted); font-size: 15px; }
+a.costs-teaser b { color: var(--text); }
+a.costs-teaser .ic { width: 26px; height: 26px; flex: none; color: var(--accent2); margin-top: 2px; }
+.receipt {
+  max-width: 680px; margin: 0 auto; background: #f4f1e8; color: #23261f; border-radius: 6px; padding: 30px 32px 26px;
+  font-family: var(--mono); font-size: 14.5px; box-shadow: 0 30px 80px rgba(0, 0, 0, .45); position: relative;
+  -webkit-mask: radial-gradient(circle 7px at 50% 100%, transparent 98%, #000) 0 0 / 18px 100% repeat-x;
+          mask: radial-gradient(circle 7px at 50% 100%, transparent 98%, #000) 0 0 / 18px 100% repeat-x;
+  padding-bottom: 40px;
+}
+.receipt .muted { color: #6b6f63; }
+.r-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding-bottom: 14px; border-bottom: 2px dashed #b9b5a6; margin-bottom: 6px; }
+.r-brand { display: flex; align-items: center; gap: 8px; font-family: system-ui, sans-serif; font-weight: 800; font-size: 19px; }
+.r-meta { text-align: right; color: #6b6f63; font-size: 12.5px; text-transform: uppercase; letter-spacing: .5px; }
+.r-group { margin: 16px 0 6px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; font-size: 12.5px; color: #6b6f63; }
+.r-line { padding: 6px 0 8px; }
+.r-row { display: flex; align-items: baseline; gap: 8px; }
+.r-name { font-weight: 700; }
+.r-dots { flex: 1; border-bottom: 2px dotted #b9b5a6; transform: translateY(-4px); min-width: 16px; }
+.r-amt { font-weight: 700; white-space: nowrap; }
+.r-sub { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; color: #6b6f63; font-size: 12.5px; margin-top: 3px; font-family: system-ui, sans-serif; }
+.r-tag { flex: none; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; padding: 2px 7px; border-radius: 4px; border: 1.5px solid #9a967f; color: #6b6f63; font-family: var(--mono); }
+.r-tag.paid { border-color: #1f7a45; color: #1f7a45; }
+.r-cover { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; color: #4b5045; }
+.r-cover-bar { flex: 0 0 110px; height: 7px; border-radius: 9px; background: #dedacb; overflow: hidden; }
+.r-cover-bar div { height: 100%; background: #2e9a5a; border-radius: 9px; }
+.r-rule { border-top: 2px dashed #b9b5a6; margin: 14px 0 10px; }
+.r-rule.double { border-top: 4px double #9a967f; }
+.r-row.r-total { font-weight: 800; margin: 4px 0; }
+.r-row.r-small { color: #6b6f63; font-size: 13px; margin: 2px 0; }
+.r-row > span:last-child { white-space: nowrap; }
+.r-summary { margin-top: 16px; padding: 12px 14px; background: #e7f2e9; border-radius: 6px; color: #1d4d31; font-family: system-ui, sans-serif; font-size: 15px; }
+.r-foot { margin: 14px 0 0; color: #6b6f63; font-size: 12px; font-family: system-ui, sans-serif; text-align: center; }
+@media (max-width: 600px) {
+  .receipt { padding: 22px 16px 36px; font-size: 13px; }
+  .r-sub { flex-direction: column; gap: 4px; }
+  .r-cover-bar { flex-basis: 80px; }
+}

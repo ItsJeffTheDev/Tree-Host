@@ -1819,6 +1819,11 @@ route('PUT', '/api/admin/donation-goal', async (req) => {
   audit(req, 'updated the launch fund goal');
   return r;
 }, { perm: 'billing.manage' });
+route('PUT', '/api/admin/costs', async (req) => {
+  const r = await billing.setCosts((await readJson(req)).items);
+  audit(req, 'updated the costs on the donate page');
+  return r;
+}, { perm: 'billing.manage' });
 route('PUT', '/api/admin/donations/:id', async (req, res, p) => {
   const body = await readJson(req);
   const d = await billing.setDonationHidden(p.id, body.hidden);

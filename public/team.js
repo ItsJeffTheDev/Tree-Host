@@ -1086,6 +1086,18 @@ async function adminBilling(body) {
   );
 }
 
+/** One editable line of the donate page's cost receipt. */
+function costRow(c = {}) {
+  const opt = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('');
+  return `<tr data-id="${esc(c.id || '')}">
+    <td><input type="text" data-k="name" maxlength="60" value="${esc(c.name || '')}" placeholder="Domain name" style="min-width:150px"></td>
+    <td><input type="text" data-k="detail" maxlength="160" value="${esc(c.detail || '')}" placeholder="treehost.online, renewed yearly" style="min-width:220px"></td>
+    <td><input type="number" data-k="amount" min="0" step="0.01" value="${c.cents !== undefined ? +(c.cents / 100).toFixed(2) : ''}" style="width:90px"></td>
+    <td><select data-k="period">${opt([['month', 'Monthly'], ['year', 'Yearly'], ['once', 'One-time']], c.period)}</select></td>
+    <td><select data-k="status">${opt([['unpaid', 'Not paid yet'], ['paid', 'Paid']], c.status)}</select></td>
+    <td><button type="button" class="btn sm danger" data-crm>Remove</button></td></tr>`;
+}
+
 /** The donate page's goal, every donation, and hiding a public message that shouldn't be there. */
 async function adminDonations(card) {
   const d = await api('GET', '/api/admin/donations');
@@ -1106,6 +1118,14 @@ async function adminDonations(card) {
              <button class="btn primary">Save</button></form>`
         : ''
     }
+    <div class="stack" style="gap:8px">
+      <h4 style="margin:6px 0 0">Costs on the donate page</h4>
+      <p class="hint" style="margin:0">Shown as a receipt on /donate, with what's paid and how far donations go (one-time costs first, then months of running costs).
+        Keep it honest and current: the date updates when you save.</p>
+      <div style="overflow-x:auto"><table class="plans-edit"><thead><tr><th>Cost</th><th>What it's for</th><th>Amount ($)</th><th>How often</th><th>Status</th><th></th></tr></thead>
+        <tbody id="cost-rows">${(d.costs.items || []).map(costRow).join('')}</tbody></table></div>
+      ${manage ? '<div class="row"><button class="btn sm" id="cost-add">+ Add cost</button><button class="btn primary" id="cost-save">Save costs</button></div>' : ''}
+    </div>
     ${
       d.donations.length
         ? `<div style="overflow-x:auto"><table><thead><tr><th>When</th><th>Amount</th><th>Name</th><th>Message</th><th>Status</th><th></th></tr></thead><tbody>${d.donations
@@ -1119,6 +1139,25 @@ async function adminDonations(card) {
             .join('')}</tbody></table></div>`
         : '<p class="muted" style="margin:0">No donations through the website yet.</p>'
     }`;
+  const bindCostRm = () => $$('[data-crm]', card).forEach((b) => (b.onclick = () => b.closest('tr').remove()));
+  bindCostRm();
+  if ($('#cost-add', card))
+    $('#cost-add', card).addEventListener('click', () => {
+      $('#cost-rows', card).insertAdjacentHTML('beforeend', costRow({ period: 'month', status: 'unpaid' }));
+      bindCostRm();
+    });
+  if ($('#cost-save', card))
+    $('#cost-save', card).addEventListener('click', () =>
+      attempt(async () => {
+        const items = $$('#cost-rows tr', card).map((tr) => {
+          const v = (k) => $(`[data-k="${k}"]`, tr).value;
+          return { id: tr.dataset.id || '', name: v('name').trim(), detail: v('detail').trim(), cents: Math.round(Number(v('amount')) * 100), period: v('period'), status: v('status') };
+        });
+        await api('PUT', '/api/admin/costs', { items });
+        toast('Costs saved');
+        adminDonations(card);
+      }),
+    );
   const form = $('#goal-form', card);
   if (form)
     form.addEventListener('submit', (e) => {

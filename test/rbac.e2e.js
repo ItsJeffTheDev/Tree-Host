@@ -453,6 +453,17 @@ function expect(label, got, want) {
   await call('owner1', 'PUT', `/api/admin/donations/${alex.id}`, { hidden: true });
   expect('a hidden message leaves the wall', (await call('anon', 'GET', '/api/donations')).data.supporters.length, 0);
 
+  // the costs receipt on the donate page
+  expect('the donate page lists the running costs', (await call('anon', 'GET', '/api/donations')).data.costs.items.some((c) => c.period === 'month'), true);
+  expect('support cannot edit the costs', (await call('support1', 'PUT', '/api/admin/costs', { items: [] })).status, 403);
+  expect('a cost needs a name', (await call('owner1', 'PUT', '/api/admin/costs', { items: [{ cents: 100 }] })).status, 400);
+  await call('owner1', 'PUT', '/api/admin/costs', { items: [
+    { name: 'Game server', detail: 'Runs <script>every</script> server', cents: 7700, period: 'month', status: 'paid' },
+    { name: 'Domain', cents: 1200, period: 'year', status: 'bogus' },
+  ] });
+  const costs = (await call('anon', 'GET', '/api/donations')).data.costs;
+  expect('costs are saved, cleaned and dated', `${costs.items.length}|${costs.items[0].detail.includes('<')}|${costs.items[1].status}|${!!costs.updatedAt}`, '2|false|unpaid|true');
+
   const auditLog = (await call('owner1', 'GET', '/api/admin/audit')).data;
   expect('audit log recorded staff actions', auditLog.length >= 8, true);
   console.log('\nAudit log (newest first):');
