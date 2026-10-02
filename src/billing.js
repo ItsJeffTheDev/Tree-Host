@@ -239,7 +239,13 @@ class Billing {
     return n === null || n === undefined ? 2 : n;
   }
 
+  /** A test site on localhost sells without limits unless capacity is set by hand (test purchases pile up there). */
+  unlimited() {
+    return !!this.testSite && !this.settings.capacityMb;
+  }
+
   lifetimeFull() {
+    if (this.testSite && (this.settings.lifetimePerNode === null || this.settings.lifetimePerNode === undefined)) return false;
     const cap = this.lifetimePerNode();
     return cap > 0 && this.subs.filter((s) => s.oneTime && ['active', 'past_due', 'pending'].includes(s.status)).length >= cap;
   }
@@ -250,6 +256,7 @@ class Billing {
 
   /** Unsold memory, minus what running extra servers borrow from it right now. */
   freeMb() {
+    if (this.unlimited()) return Number.MAX_SAFE_INTEGER;
     return this.capacityMb() - this.soldMb() - this.hooks.borrowedMb();
   }
 
@@ -383,7 +390,7 @@ class Billing {
       // Paid once: a normal payment, not a subscription.
       const session = await stripe('POST', '/checkout/sessions', {
         mode: 'payment',
-        success_url: `${origin}/dashboard?billing=success`,
+        success_url: `${origin}/dashboard?billing=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${origin}/dashboard?billing=canceled`,
         client_reference_id: s.id,
         customer: user.stripeCustomerId || undefined,
@@ -408,7 +415,7 @@ class Billing {
     }
     const session = await stripe('POST', '/checkout/sessions', {
       mode: 'subscription',
-      success_url: `${origin}/dashboard?billing=success`,
+      success_url: `${origin}/dashboard?billing=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/dashboard?billing=canceled`,
       client_reference_id: s.id,
       customer: user.stripeCustomerId || undefined,
@@ -586,6 +593,55 @@ class Billing {
     this.save().catch(() => {});
   }
 
+  /** A finished Stripe Checkout: activates its subscription (from the webhook, or when the customer comes back). */
+  async completeCheckout(o, users) {
+    const s = this.sub(o.client_reference_id || (o.metadata && o.metadata.subId));
+    if (!s) return null;
+    if (o.mode === 'payment') {
+      // A one-time purchase (lifetime): paid in full, never renews.
+      s.paymentIntent = o.payment_intent || null;
+      s.stripeCustomerId = o.customer || null;
+      const buyer = users.userById(s.userId);
+      if (buyer && o.customer && !buyer.stripeCustomerId) {
+        buyer.stripeCustomerId = o.customer;
+        await users.save();
+      }
+      if (o.payment_status === 'paid') this.activate(s, {});
+      return s;
+    }
+    s.stripeSubscriptionId = o.subscription;
+    s.stripeCustomerId = o.customer;
+    const user = users.userById(s.userId);
+    if (user && o.customer && !user.stripeCustomerId) {
+      user.stripeCustomerId = o.customer;
+      await users.save();
+    }
+    let pe = null;
+    try {
+      pe = periodEnd(await stripe('GET', `/subscriptions/${o.subscription}`));
+    } catch {
+      /* the subscription.updated event fills it in */
+    }
+    this.activate(s, { periodEnd: pe });
+    return s;
+  }
+
+  /**
+   * The customer is back from Stripe Checkout: ask Stripe whether it was paid instead of waiting for the webhook
+   * (which can't reach a test site on localhost, and can arrive a few seconds late on the real one).
+   */
+  async confirmCheckout(user, sessionId, users) {
+    if (!/^cs_[A-Za-z0-9_]+$/.test(String(sessionId || ''))) throw httpError(400, 'Unknown checkout.');
+    const o = await stripe('GET', `/checkout/sessions/${sessionId}`);
+    const s = this.sub(o.client_reference_id || (o.metadata && o.metadata.subId));
+    if (!s || s.userId !== user.id) throw httpError(404, 'Unknown checkout.');
+    if (s.status === 'pending' && o.status === 'complete' && (o.mode === 'subscription' || o.payment_status === 'paid')) {
+      await this.completeCheckout(o, users);
+      await this.save();
+    }
+    return s;
+  }
+
   // ----- Stripe webhook -----
 
   findByStripe(subscriptionId, meta) {
@@ -596,37 +652,9 @@ class Billing {
     const event = verifyWebhook(rawBody, signature);
     const o = event.data.object;
     switch (event.type) {
-      case 'checkout.session.completed': {
-        const s = this.sub(o.client_reference_id || (o.metadata && o.metadata.subId));
-        if (!s) break;
-        if (o.mode === 'payment') {
-          // A one-time purchase (lifetime): paid in full, never renews.
-          s.paymentIntent = o.payment_intent || null;
-          s.stripeCustomerId = o.customer || null;
-          const buyer = users.userById(s.userId);
-          if (buyer && o.customer && !buyer.stripeCustomerId) {
-            buyer.stripeCustomerId = o.customer;
-            await users.save();
-          }
-          if (o.payment_status === 'paid') this.activate(s, {});
-          break;
-        }
-        s.stripeSubscriptionId = o.subscription;
-        s.stripeCustomerId = o.customer;
-        const user = users.userById(s.userId);
-        if (user && o.customer && !user.stripeCustomerId) {
-          user.stripeCustomerId = o.customer;
-          await users.save();
-        }
-        let pe = null;
-        try {
-          pe = periodEnd(await stripe('GET', `/subscriptions/${o.subscription}`));
-        } catch {
-          /* the subscription.updated event fills it in */
-        }
-        this.activate(s, { periodEnd: pe });
+      case 'checkout.session.completed':
+        await this.completeCheckout(o, users);
         break;
-      }
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
@@ -737,6 +765,7 @@ class Billing {
       capacitySetting: this.settings.capacityMb,
       soldMb: this.soldMb(),
       borrowedMb: this.hooks.borrowedMb(),
+      unlimited: this.unlimited(),
       lifetimePerNode: this.lifetimePerNode(),
       lifetimeSetting: this.settings.lifetimePerNode ?? null,
       totalMemMb: Math.floor(os.totalmem() / 1048576),

@@ -1261,6 +1261,7 @@ async function adminPlans(body) {
         Default: about 90% of the RAM (${+(Math.floor(d.totalMemMb * 0.9) / 1024).toFixed(1)} GB of ${+(d.totalMemMb / 1024).toFixed(1)} GB).
         Every monthly plan always has room for one running server; extra servers on the same plan only start while there's unsold memory, and are refused when the machine is full.</p>
       <div class="row"><input type="number" id="cap-gb" min="1" step="1" placeholder="Automatic" value="${d.capacitySetting ? +(d.capacitySetting / 1024).toFixed(1) : ''}" style="max-width:160px"><span class="muted">GB</span></div>
+      ${d.unlimited ? '<div class="warn-box">Test site on this PC: plans never sell out here, and the Lifetime limit is off. Type a capacity to try the real limits.</div>' : ''}
       <p class="small muted" style="margin:0">Sold: ${+(d.soldMb / 1024).toFixed(1)} GB · extra servers running now: ${+((d.borrowedMb || 0) / 1024).toFixed(1)} GB · free: ${+((d.capacityMb - d.soldMb - (d.borrowedMb || 0)) / 1024).toFixed(1)} GB of ${+(d.capacityMb / 1024).toFixed(1)} GB</p>
       <label class="field">Lifetime plans sold on this machine (each holds its memory forever; 0 = no limit)
         <div class="row"><input type="number" id="cap-life" min="0" max="100" step="1" placeholder="2" value="${d.lifetimeSetting ?? ''}" style="max-width:160px"><span class="muted">${d.lifetimeCount} sold</span></div></label>

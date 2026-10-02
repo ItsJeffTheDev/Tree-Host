@@ -2538,8 +2538,13 @@ async function init() {
   // Back from Stripe Checkout, from a billing email, or right after signing up.
   if (params.has('billing') || params.has('welcome')) history.replaceState(null, '', location.pathname);
   if (params.get('billing') === 'success') {
-    toast('Thanks! Your plan is active. Now create your server.');
-    setTimeout(openNewServer, 600);
+    // Ask Stripe right away instead of waiting for its webhook (a test site on localhost never gets one).
+    const sessionId = params.get('session_id');
+    const sub = sessionId ? await api('POST', '/api/billing/confirm', { sessionId }).catch(() => null) : null;
+    if (!sessionId || (sub && sub.status === 'active')) {
+      toast('Thanks! Your plan is active. Now create your server.');
+      setTimeout(openNewServer, 600);
+    } else toast('Payment received. Your plan is being set up: it appears in Billing in a few seconds.');
   } else if (params.get('billing') === 'canceled') toast('Checkout canceled. No payment was taken.');
   else if (params.has('billing')) openBilling();
   else if (params.has('welcome')) setTimeout(openPlans, 400);

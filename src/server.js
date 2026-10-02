@@ -127,8 +127,10 @@ function borrowedMb(except) {
   return n;
 }
 billing.hooks.borrowedMb = () => borrowedMb(null);
+// The test site on this PC (Start.bat): sells without memory limits unless capacity is set in the Staff Console.
+billing.testSite = !!PUBLIC_URL && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/');
 function nodeFullFor(inst, sub) {
-  if (sub.slots) return null;
+  if (sub.slots || billing.unlimited()) return null;
   const others = serversOnSub(sub).filter((i) => i !== inst && isUp(i));
   if (!others.length) return null;
   const free = billing.capacityMb() - billing.soldMb() - borrowedMb(inst);
@@ -1356,7 +1358,14 @@ route(
   }),
   { public: true },
 );
-route('GET', '/api/billing', (req) => ({
+route('GET', '/api/billing', async (req) => {
+  // Paid in Stripe but the webhook hasn't arrived (always the case on a localhost test site): check with Stripe.
+  for (const x of billing.forUser(req.user.id)) {
+    if (x.status === 'pending' && x.checkoutSession && ['test', 'live'].includes(billing.mode)) await billing.confirmCheckout(req.user, x.checkoutSession, auth).catch(() => {});
+  }
+  return billingView(req);
+});
+const billingView = (req) => ({
   mode: billing.mode,
   currency: billing.publicPlans().currency,
   hasPortal: !!(req.user.stripeCustomerId && billing.mode !== 'demo'),
@@ -1364,7 +1373,7 @@ route('GET', '/api/billing', (req) => ({
     ...billing.publicSub(x),
     serverName: billing.serversOf(x).map((v) => v.name).join(', ') || null,
   })),
-}));
+});
 route('POST', '/api/billing/checkout', async (req) => {
   if (!TEAM) throw httpError(400, 'Billing only exists on a hosted Tree Host.');
   if (req.user.role === 'customer' && !req.user.email) throw httpError(400, 'Add your email address in Account first.');
@@ -1373,6 +1382,7 @@ route('POST', '/api/billing/checkout', async (req) => {
   const consent = { ...(body.consent || {}), ip: clientIp(req), userAgent: req.headers['user-agent'] };
   return billing.checkout(req.user, body.planId, PUBLIC_URL || publicOrigin(req), consent);
 });
+route('POST', '/api/billing/confirm', async (req) => billing.publicSub(await billing.confirmCheckout(req.user, (await readJson(req)).sessionId, auth)));
 route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || publicOrigin(req)));
 // Promo codes: customers redeem them in Billing (free plans for creators, partners, giveaways).
 route('POST', '/api/billing/redeem', async (req) => {
