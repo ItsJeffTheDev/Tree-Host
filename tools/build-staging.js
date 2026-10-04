@@ -74,7 +74,15 @@ function write(rel, data) {
 
   // ----- data the pages fetch, saved as files at the same addresses -----
   const preview = { mode: 'off' }; // nothing can be bought on the preview
-  write('api/site', { ...site, discord, allowSignup: true });
+  write('api/site', {
+    ...site,
+    discord,
+    allowSignup: true,
+    // The launch hardware, even if the Tree Host this was copied from predates the setting.
+    cpu: site.cpu || 'AMD Ryzen 7 9700X',
+    cpuDetail: site.cpuDetail || '8 cores, 16 threads, up to 5.5 GHz',
+    hardware: site.hardware || 'OVH RISE-S dedicated server: DDR5 ECC memory, mirrored NVMe SSDs, anti-DDoS',
+  });
   write('api/plans', { ...plans, ...preview, plans: plans.plans.map((p) => ({ ...p, soldOut: false })) });
   write('api/compare', { ...compare, ...preview, plans: compare.plans.map((p) => ({ ...p, soldOut: false })) });
   write('api/team-page', team);

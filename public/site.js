@@ -102,6 +102,13 @@
         document.querySelectorAll(`[data-${key}-wrap]`).forEach((el) => (el.hidden = false));
       };
       fill('address', site.address);
+      fill('cpu', site.cpu);
+      fill('cpu-detail', site.cpuDetail);
+      fill('hardware', site.hardware);
+      if (site.cpu) document.querySelectorAll('[data-hw-wrap]').forEach((el) => (el.hidden = false));
+      window.TH_CPU = site.cpu;
+      const article = (w) => (/^[aeiou]/i.test(w) ? 'an' : 'a');
+      document.querySelectorAll('[data-plan-cpu]').forEach((el) => (el.textContent = site.cpu ? ` on ${article(site.cpu)} ${site.cpu}` : ''));
       fill('dmca-agent', site.dmcaAgent);
       if (site.jurisdiction) document.querySelectorAll('[data-jurisdiction]').forEach((el) => (el.textContent = site.jurisdiction));
       else document.querySelectorAll('[data-jurisdiction-text]').forEach((el) => el.remove());
@@ -143,7 +150,7 @@
               <div class="price">${money(p.priceCents, data.currency)}<span>/month</span></div>
               <ul>
                 <li><b>${+(p.ramMb / 1024).toFixed(1)} GB</b> RAM</li>
-                <li><b>${p.cpus}</b> CPU core${p.cpus === 1 ? '' : 's'}</li>
+                <li><b>${p.cpus}</b> CPU core${p.cpus === 1 ? '' : 's'}<small class="plan-cpu" data-plan-cpu>${window.TH_CPU ? ` on ${/^[aeiou]/i.test(window.TH_CPU) ? 'an' : 'a'} ${esc(window.TH_CPU)}` : ''}</small></li>
                 <li><b>${p.diskGb} GB</b> NVMe disk</li>
                 <li><b>Unlimited</b> servers</li>
                 <li>Plugins, mods &amp; backups</li>

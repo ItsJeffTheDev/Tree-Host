@@ -379,3 +379,10 @@ a.costs-teaser .ic { width: 26px; height: 26px; flex: none; color: var(--accent2
   .r-break { flex-direction: column; align-items: stretch; gap: 6px; }
   .r-break .r-cover-bar { flex-basis: auto; }
 }
+
+/* ---------- launch hardware (pricing) ---------- */
+.hw-strip { margin: 22px auto 0; max-width: 980px; display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; justify-content: center;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 20px; font-size: 15px; text-align: center; }
+.hw-strip[hidden] { display: none; }
+.hw-label { font-size: 12px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
+.plan-cpu { display: block; color: var(--muted); font-size: 13px; font-weight: 400; }

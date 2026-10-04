@@ -1353,6 +1353,10 @@ route(
     dmcaAgent: env('DMCA_AGENT', ''),
     jurisdiction: env('JURISDICTION', ''),
     discord: env('DISCORD_INVITE', ''),
+    // The machine customer servers run on (shown on the pricing page; people rightly ask).
+    cpu: env('CPU', 'AMD Ryzen 7 9700X'),
+    cpuDetail: env('CPU_DETAIL', '8 cores, 16 threads, up to 5.5 GHz'),
+    hardware: env('HARDWARE', 'OVH RISE-S dedicated server: DDR5 ECC memory, mirrored NVMe SSDs, anti-DDoS'),
     location: env('LOCATION', ''),
     allowSignup: auth.settings.allowSignup,
   }),

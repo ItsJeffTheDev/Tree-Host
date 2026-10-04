@@ -261,13 +261,21 @@ function updateProperties(text, updates) {
 
 // ---------- Misc ----------
 
-function isPortFree(port) {
+/** Resolves true/false, or null when the address family isn't available (no IPv6 on this machine). */
+function canListen(port, host) {
   return new Promise((resolve) => {
     const srv = net.createServer();
-    srv.once('error', () => resolve(false));
+    srv.once('error', (e) => resolve(['EAFNOSUPPORT', 'EADDRNOTAVAIL'].includes(e.code) ? null : false));
     srv.once('listening', () => srv.close(() => resolve(true)));
-    srv.listen(port, '0.0.0.0');
+    srv.listen(port, host);
   });
+}
+
+// Minecraft binds both IPv4 and IPv6 ("*:port"). On Windows those are separate, so a port taken only on IPv6
+// (e.g. by Docker Desktop's port proxy) still looks free on 0.0.0.0: check both.
+async function isPortFree(port) {
+  if (!(await canListen(port, '0.0.0.0'))) return false;
+  return (await canListen(port, '::')) !== false;
 }
 
 /** Compares "1.21.4", "26.1.2", "1.21.11-rc3". Releases sort above their pre-releases. */
