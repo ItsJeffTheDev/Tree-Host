@@ -364,6 +364,7 @@ async function renderNotifications(root) {
 // ---------- modpack browser (Modrinth, Fabric) ----------
 
 async function openModpacks() {
+  if (state.me && state.me.staging) return toast("This is the staging site: servers and plans open at launch. Everything else works, so look around!");
   const b = await api('GET', '/api/billing').catch((e) => (toast(e.message, 'error'), null));
   if (!b) return;
   const plans = b.subscriptions.filter((x) => x.usable && planHasRoom(x));

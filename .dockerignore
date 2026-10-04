@@ -1,0 +1,13 @@
+.git
+node_modules
+promo
+staging
+test-site-data
+test-site.env
+*.env
+tree-host-firebase.json
+discord-bot
+docs
+test
+tools
+deploy

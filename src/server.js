@@ -29,6 +29,13 @@ const env = (name, fallback) => process.env[`TREEHOST_${name}`] ?? process.env[`
 // Production: the public website address (e.g. https://treehost.online). Turns on accounts, billing and the landing page.
 const PUBLIC_URL = (env('PUBLIC_URL', '') || '').replace(/\/$/, '') || null;
 const HOSTED = !!PUBLIC_URL;
+// Staging (TREEHOST_STAGING=1): the whole site and dashboard work (sign-up, sign-in, account, staff console), but
+// nobody can create servers or buy plans until launch. Every page shows a staging banner.
+const STAGING = env('STAGING', '') === '1';
+const STAGING_MSG = "This is Tree Host's staging site: servers and plans open at launch. Everything else works, so look around!";
+const stagingBlock = () => {
+  if (STAGING) throw httpError(403, STAGING_MSG, 'STAGING');
+};
 // Accounts mode: logins required (always on when hosted; TREEHOST_TEAM=1 for a private team setup).
 const TEAM = env('TEAM') === '1' || HOSTED;
 const PORT = Number(env('PORT')) || (TEAM ? 8766 : 8765);
@@ -351,7 +358,10 @@ function openBrowser(url) {
 // ---------- auth helpers ----------
 
 /** True for requests from this machine, which is where the reverse proxy (Caddy) connects from. */
+// TREEHOST_TRUST_PROXY=1: Tree Host runs behind a managed front end (Google Cloud Run), not Caddy on this machine.
+const TRUST_PROXY = env('TRUST_PROXY') === '1';
 function fromThisPc(req) {
+  if (TRUST_PROXY) return true;
   const a = req.socket.remoteAddress || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
@@ -362,7 +372,10 @@ function fromThisPc(req) {
 const TRUST_CLOUDFLARE = env('TRUST_CLOUDFLARE') === '1';
 function clientIp(req) {
   if (fromThisPc(req)) {
-    const fwd = (TRUST_CLOUDFLARE && req.headers['cf-connecting-ip']) || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    const hops = String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean);
+    // Caddy replaces the header (one entry). Cloud Run appends the real client to whatever the client sent,
+    // so there the last entry is the one that can't be faked.
+    const fwd = (TRUST_CLOUDFLARE && req.headers['cf-connecting-ip']) || (TRUST_PROXY ? hops[hops.length - 1] : hops[0]);
     if (fwd) return fwd;
   }
   return req.socket.remoteAddress || 'unknown';
@@ -654,6 +667,7 @@ route(
       discordInvite: DISCORD_INVITE,
       firebase: TEAM ? firebase.publicConfig() : null,
       billingMode: billing.mode,
+      staging: STAGING,
       isolated: manager.docker,
       lanUrls: TEAM && !HOSTED && HOST !== '127.0.0.1' && user && can(user, 'system.view') ? lanUrls() : [],
     };
@@ -855,7 +869,8 @@ route(
     rbac.checkRoleChange(req.user, null, role);
     const invite = await auth.createInvite(req.user, role);
     audit(req, `created a ${rbac.role(role).label} invite link`);
-    return { link: `${publicOrigin(req)}/?invite=${invite}`, expiresInDays: 7 };
+    // The dashboard reads ?invite= (on a hosted site "/" is the website, which would drop it).
+    return { link: `${PUBLIC_URL || publicOrigin(req)}/dashboard?invite=${invite}`, expiresInDays: 7 };
   },
   { perm: 'users.roles' },
 );
@@ -1359,6 +1374,7 @@ route(
     hardware: env('HARDWARE', 'OVH RISE-S dedicated server: DDR5 ECC memory, mirrored NVMe SSDs, anti-DDoS'),
     location: env('LOCATION', ''),
     allowSignup: auth.settings.allowSignup,
+    staging: STAGING,
   }),
   { public: true },
 );
@@ -1380,6 +1396,7 @@ const billingView = (req) => ({
 });
 route('POST', '/api/billing/checkout', async (req) => {
   if (!TEAM) throw httpError(400, 'Billing only exists on a hosted Tree Host.');
+  stagingBlock();
   if (req.user.role === 'customer' && !req.user.email) throw httpError(400, 'Add your email address in Account first.');
   regionCheck(req, true);
   const body = await readJson(req);
@@ -1681,6 +1698,7 @@ route('GET', '/api/next-port', async (req, res, p, q) => {
 
 route('GET', '/api/servers', (req) => visibleList(req.user));
 route('POST', '/api/servers', async (req) => {
+  stagingBlock();
   const body = await readJson(req);
   checkHostSettings(req, body);
   delete body.gateway;
@@ -3078,6 +3096,7 @@ route('POST', '/api/servers/:id/modrinth/install', async (req, res, p) => {
 });
 
 route('POST', '/api/servers/:id/:action', async (req, res, p, q) => {
+  if (['start', 'restart', 'install'].includes(p.action)) stagingBlock();
   const needs = { install: 'settings', 'reset-worlds': 'manage' }[p.action] || 'control';
   const inst = getFor(req, p.id, needs);
   switch (p.action) {

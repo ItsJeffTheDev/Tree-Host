@@ -2188,6 +2188,7 @@ async function fillBuildSelect(sel, type, version, keep) {
 // ---------- new server modal ----------
 
 async function openNewServer() {
+  if (state.me && state.me.staging) return toast("This is the staging site: servers and plans open at launch. Everything else works, so look around!");
   const root = $('#modal-root');
   // Customers: a server needs an unused plan. No plan yet -> show the plans.
   let freePlans = [];

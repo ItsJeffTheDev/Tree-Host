@@ -715,6 +715,7 @@ function planCardHtml(p, currency) {
 
 /** Shows the plans; choosing one goes to Stripe Checkout (or activates instantly in demo mode). */
 async function openPlans() {
+  if (state.me && state.me.staging) return toast("This is the staging site: servers and plans open at launch. Everything else works, so look around!");
   const data = await api('GET', '/api/plans');
   const { root } = openModal(`
     <h2>Choose a plan</h2>
@@ -1021,7 +1022,7 @@ async function adminPeople(body) {
   if ($('#inv-create', body)) $('#inv-create', body).addEventListener('click', () =>
     attempt(async () => {
       const { link } = await api('POST', '/api/team/invites', { role: $('#inv-role', body).value });
-      const shareLink = (state.me.publicUrl || location.origin) + link.slice(link.indexOf('/?invite=')).replace('/?', '/dashboard?');
+      const shareLink = (state.me.publicUrl || location.origin) + link.slice(link.indexOf('/dashboard?invite='));
       const box = $('#inv-link', body);
       box.classList.remove('hidden');
       box.innerHTML = `<div class="token-box"><div class="small">Invite link (one use, 7 days):</div>
