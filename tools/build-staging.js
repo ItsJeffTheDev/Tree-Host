@@ -97,6 +97,8 @@ function write(rel, data) {
   const prep = (html, pagePath) =>
     seo
       .injectSeo(html, { base: BASE, path: pagePath, site: seoSite, plans, prelaunch: true, slash: true })
+      // The pages' own staging pill needs a live server; the preview uses its banner instead.
+      .replace(/\s*<script src="\/staging\.js" defer><\/script>/g, '')
       .replace(/<html lang="en">/, '<html lang="en" data-staging="1">')
       .replace(/<\/body>/, banner);
   for (const [slug, file] of Object.entries(PAGES)) {
