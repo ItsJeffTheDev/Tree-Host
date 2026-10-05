@@ -1,0 +1,39 @@
+# ============ Firebase Configuration ============
+# Web config (PUBLIC - get from Firebase Console → Project Settings → Web app config)
+FIREBASE_API_KEY=REDACTED
+FIREBASE_AUTH_DOMAIN=tree-host.firebaseapp.com
+FIREBASE_DATABASE_URL=https://tree-host-default-rtdb.firebaseio.com
+FIREBASE_PROJECT_ID=tree-host
+FIREBASE_APP_ID=1:840029330018:web:96c8dbdde3990b3fdccf3b
+
+# Service account (SECRET - JSON from Firebase Console → Project Settings → Service Accounts)
+# Use FIREBASE_SERVICE_ACCOUNT_FILE pointing to your secret file, or FIREBASE_SERVICE_ACCOUNT as JSON string
+# FIREBASE_SERVICE_ACCOUNT_FILE=/etc/secrets/firebase-service-account.json
+# OR
+# FIREBASE_SERVICE_ACCOUNT={"type":"service_account",...}
+
+# ============ Tree Host Configuration ============
+TREEHOST_PUBLIC_URL=https://tree-host.onrender.com
+TREEHOST_HOST=0.0.0.0
+TREEHOST_PORT=8080
+TREEHOST_TRUST_PROXY=1
+TREEHOST_TEAM=1
+TREEHOST_DATA=/tmp/treehost
+TREEHOST_ISOLATION=off
+
+# Who becomes the Owner (verified email)
+TREEHOST_ADMIN_EMAILS=your-email@gmail.com
+
+# Database root path (change this if you want a separate namespace)
+TREEHOST_DB_ROOT=treehost
+
+# ============ Payments (Stripe - optional) ============
+# For production: use STRIPE_SECRET_KEY from Stripe Dashboard (sk_live_...)
+# For demo mode: leave blank or set BILLING_DEMO=1
+# STRIPE_SECRET_KEY=sk_live_...
+# STRIPE_WEBHOOK_SECRET=whsec_...
+# BILLING_CURRENCY=usd
+
+# ============ Emails (optional - Resend) ============
+# RESEND_API_KEY=re_...
+# MAIL_FROM=Tree Host <no-reply@example.com>
