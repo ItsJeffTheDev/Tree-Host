@@ -12,7 +12,11 @@ const PUBLIC_DOCS = [
 ];
 let DOCS = STAFF ? [] : PUBLIC_DOCS; // staff: filled from /api/staff/docs (only the guides your role may read)
 
-const $ = (sel, el = document) => el.querySelector(sel);
+// Define $ helper if not already defined (for standalone help.html page)
+if (typeof $ === 'undefined') {
+  const $ = (sel, el = document) => el.querySelector(sel);
+  window.$ = $;
+}
 const escHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const slugify = (s) =>
   s

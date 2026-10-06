@@ -26,8 +26,12 @@ function fmtSize(b) {
   return `${(b / 1073741824).toFixed(2)} GB`;
 }
 
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// Define esc helper if not already defined (loaded before app.js)
+if (typeof esc === 'undefined') {
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  }
+  window.esc = esc;
 }
 
 // Define $ and $$ helpers if not already defined (loaded before app.js)

@@ -11,8 +11,12 @@ if (typeof $$ === 'undefined') {
   const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
   window.$$ = $$;
 }
-const esc = (s) =>
-  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// Define esc helper if not already defined (may be defined by site.js)
+if (typeof esc === 'undefined') {
+  const esc = (s) =>
+    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  window.esc = esc;
+}
 
 async function api(method, url, body) {
   const opts = { method, headers: {} };
