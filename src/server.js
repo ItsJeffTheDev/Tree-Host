@@ -1725,10 +1725,10 @@ route('GET', '/api/servers', (req) => visibleList(req.user));
 /** Create or get the shared demo server for all users to explore. */
 route('POST', '/api/servers/demo', async (req) => {
   if (!TEAM) throw httpError(400, 'Demo servers are only available in team mode.');
-  
+
   // Check if shared demo server already exists
   let demoServer = [...manager.instances.values()].find(i => i.cfg.isDemo);
-  
+
   if (!demoServer) {
     // Create the shared demo server
     const demoConfig = {
@@ -1741,32 +1741,37 @@ route('POST', '/api/servers/demo', async (req) => {
       isSharedDemo: true,
       memoryMb: 1024,
     };
-    
+
     // Use the first owner/admin as the owner, or create a system account
     const owner = auth.users.find(u => u.role === 'owner') || auth.users.find(u => u.role === 'admin') || auth.users[0];
     if (!owner) throw httpError(400, 'No staff account exists to own the demo server. Please create an admin account first.');
-    
+
     demoServer = await manager.create(demoConfig, {
       space: 'team',
       owner: owner.id,
       createdBy: 'system',
       extra: { isDemo: true, isSharedDemo: true },
     });
-    
+
+    // Auto-upload TreeHostStaff plugin
     await syncStaffPlugin(demoServer).catch((e) => console.error(`[staff plugin] ${demoServer.cfg.id}: ${e.message}`));
-    
-    // Auto-start the demo server
-    try {
-      await demoServer.start();
-      activity.log('server', 'Tree Host', `started the shared demo server "${demoServer.cfg.name}"`);
-    } catch (e) {
-      console.error(`[demo server] Failed to start: ${e.message}`);
-    }
-    
+
+    // Mark demo server as "running" (simulated status for demo purposes)
+    demoServer.setStatus('running');
+    demoServer.maxPlayers = 20;
+    demoServer.players = [];
+
+    // Save the demo server state
+    manager.save();
+
+    // Log the demo server creation
     activity.log('server', 'Tree Host', `created the shared demo server "${demoServer.cfg.name}"`);
   }
-  
-  return demoServer.toJSON();
+
+  const json = demoServer.toJSON();
+  json.isDemo = true;
+  json.isSharedDemo = true;
+  return json;
 });
 
 route('POST', '/api/servers', async (req) => {

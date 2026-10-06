@@ -64,10 +64,11 @@ A **shared demo server** that all new users can explore to learn how Tree Host w
 - **Type:** Paper 1.21.1
 - **Memory:** 1GB
 - **Space:** Team (shared with all users)
-- **Auto-start:** Yes
+- **Status:** Shows as "running" (simulated for demo purposes)
+- **Auto-uploads:** TreeHostStaff plugin automatically
 - **Permissions:**
-  - ✅ Start/stop/restart
-  - ✅ Console commands
+  - ✅ Start/stop/restart (simulated - doesn't actually start a Minecraft process)
+  - ✅ Console commands (simulated - shows as if running)
   - ✅ View console output
   - ✅ View plugins (read-only)
   - ✅ View files (read-only)
