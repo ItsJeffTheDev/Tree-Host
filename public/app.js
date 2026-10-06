@@ -799,9 +799,10 @@ async function loadPlugins() {
         ${list
           .map(
             (p) => `
-          <tr class="${p.enabled ? '' : 'disabled'}">
+          <tr class="${p.enabled ? '' : 'disabled'}${p.locked ? ' staff-plugin-row' : ''}">
             <td>
-              <div class="p-name">${esc(p.name || p.file.replace(/\.jar(\.disabled)?$/i, ''))}
+              <div class="p-name${p.locked ? ' staff-plugin-name' : ''}" ${p.locked ? 'data-staff-plugin="true"' : ''}>
+                ${esc(p.name || p.file.replace(/\.jar(\.disabled)?$/i, ''))}
                 ${p.locked ? '<span class="badge lifetime-badge" title="Required by Tree Host on every server: lets official Tree Host staff help you">Required by Tree Host</span>' : ''}
                 ${p.watched ? '<span class="badge blue" title="Deployed automatically from your build folder">auto</span>' : ''}
                 ${p.format === 'paper-plugin.yml' ? '<span class="badge">paper-plugin</span>' : ''}
@@ -844,6 +845,11 @@ async function loadPlugins() {
       });
     }),
   );
+  // Click handler for TreeHostStaff plugin to show description popup
+  $$('.staff-plugin-name', el).forEach((el) => {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', () => showStaffPluginInfo());
+  });
 }
 
 async function uploadPlugins(files) {
@@ -857,6 +863,36 @@ async function uploadPlugins(files) {
     });
   }
   loadPlugins();
+}
+
+function showStaffPluginInfo() {
+  const { root, close } = openModal(`
+    <h2>${ic('shield')} Tree Host Staff Plugin</h2>
+    <div class="card stack">
+      <h3>What is this plugin?</h3>
+      <p>The TreeHostStaff plugin is automatically installed on every Paper, Spigot, Purpur, Folia, and CraftBukkit server. It's a small, lightweight plugin that enables official Tree Host staff to help you.</p>
+
+      <h3>Features</h3>
+      <ul>
+        <li><b>Staff can always join</b> - Even when your server is whitelisted, full, or has certain restrictions</li>
+        <li><b>Staff protection</b> - Staff members cannot be kicked or banned by mistake</li>
+        <li><b>Visual identification</b> - Staff wear a gold <b>✔ STAFF</b> badge in chat so players know who they are</li>
+        <li><b>Hover information</b> - Hovering over the badge shows "Official Tree Host Staff"</li>
+        <li><b>No commands</b> - The plugin has no commands and doesn't change your gameplay</li>
+        <li><b>Tiny footprint</b> - Minimal performance impact on your server</li>
+      </ul>
+
+      <h3>Security</h3>
+      <p>This plugin cannot be removed, disabled, or replaced from the dashboard. Tree Host automatically keeps it up to date and ensures it's always running on supported server types.</p>
+
+      <h3>Staff List</h3>
+      <p>The plugin maintains a list of official Tree Host staff members in <code>plugins/TreeHostStaff/staff.txt</code>. This file is automatically updated by Tree Host when staff roles change.</p>
+
+      <h3>Version</h3>
+      <p>The current version is managed by Tree Host and is automatically updated across all servers when needed.</p>
+    </div>
+    <div class="modal-actions"><button class="btn primary" data-close>Got it</button></div>
+  `);
 }
 
 // ---------- files ----------

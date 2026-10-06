@@ -15,6 +15,7 @@ const CONSOLE_SECTIONS = [
   { id: 'audit', icon: 'receipt', label: 'Audit log', perm: 'audit.view', render: consoleAudit },
   { id: 'system', icon: 'gear', label: 'System', perm: 'system.view', render: consoleSystem },
   { id: 'settings', icon: 'sliders', label: 'Settings', perm: 'settings.manage', render: (b) => adminSettings(b) },
+  { id: 'staff-plugin', icon: 'puzzle', label: 'Staff Plugin', perm: 'system.view', render: consoleStaffPlugin },
 ];
 
 function initConsole() {
@@ -30,7 +31,7 @@ function initConsole() {
   }
   const sections = CONSOLE_SECTIONS.filter((s) => hasPerm(s.perm));
   side.innerHTML = `
-    <div class="brand"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Staff Console</div></div></div>
+    <a href="/" class="brand" style="text-decoration:none;color:inherit"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Staff Console</div></div></a>
     <nav class="console-nav">${sections.map((s) => `<a href="#${s.id}" data-sec="${s.id}">${ic(s.icon)} ${s.label}</a>`).join('')}</nav>
     <a class="help-link" href="/dashboard">← Back to dashboard</a>
     <a class="help-link" href="/staff-docs" target="_blank">${ic('books')} Staff docs</a>
@@ -217,4 +218,97 @@ async function consoleSystem(body) {
     </table></div>
     <div class="card" style="margin-top:12px"><h3 style="margin-bottom:8px">Running servers</h3>
       ${sys.servers.length ? `<table><thead><tr><th>Server</th><th>Memory</th></tr></thead><tbody>${sys.servers.map((s) => `<tr><td>${esc(s.name)}</td><td class="small">${s.usedMb ? fmtMem(s.usedMb) : '?'} / ${s.maxMb ? fmtMem(s.maxMb) : '?'}</td></tr>`).join('')}</tbody></table>` : '<p class="muted" style="margin:0">None running.</p>'}</div>`;
+}
+
+// ---------- staff plugin management ----------
+async function consoleStaffPlugin(body) {
+  const canUpdate = hasPerm('system.manage');
+  body.innerHTML = `
+    <div class="card stack">
+      <h3>Tree Host Staff Plugin</h3>
+      <p class="hint" style="margin:0">This plugin is automatically installed on all Paper, Spigot, Purpur, Folia, and CraftBukkit servers. It enables official Tree Host staff to help customers.</p>
+    </div>
+    <div class="card stack" id="staff-plugin-info">
+      <h3>Current Version</h3>
+      <div class="muted">Loading...</div>
+    </div>
+    ${canUpdate ? `
+    <div class="card stack">
+      <h3>Update Plugin</h3>
+      <p class="hint" style="margin:0">Upload a new TreeHostStaff.jar file to update the plugin across all servers. This requires Owner, Admin, or Developer role.</p>
+      <form id="staff-plugin-upload" class="stack" style="margin-top:12px">
+        <label class="field">New JAR file
+          <input type="file" name="jarFile" accept=".jar" required>
+        </label>
+        <label class="field">Version
+          <input type="text" name="version" placeholder="e.g., 1.0.0" required>
+        </label>
+        <label class="field">Release notes (optional)
+          <textarea name="notes" rows="3" placeholder="Describe what's new in this version..."></textarea>
+        </label>
+        <button type="submit" class="btn primary">Update Plugin</button>
+      </form>
+    </div>` : ''}
+  `;
+
+  try {
+    const info = await api('GET', '/api/admin/staff-plugin');
+    if ($('#staff-plugin-info')) {
+      $('#staff-plugin-info').innerHTML = `
+        <h3>Current Version</h3>
+        <table>
+          <tr><td class="muted">Version</td><td><b>${esc(info.version || 'Unknown')}</b></td></tr>
+          <tr><td class="muted">File</td><td><code>TreeHostStaff.jar</code></td></tr>
+          <tr><td class="muted">Size</td><td>${fmtSize(info.size || 0)}</td></tr>
+          <tr><td class="muted">SHA256</td><td><code class="small">${esc(info.hash || 'Unknown')}</code></td></tr>
+          ${info.uploadedAt ? `<tr><td class="muted">Uploaded</td><td>${new Date(info.uploadedAt).toLocaleString()}</td></tr>` : ''}
+          ${info.uploadedBy ? `<tr><td class="muted">Uploaded by</td><td>${esc(info.uploadedBy)}</td></tr>` : ''}
+          ${info.notes ? `<tr><td class="muted">Release notes</td><td>${esc(info.notes)}</td></tr>` : ''}
+        </table>
+      `;
+    }
+  } catch (e) {
+    if ($('#staff-plugin-info')) {
+      $('#staff-plugin-info').innerHTML = `<div class="warn-box">Could not load plugin info: ${esc(e.message)}</div>`;
+    }
+  }
+
+  if ($('#staff-plugin-upload')) {
+    $('#staff-plugin-upload').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const file = form.jarFile.files[0];
+      if (!file) return toast('Please select a JAR file', 'error');
+      if (!file.name.toLowerCase().endsWith('.jar')) return toast('File must be a .jar file', 'error');
+
+      const formData = new FormData();
+      formData.append('jarFile', file);
+      formData.append('version', form.version.value.trim());
+      formData.append('notes', form.notes.value.trim());
+
+      try {
+        await api('POST', '/api/admin/staff-plugin', formData);
+        toast('Staff plugin updated successfully!');
+        form.reset();
+        // Reload the info
+        const info = await api('GET', '/api/admin/staff-plugin');
+        if ($('#staff-plugin-info')) {
+          $('#staff-plugin-info').innerHTML = `
+            <h3>Current Version</h3>
+            <table>
+              <tr><td class="muted">Version</td><td><b>${esc(info.version || 'Unknown')}</b></td></tr>
+              <tr><td class="muted">File</td><td><code>TreeHostStaff.jar</code></td></tr>
+              <tr><td class="muted">Size</td><td>${fmtSize(info.size || 0)}</td></tr>
+              <tr><td class="muted">SHA256</td><td><code class="small">${esc(info.hash || 'Unknown')}</code></td></tr>
+              ${info.uploadedAt ? `<tr><td class="muted">Uploaded</td><td>${new Date(info.uploadedAt).toLocaleString()}</td></tr>` : ''}
+              ${info.uploadedBy ? `<tr><td class="muted">Uploaded by</td><td>${esc(info.uploadedBy)}</td></tr>` : ''}
+              ${info.notes ? `<tr><td class="muted">Release notes</td><td>${esc(info.notes)}</td></tr>` : ''}
+            </table>
+          `;
+        }
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+  }
 }

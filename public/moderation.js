@@ -539,7 +539,7 @@ async function showRestricted() {
   $('.app').classList.add('app-restricted');
   $('.app').innerHTML = `
     <div class="restricted-page">
-      <div class="brand" style="margin-bottom:22px"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">${esc(state.me.user.username)}</div></div></div>
+      <a href="/" class="brand" style="margin-bottom:22px;text-decoration:none;color:inherit"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">${esc(state.me.user.username)}</div></div></a>
       <div class="card restricted-card">
         <div class="restricted-icon">${r.type === 'banned' ? '' + ic('ban') + '' : '' + ic('pause') + ''}</div>
         <h1>Your account is ${r.type}</h1>

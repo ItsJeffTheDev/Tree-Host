@@ -130,10 +130,10 @@ async function checkEmailVerified() {
 }
 
 /** Age gate: a neutral birth-year question (no hint about the minimum age). Under-13s are remembered on this device. */
-function birthYearField() {
+function birthYearField(defaultYear = '') {
   const now = new Date().getFullYear();
   const years = Array.from({ length: 100 }, (_, i) => now - i);
-  return `<label class="field">Year you were born <select name="birthYear" required><option value="">Choose...</option>${years.map((y) => `<option>${y}</option>`).join('')}</select></label>`;
+  return `<label class="field">Year you were born <select name="birthYear" required><option value="">Choose...</option>${years.map((y) => `<option value="${y}"${y === Number(defaultYear) ? ' selected' : ''}>${y}</option>`).join('')}</select></label>`;
 }
 const tooYoungKey = 'th_age_block';
 const ageBlocked = () => {
@@ -164,6 +164,9 @@ function showFirebaseAuth(forceMode) {
   };
   const [title, sub] = titles[mode];
   const newAccount = ['signup', 'invite', 'profile'].includes(mode);
+  // Pre-fill saved onboarding data if available (fallback for Firebase sync issues)
+  const savedUsername = localStorage.getItem('th_onboarding_username') || '';
+  const savedBirthYear = localStorage.getItem('th_onboarding_birth_year') || '';
   document.body.innerHTML = `
     <div class="auth-screen">
       <form class="auth-card stack" id="auth-form" autocomplete="on">
@@ -171,12 +174,12 @@ function showFirebaseAuth(forceMode) {
         ${addAccountBanner()}
         <h2>${esc(title)}</h2>
         <p class="muted" style="margin:0">${esc(sub)}</p>
-        ${newAccount ? `<label class="field">Username <input type="text" name="username" required minlength="3" maxlength="32" autocomplete="username" value="${esc(state.pendingProfile?.suggested || '')}"></label>` : ''}
+        ${newAccount ? `<label class="field">Username <input type="text" name="username" required minlength="3" maxlength="32" autocomplete="username" value="${esc(state.pendingProfile?.suggested || savedUsername)}"></label>` : ''}
         ${mode !== 'profile' ? '<label class="field">Email <input type="email" name="email" required autocomplete="email"></label>' : ''}
         ${!['forgot', 'profile'].includes(mode) ? `<label class="field">Password <input type="password" name="password" required minlength="${mode === 'login' ? 1 : 8}" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}"></label>` : ''}
         ${
           ['signup', 'profile'].includes(mode) && !invite
-            ? `${birthYearField()}<label class="check"><input type="checkbox" name="acceptTerms" required>
+            ? `${birthYearField(savedBirthYear)}<label class="check"><input type="checkbox" name="acceptTerms" required>
                  <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span></label>`
             : ''
         }
@@ -231,8 +234,24 @@ function showFirebaseAuth(forceMode) {
     const r = await api('POST', '/api/auth/firebase', { idToken, ...more });
     if (r.needsProfile) {
       state.pendingProfile = { suggested: r.suggested || '' };
+      // Check if we've saved the username locally (fallback for Firebase sync issues)
+      const savedUsername = localStorage.getItem('th_onboarding_username');
+      const savedBirthYear = localStorage.getItem('th_onboarding_birth_year');
+      if (savedUsername && savedBirthYear) {
+        // Auto-fill with saved data to help user
+        state.pendingProfile.suggested = savedUsername;
+        $('#auth-form').elements.username.value = savedUsername;
+        if ($('#auth-form').elements.birthYear) {
+          $('#auth-form').elements.birthYear.value = savedBirthYear;
+        }
+      }
       return showFirebaseAuth('profile');
     }
+    // Clear saved onboarding data after successful profile completion
+    try {
+      localStorage.removeItem('th_onboarding_username');
+      localStorage.removeItem('th_onboarding_birth_year');
+    } catch {}
     location.href = r.created ? '/dashboard?welcome' : '/dashboard';
   };
 
@@ -350,6 +369,9 @@ function showAuth(forceMode) {
   };
   const [title, sub] = titles[mode];
   const field = (html) => html;
+  // Pre-fill saved onboarding data if available (fallback for Firebase sync issues)
+  const savedUsername = localStorage.getItem('th_onboarding_username') || '';
+  const savedBirthYear = localStorage.getItem('th_onboarding_birth_year') || '';
   document.body.innerHTML = `
     <div class="auth-screen">
       <form class="auth-card stack" id="auth-form" autocomplete="on">
@@ -361,7 +383,7 @@ function showAuth(forceMode) {
           mode === 'login'
             ? '<label class="field">Username or email <input type="text" name="username" required autocomplete="username"></label>'
             : ['invite', 'signup'].includes(mode)
-              ? '<label class="field">Username <input type="text" name="username" required autocomplete="username" minlength="3" maxlength="32"></label>'
+              ? `<label class="field">Username <input type="text" name="username" required autocomplete="username" minlength="3" maxlength="32" value="${esc(savedUsername)}"></label>`
               : ''
         }
         ${
@@ -376,7 +398,7 @@ function showAuth(forceMode) {
         }
         ${
           mode === 'signup'
-            ? `${birthYearField()}<label class="check"><input type="checkbox" name="acceptTerms" required>
+            ? `${birthYearField(savedBirthYear)}<label class="check"><input type="checkbox" name="acceptTerms" required>
                  <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span></label>`
             : ''
         }
@@ -427,6 +449,20 @@ function showAuth(forceMode) {
         ok.textContent = 'If an account uses that email, a reset link is on its way. Check your inbox (and spam).';
         ok.classList.remove('hidden');
         return;
+      }
+      // Save onboarding data locally as fallback for Firebase sync issues
+      if (body.username) {
+        try {
+          localStorage.setItem('th_onboarding_username', body.username);
+          if (body.birthYear) localStorage.setItem('th_onboarding_birth_year', body.birthYear);
+        } catch {}
+      }
+      // Clear saved data after successful login (not signup)
+      if (mode === 'login') {
+        try {
+          localStorage.removeItem('th_onboarding_username');
+          localStorage.removeItem('th_onboarding_birth_year');
+        } catch {}
       }
       location.href = mode === 'signup' ? '/dashboard?welcome' : '/dashboard';
     } catch (err) {

@@ -1857,6 +1857,131 @@ route('PUT', '/api/admin/costs', async (req) => {
 route('PUT', '/api/admin/donations/:id', async (req, res, p) => {
   const body = await readJson(req);
   const d = await billing.setDonationHidden(p.id, body.hidden);
+});
+
+// ---------- Tree Host Staff Plugin Management ----------
+
+const STAFF_PLUGIN_INFO_FILE = path.join(DATA, 'staff-plugin-info.json');
+
+/** Load staff plugin info from local file. */
+async function loadStaffPluginInfo() {
+  try {
+    return JSON.parse(await fsp.readFile(STAFF_PLUGIN_INFO_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Save staff plugin info to local file. */
+async function saveStaffPluginInfo(info) {
+  await fsp.mkdir(DATA, { recursive: true });
+  await fsp.writeFile(STAFF_PLUGIN_INFO_FILE, JSON.stringify(info, null, 2), { mode: 0o600 });
+}
+
+/** Get current staff plugin info. */
+route('GET', '/api/admin/staff-plugin', async (req) => {
+  const info = await loadStaffPluginInfo();
+  if (!info) {
+    // Return default info if file doesn't exist
+    return {
+      version: '1.0.0',
+      size: staffPluginJar ? staffPluginJar.length : 0,
+      hash: staffPluginHash || 'Unknown',
+      uploadedAt: null,
+      uploadedBy: null,
+      notes: 'Default plugin from minecraft-plugin/TreeHostStaff.jar',
+    };
+  }
+  return info;
+}, { perm: 'system.view' });
+
+/** Update staff plugin JAR file. */
+route('POST', '/api/admin/staff-plugin', async (req) => {
+  // Simple multipart parsing for file upload
+  const contentType = req.headers['content-type'] || '';
+  const boundaryMatch = contentType.match(/boundary=([^;]+)/);
+  if (!boundaryMatch) throw httpError(400, 'Invalid multipart request');
+
+  const boundary = boundaryMatch[1];
+  const chunks = [];
+  let totalSize = 0;
+  const maxSize = 50 * 1024 * 1024; // 50MB
+
+  for await (const chunk of req) {
+    totalSize += chunk.length;
+    if (totalSize > maxSize) throw httpError(413, 'File too large (max 50MB)');
+    chunks.push(chunk);
+  }
+
+  const buffer = Buffer.concat(chunks);
+  const parts = buffer.toString('binary').split(`--${boundary}`).filter(Boolean);
+
+  let jarFile = null;
+  let version = null;
+  let notes = '';
+
+  for (const part of parts) {
+    if (part.includes('--')) continue; // Skip final boundary
+
+    const [header, ...bodyParts] = part.split('\r\n\r\n');
+    const body = bodyParts.join('\r\n\r\n').replace(/\r\n--$/, ''); // Remove trailing boundary
+
+    const headers = header.split('\r\n').reduce((acc, h) => {
+      const [k, v] = h.split(': ');
+      if (k && v) acc[k.toLowerCase()] = v;
+      return acc;
+    }, {});
+
+    if (headers['content-disposition']) {
+      const nameMatch = headers['content-disposition'].match(/name="([^"]+)"/);
+      if (nameMatch) {
+        const name = nameMatch[1];
+        if (name === 'jarFile') {
+          jarFile = Buffer.from(body, 'binary');
+        } else if (name === 'version') {
+          version = body.trim();
+        } else if (name === 'notes') {
+          notes = body.trim();
+        }
+      }
+    }
+  }
+
+  if (!jarFile) throw httpError(400, 'No JAR file provided');
+  if (!version) throw httpError(400, 'Version is required');
+  if (!jarFile.length || jarFile.length > 50 * 1024 * 1024) throw httpError(400, 'JAR file must be between 1 byte and 50MB');
+
+  // Validate it's a JAR file (ZIP archive)
+  if (!jarFile.slice(0, 4).toString('hex').startsWith('504b0304')) {
+    throw httpError(400, 'File is not a valid JAR file (not a ZIP archive)');
+  }
+
+  // Save the new JAR file
+  const pluginDir = path.join(__dirname, '..', 'minecraft-plugin');
+  await fsp.mkdir(pluginDir, { recursive: true });
+  const jarPath = path.join(pluginDir, 'TreeHostStaff.jar');
+  await fsp.writeFile(jarPath, jarFile);
+
+  // Update in-memory cache
+  staffPluginJar = jarFile;
+  const newHash = sha(jarFile);
+
+  // Save metadata
+  const info = {
+    version,
+    size: jarFile.length,
+    hash: newHash,
+    uploadedAt: Date.now(),
+    uploadedBy: req.user.username,
+    notes,
+  };
+  await saveStaffPluginInfo(info);
+
+  // Log the update
+  activity.log('system', req.user.username, `updated the Tree Host staff plugin to version ${version}`);
+
+  return info;
+}, { perm: 'system.manage' });
   audit(req, `${d.hidden ? 'hid' : 'showed'} a supporter message on the donate page`);
   return d;
 }, { perm: 'billing.manage' });
