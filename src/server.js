@@ -1857,7 +1857,9 @@ route('PUT', '/api/admin/costs', async (req) => {
 route('PUT', '/api/admin/donations/:id', async (req, res, p) => {
   const body = await readJson(req);
   const d = await billing.setDonationHidden(p.id, body.hidden);
-});
+  audit(req, `${d.hidden ? 'hid' : 'showed'} a supporter message on the donate page`);
+  return d;
+}, { perm: 'billing.manage' });
 
 // ---------- Tree Host Staff Plugin Management ----------
 
@@ -1982,9 +1984,6 @@ route('POST', '/api/admin/staff-plugin', async (req) => {
 
   return info;
 }, { perm: 'system.manage' });
-  audit(req, `${d.hidden ? 'hid' : 'showed'} a supporter message on the donate page`);
-  return d;
-}, { perm: 'billing.manage' });
 
 // ---------- the team page ----------
 // Everyone with a role at Developer level or above (Owner, Admin, Developer, and custom roles that high) is shown,
