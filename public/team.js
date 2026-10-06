@@ -962,7 +962,7 @@ async function adminPeople(body) {
     $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
       .map(
         (u) => `<tr data-user-id="${esc(u.id)}">
-          <td><b>${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">${u.linked.length} linked</span>` : ''}
+          <td><b class="clickable-user" data-view-details="${esc(u.id)}">${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">${u.linked.length} linked</span>` : ''}
             <div class="small muted">${esc(u.email) || 'no email'} · joined ${new Date(u.createdAt).toLocaleDateString()}${u.lastLogin ? ` · last seen ${new Date(u.lastLogin).toLocaleDateString()}` : ''}</div></td>
           <td>${
             u.id !== me.id && canRoles && outranks(u)
@@ -971,22 +971,23 @@ async function adminPeople(body) {
           }</td>
           <td class="small">${u.activePlans.length ? esc(u.activePlans.join(', ')) : '<span class="muted">none</span>'}${u.servers ? ` · ${u.servers} server${u.servers > 1 ? 's' : ''}` : ''}</td>
           <td class="actions-cell">${(() => {
-            if (u.id === me.id) return '<span class="muted small">you</span>';
+            const isMe = u.id === me.id;
             const manage = canManage && outranks(u);
             const items = [
               `<button class="btn sm" data-view-details="${esc(u.id)}">${ic('info')} View Details</button>`,
-              hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">${ic('ticket')} Give a free server code</button>` : '',
-              canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan now</button>` : '',
+              !isMe && hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">${ic('ticket')} Give a free server code</button>` : '',
+              !isMe && canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan now</button>` : '',
               manage
                 ? u.firebase
                   ? `<button class="btn sm" data-reset="${esc(u.email)}">Send password reset email</button>`
                   : `<button class="btn sm" data-temp="${esc(u.id)}">Temporary password</button>`
                 : '',
               manage ? `<button class="btn sm" data-change-email="${esc(u.id)}">Change Email</button>` : '',
-              hasPerm('messages.send') ? `<button class="btn sm" data-msg="${esc(u.id)}">${ic('mail')} Send message</button>` : '',
-              outranks(u) && canTakeAction('account') ? `<button class="btn sm" data-take="${esc(u.id)}">${ic('shield')} Take action (warn, suspend, ban, delete)</button>` : '',
+              !isMe && hasPerm('messages.send') ? `<button class="btn sm" data-msg="${esc(u.id)}">${ic('mail')} Send message</button>` : '',
+              !isMe && outranks(u) && canTakeAction('account') ? `<button class="btn sm" data-take="${esc(u.id)}">${ic('shield')} Take action (warn, suspend, ban, delete)</button>` : '',
               u.restriction && !u.restriction.actionId && hasPerm('moderation.act') && outranks(u) ? `<button class="btn sm" data-legacy="${esc(u.id)}">Lift old suspension</button>` : '',
             ].join('');
+            if (isMe) return `<span class="muted small">you</span> ${items ? `<details class="menu"><summary class="btn sm">Manage</summary><div class="menu-body">${items}</div></details>` : ''}`;
             return items ? `<details class="menu"><summary class="btn sm">More</summary><div class="menu-body">${items}</div></details>` : '';
           })()}</td></tr>`,
       )
@@ -998,6 +999,9 @@ async function adminPeople(body) {
     draw();
   };
   const bindRows = () => {
+    $$('.clickable-user', body).forEach((b) =>
+      b.addEventListener('click', () => showUserDetails(b.dataset.viewDetails)),
+    );
     $$('[data-role]', body).forEach((sel) =>
       sel.addEventListener('change', () => {
         const r = rbac.roles.find((x) => x.id === sel.value);

@@ -2264,7 +2264,7 @@ const optionalUser = (req) => {
     return null;
   }
 };
-route('GET', '/api/donations', () => ({ ...billing.donationSummary(), mode: billing.mode, fallbackUrl: billing.mode === 'off' ? DONATE_URL : null }), { public: true });
+route('GET', '/api/donations', () => ({ ...billing.donationSummary(), mode: billing.mode, fallbackUrl: DONATE_URL }), { public: true });
 route(
   'POST',
   '/api/donations',
