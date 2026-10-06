@@ -58,6 +58,15 @@ function money(cents, currency = 'usd') {
   }
 }
 
+function fmtMem(mb) {
+  return mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+}
+
+// Icon helper (uses icons.js which is loaded before team.js)
+function ic(name, cls = '') {
+  return `<svg class="ic${cls ? ` ${cls}` : ''}" aria-hidden="true" focusable="false"><use href="/icons.svg#${name}"/></svg>`;
+}
+
 // ---------- Firebase sign-in ----------
 
 const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/10.12.2';
@@ -952,7 +961,7 @@ async function adminPeople(body) {
       .filter((u) => !q || u.username.toLowerCase().includes(q) || (u.email || '').includes(q));
     $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
       .map(
-        (u) => `<tr>
+        (u) => `<tr data-user-id="${esc(u.id)}">
           <td><b>${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">${u.linked.length} linked</span>` : ''}
             <div class="small muted">${esc(u.email) || 'no email'} · joined ${new Date(u.createdAt).toLocaleDateString()}${u.lastLogin ? ` · last seen ${new Date(u.lastLogin).toLocaleDateString()}` : ''}</div></td>
           <td>${
@@ -965,6 +974,7 @@ async function adminPeople(body) {
             if (u.id === me.id) return '<span class="muted small">you</span>';
             const manage = canManage && outranks(u);
             const items = [
+              `<button class="btn sm" data-view-details="${esc(u.id)}">${ic('info')} View Details</button>`,
               hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">${ic('ticket')} Give a free server code</button>` : '',
               canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan now</button>` : '',
               manage
@@ -972,6 +982,7 @@ async function adminPeople(body) {
                   ? `<button class="btn sm" data-reset="${esc(u.email)}">Send password reset email</button>`
                   : `<button class="btn sm" data-temp="${esc(u.id)}">Temporary password</button>`
                 : '',
+              manage ? `<button class="btn sm" data-change-email="${esc(u.id)}">Change Email</button>` : '',
               hasPerm('messages.send') ? `<button class="btn sm" data-msg="${esc(u.id)}">${ic('mail')} Send message</button>` : '',
               outranks(u) && canTakeAction('account') ? `<button class="btn sm" data-take="${esc(u.id)}">${ic('shield')} Take action (warn, suspend, ban, delete)</button>` : '',
               u.restriction && !u.restriction.actionId && hasPerm('moderation.act') && outranks(u) ? `<button class="btn sm" data-legacy="${esc(u.id)}">Lift old suspension</button>` : '',
@@ -1017,6 +1028,12 @@ async function adminPeople(body) {
           prompt('Temporary password (send it privately, they should change it after signing in):', password);
         });
       }),
+    );
+    $$('[data-view-details]', body).forEach((b) =>
+      b.addEventListener('click', () => showUserDetails(b.dataset.viewDetails)),
+    );
+    $$('[data-change-email]', body).forEach((b) =>
+      b.addEventListener('click', () => showChangeEmailModal(b.dataset.changeEmail)),
     );
     $$('[data-take]', body).forEach((b) =>
       b.addEventListener('click', () => {
@@ -1517,6 +1534,125 @@ async function adminPlans(body) {
       toast('Capacity saved');
     }),
   );
+}
+
+// ---------- User Details Modal ----------
+
+async function showUserDetails(userId) {
+  try {
+    const details = await api('GET', `/api/admin/users/${userId}/details`);
+    const { root, close } = openModal(`
+      <h2>${ic('user')} ${esc(details.username)}</h2>
+      <div class="card stack">
+        <h3>Account Information</h3>
+        <table>
+          <tr><td class="muted">Username</td><td><b>${esc(details.username)}</b></td></tr>
+          <tr><td class="muted">Email</td><td>${esc(details.email || 'No email')}</td></tr>
+          <tr><td class="muted">Role</td><td><span class="badge ${ROLE_BADGE[details.role] || ''}">${esc(details.roleLabel || details.role)}</span></td></tr>
+          <tr><td class="muted">Joined</td><td>${new Date(details.createdAt).toLocaleString()}</td></tr>
+          <tr><td class="muted">Last Login</td><td>${details.lastLogin ? new Date(details.lastLogin).toLocaleString() : 'Never'}</td></tr>
+          <tr><td class="muted">Minecraft Name</td><td>${esc(details.mcName || 'Not set')}</td></tr>
+          ${details.firebaseUid ? `<tr><td class="muted">Firebase UID</td><td><code class="small">${esc(details.firebaseUid)}</code></td></tr>` : ''}
+          ${details.restriction ? `<tr><td class="muted">Status</td><td><span class="badge red">${esc(details.restriction.type)}: ${esc(details.restriction.actionId || 'system')}</span></td></tr>` : ''}
+          ${details.prioritySupport ? `<tr><td class="muted">Support</td><td><span class="badge yellow">Priority</span></td></tr>` : ''}
+          ${details.lifetime ? `<tr><td class="muted">Plan</td><td><span class="badge lifetime-badge">Lifetime</span></td></tr>` : ''}
+        </table>
+      </div>
+      <div class="card stack">
+        <h3>Servers (${details.servers.length})</h3>
+        ${details.servers.length ? `
+        <table>
+          ${details.servers.map(s => `
+            <tr>
+              <td><b>${esc(s.name)}</b></td>
+              <td class="small">${esc(s.type)} ${esc(s.version)}</td>
+              <td class="small">${esc(s.status)}</td>
+              <td class="small">${fmtMem(s.memoryMb)}</td>
+              <td class="small">${s.diskUsedMb ? fmtSize(s.diskUsedMb) : 'N/A'}</td>
+            </tr>
+          `).join('')}
+        </table>
+        ` : '<p class="muted" style="margin:0">No servers yet.</p>'}
+      </div>
+      <div class="card stack">
+        <h3>Subscriptions (${details.subscriptions.length})</h3>
+        ${details.subscriptions.length ? `
+        <table>
+          ${details.subscriptions.map(s => `
+            <tr>
+              <td><b>${esc(s.planName)}</b></td>
+              <td class="small">${esc(s.status)}</td>
+              <td class="small">${fmtMem(s.ramMb)}</td>
+              <td class="small">${s.startedAt ? new Date(s.startedAt).toLocaleDateString() : 'Not started'}</td>
+              <td class="small">${s.endsAt ? new Date(s.endsAt).toLocaleDateString() : 'Ongoing'}</td>
+            </tr>
+          `).join('')}
+        </table>
+        ` : '<p class="muted" style="margin:0">No subscriptions yet.</p>'}
+      </div>
+      <div class="card stack">
+        <h3>Recent Activity (Last 50)</h3>
+        ${details.activity.length ? `
+        <div class="stack" style="gap:6px">
+          ${details.activity.map(a => `
+            <div class="small muted" style="padding:4px;border-left:2px solid #ddd;margin-left:8px">
+              <span class="muted">${new Date(a.t).toLocaleString()}</span> · ${esc(a.kind)}: ${esc(a.text)}
+            </div>
+          `).join('')}
+        </div>
+        ` : '<p class="muted" style="margin:0">No recent activity.</p>'}
+      </div>
+      ${details.linked && details.linked.length ? `
+      <div class="card stack">
+        <h3>Linked Accounts (${details.linked.length})</h3>
+        <table>
+          ${details.linked.map(l => `
+            <tr>
+              <td><b>${esc(l.username)}</b></td>
+              <td><span class="badge ${ROLE_BADGE[l.role] || ''}">${esc(l.role)}</span></td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>
+      ` : ''}
+      <div class="modal-actions"><button class="btn primary" data-close>Close</button></div>
+    `);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function showChangeEmailModal(userId) {
+  const { root, close } = openModal(`
+    <h2>Change Email</h2>
+    <form id="change-email-form" class="stack">
+      <p class="hint" style="margin:0">A verification email will be sent to the new address. The user must click the link to confirm the change.</p>
+      <label class="field">New Email Address
+        <input type="email" name="newEmail" placeholder="user@example.com" required>
+      </label>
+      <div class="modal-actions">
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="btn primary">Send Verification Email</button>
+      </div>
+    </form>
+  `);
+
+  $('#change-email-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const newEmail = form.newEmail.value.trim();
+    
+    try {
+      const result = await api('POST', `/api/admin/users/${userId}/change-email`, { newEmail });
+      toast(result.message);
+      if (result.verifyLink) {
+        alert(`Verification link (for testing): ${result.verifyLink}`);
+      }
+      close();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  });
 }
 
 async function adminSettings(body) {

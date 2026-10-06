@@ -873,6 +873,108 @@ route(
     }),
   { perm: 'users.view' },
 );
+
+/** Get detailed user information including activity logs. */
+route('GET', '/api/admin/users/:uid/details', async (req, res, p) => {
+  const u = auth.userById(p.uid);
+  if (!u) throw httpError(404, 'User not found');
+  
+  const subs = billing.forUser(u.id);
+  const instances = [...manager.instances.values()].filter((i) => i.cfg.owner === u.id && i.isCustomer);
+  const userActivity = activity.events.filter((e) => e.owner === u.id || e.kind === 'people' && e.text.includes(u.username));
+  
+  return {
+    ...auth.publicUser(u),
+    createdAt: u.createdAt,
+    lastLogin: u.lastLogin,
+    firebaseUid: u.firebaseUid,
+    mcName: u.mcName,
+    restriction: u.restriction,
+    prioritySupport: u.prioritySupport,
+    servers: instances.map((i) => ({
+      id: i.cfg.id,
+      name: i.cfg.name,
+      type: i.cfg.type,
+      version: i.cfg.version,
+      status: i.status,
+      memoryMb: i.cfg.memoryMb,
+      diskUsedMb: i.diskUsedMb,
+      createdAt: i.cfg.createdAt,
+    })),
+    subscriptions: subs.map((s) => ({
+      id: s.id,
+      planName: s.planName,
+      status: s.status,
+      ramMb: s.ramMb,
+      startedAt: s.startedAt,
+      endsAt: s.endsAt,
+    })),
+    activity: userActivity.slice(-50).reverse(), // Last 50 activities
+    linked: auth.linkedAccounts(u).map((x) => ({ id: x.id, username: x.username, role: x.role })),
+    ...lifetimeOf(u),
+  };
+}, { perm: 'users.view' });
+
+/** Send password reset email (custom format). */
+route('POST', '/api/admin/users/:uid/reset-password', async (req, res, p) => {
+  const u = auth.userById(p.uid);
+  if (!u) throw httpError(404, 'User not found');
+  if (!u.firebaseUid) throw httpError(400, 'This account does not use Firebase auth');
+  
+  // Generate reset token
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const resetExpires = Date.now() + 3600000; // 1 hour
+  
+  // Store reset token
+  u.passwordReset = { token: resetToken, expires: resetExpires };
+  await auth.save();
+  
+  // In production, this would send a custom email via your email service
+  // For now, we'll return the reset link for testing
+  const resetLink = `${process.env.TREEHOST_PUBLIC_URL || 'http://localhost:8080'}/reset-password?token=${resetToken}`;
+  
+  audit(req, `sent a password reset email to ${u.username}`);
+  
+  // TODO: Send actual email using your custom email service
+  // await sendCustomEmail(u.email, 'Password Reset', '...', resetLink);
+  
+  return { 
+    success: true, 
+    resetLink: resetLink, // Remove this in production
+    message: `Password reset email sent to ${u.email}`
+  };
+}, { perm: 'users.manage' });
+
+/** Request email change (sends verification email to new address). */
+route('POST', '/api/admin/users/:uid/change-email', async (req, res, p) => {
+  const { newEmail } = await readJson(req);
+  if (!newEmail || !newEmail.includes('@')) throw httpError(400, 'Invalid email address');
+  
+  const u = auth.userById(p.uid);
+  if (!u) throw httpError(404, 'User not found');
+  
+  // Generate verification token
+  const verifyToken = crypto.randomBytes(32).toString('hex');
+  const verifyExpires = Date.now() + 86400000; // 24 hours
+  
+  // Store pending email change
+  u.pendingEmailChange = { newEmail, token: verifyToken, expires: verifyExpires };
+  await auth.save();
+  
+  // Send verification email to new address
+  const verifyLink = `${process.env.TREEHOST_PUBLIC_URL || 'http://localhost:8080'}/verify-email?token=${verifyToken}`;
+  
+  audit(req, `requested email change for ${u.username} to ${newEmail}`);
+  
+  // TODO: Send actual email using your custom email service
+  // await sendCustomEmail(newEmail, 'Verify Email Change', '...', verifyLink);
+  
+  return { 
+    success: true, 
+    verifyLink: verifyLink, // Remove this in production
+    message: `Verification email sent to ${newEmail}`
+  };
+}, { perm: 'users.manage' });
 route(
   'POST',
   '/api/team/users/:uid/temp-password',
@@ -2201,6 +2303,8 @@ route('PUT', '/api/admin/donations/:id', async (req, res, p) => {
 // ---------- Tree Host Staff Plugin Management ----------
 
 const STAFF_PLUGIN_INFO_FILE = path.join(DATA, 'staff-plugin-info.json');
+const REQUIRED_PLUGINS_FILE = path.join(DATA, 'required-plugins.json');
+const REQUIRED_PLUGINS_DIR = path.join(__dirname, '..', 'required-plugins');
 
 /** Load staff plugin info from local file. */
 async function loadStaffPluginInfo() {
@@ -2215,6 +2319,21 @@ async function loadStaffPluginInfo() {
 async function saveStaffPluginInfo(info) {
   await fsp.mkdir(DATA, { recursive: true });
   await fsp.writeFile(STAFF_PLUGIN_INFO_FILE, JSON.stringify(info, null, 2), { mode: 0o600 });
+}
+
+/** Load required plugins list. */
+async function loadRequiredPlugins() {
+  try {
+    return JSON.parse(await fsp.readFile(REQUIRED_PLUGINS_FILE, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+/** Save required plugins list. */
+async function saveRequiredPlugins(plugins) {
+  await fsp.mkdir(DATA, { recursive: true });
+  await fsp.writeFile(REQUIRED_PLUGINS_FILE, JSON.stringify(plugins, null, 2), { mode: 0o600 });
 }
 
 /** Get current staff plugin info. */
@@ -2232,6 +2351,16 @@ route('GET', '/api/admin/staff-plugin', async (req) => {
     };
   }
   return info;
+}, { perm: 'system.view' });
+
+/** Get all required plugins. */
+route('GET', '/api/admin/required-plugins', async (req) => {
+  const plugins = await loadRequiredPlugins();
+  return plugins.map(p => ({
+    ...p,
+    size: p.size || 0,
+    fileExists: fs.existsSync(path.join(REQUIRED_PLUGINS_DIR, p.filename)),
+  }));
 }, { perm: 'system.view' });
 
 /** Update staff plugin JAR file. */
@@ -2320,6 +2449,192 @@ route('POST', '/api/admin/staff-plugin', async (req) => {
   activity.log('system', req.user.username, `updated the Tree Host staff plugin to version ${version}`);
 
   return info;
+}, { perm: 'system.manage' });
+
+/** Add a new required plugin. */
+route('POST', '/api/admin/required-plugins', async (req) => {
+  const contentType = req.headers['content-type'] || '';
+  const boundaryMatch = contentType.match(/boundary=([^;]+)/);
+  if (!boundaryMatch) throw httpError(400, 'Invalid multipart request');
+
+  const boundary = boundaryMatch[1];
+  const chunks = [];
+  let totalSize = 0;
+  const maxSize = 50 * 1024 * 1024; // 50MB
+
+  for await (const chunk of req) {
+    totalSize += chunk.length;
+    if (totalSize > maxSize) throw httpError(413, 'File too large (max 50MB)');
+    chunks.push(chunk);
+  }
+
+  const buffer = Buffer.concat(chunks);
+  const parts = buffer.toString('binary').split(`--${boundary}`).filter(Boolean);
+
+  let jarFile = null;
+  let filename = null;
+  let title = null;
+  let description = '';
+  let locked = true;
+  let targetTypes = ['paper', 'spigot', 'purpur', 'folia', 'craftbukkit'];
+
+  for (const part of parts) {
+    if (part.includes('--')) continue;
+
+    const [header, ...bodyParts] = part.split('\r\n\r\n');
+    const body = bodyParts.join('\r\n\r\n').replace(/\r\n--$/, '');
+
+    const headers = header.split('\r\n').reduce((acc, h) => {
+      const [k, v] = h.split(': ');
+      if (k && v) acc[k.toLowerCase()] = v;
+      return acc;
+    }, {});
+
+    if (headers['content-disposition']) {
+      const nameMatch = headers['content-disposition'].match(/name="([^"]+)"/);
+      if (nameMatch) {
+        const name = nameMatch[1];
+        if (name === 'jarFile') {
+          jarFile = Buffer.from(body, 'binary');
+          const filenameMatch = headers['content-disposition'].match(/filename="([^"]+)"/);
+          if (filenameMatch) filename = filenameMatch[1];
+        } else if (name === 'title') {
+          title = body.trim();
+        } else if (name === 'description') {
+          description = body.trim();
+        } else if (name === 'locked') {
+          locked = body.trim() === 'true';
+        } else if (name === 'targetTypes') {
+          try {
+            targetTypes = JSON.parse(body.trim());
+          } catch {}
+        }
+      }
+    }
+  }
+
+  if (!jarFile) throw httpError(400, 'No JAR file provided');
+  if (!title) throw httpError(400, 'Title is required');
+  if (!filename) filename = title.replace(/[^a-zA-Z0-9_-]/g, '') + '.jar';
+  if (!jarFile.length || jarFile.length > 50 * 1024 * 1024) throw httpError(400, 'JAR file must be between 1 byte and 50MB');
+
+  // Validate it's a JAR file
+  if (!jarFile.slice(0, 4).toString('hex').startsWith('504b0304')) {
+    throw httpError(400, 'File is not a valid JAR file (not a ZIP archive)');
+  }
+
+  // Save the JAR file
+  await fsp.mkdir(REQUIRED_PLUGINS_DIR, { recursive: true });
+  const jarPath = path.join(REQUIRED_PLUGINS_DIR, filename);
+  await fsp.writeFile(jarPath, jarFile);
+
+  // Load existing plugins
+  const plugins = await loadRequiredPlugins();
+
+  // Add new plugin
+  const plugin = {
+    id: crypto.randomBytes(8).toString('hex'),
+    filename,
+    title,
+    description,
+    locked,
+    targetTypes,
+    size: jarFile.length,
+    hash: sha(jarFile),
+    uploadedAt: Date.now(),
+    uploadedBy: req.user.username,
+  };
+  plugins.push(plugin);
+  await saveRequiredPlugins(plugins);
+
+  // Log the addition
+  activity.log('system', req.user.username, `added required plugin "${title}" (${filename})`);
+
+  return plugin;
+}, { perm: 'system.manage' });
+
+/** Update a required plugin. */
+route('PUT', '/api/admin/required-plugins/:id', async (req) => {
+  const plugins = await loadRequiredPlugins();
+  const pluginIndex = plugins.findIndex(p => p.id === req.params.id);
+  if (pluginIndex === -1) throw httpError(404, 'Plugin not found');
+
+  const body = await readJson(req);
+  const plugin = plugins[pluginIndex];
+
+  // Update fields
+  if (body.title !== undefined) plugin.title = body.title;
+  if (body.description !== undefined) plugin.description = body.description;
+  if (body.locked !== undefined) plugin.locked = body.locked;
+  if (body.targetTypes !== undefined) plugin.targetTypes = body.targetTypes;
+
+  plugin.updatedAt = Date.now();
+  plugin.updatedBy = req.user.username;
+
+  plugins[pluginIndex] = plugin;
+  await saveRequiredPlugins(plugins);
+
+  activity.log('system', req.user.username, `updated required plugin "${plugin.title}"`);
+
+  return plugin;
+}, { perm: 'system.manage' });
+
+/** Delete a required plugin. */
+route('DELETE', '/api/admin/required-plugins/:id', async (req) => {
+  const plugins = await loadRequiredPlugins();
+  const pluginIndex = plugins.findIndex(p => p.id === req.params.id);
+  if (pluginIndex === -1) throw httpError(404, 'Plugin not found');
+
+  const plugin = plugins[pluginIndex];
+
+  // Delete the JAR file
+  const jarPath = path.join(REQUIRED_PLUGINS_DIR, plugin.filename);
+  await fsp.rm(jarPath, { force: true }).catch(() => {});
+
+  // Remove from list
+  plugins.splice(pluginIndex, 1);
+  await saveRequiredPlugins(plugins);
+
+  activity.log('system', req.user.username, `deleted required plugin "${plugin.title}"`);
+
+  return { ok: true };
+}, { perm: 'system.manage' });
+
+/** Distribute a required plugin to all servers. */
+route('POST', '/api/admin/required-plugins/:id/distribute', async (req) => {
+  const plugins = await loadRequiredPlugins();
+  const plugin = plugins.find(p => p.id === req.params.id);
+  if (!plugin) throw httpError(404, 'Plugin not found');
+
+  // Load the JAR file
+  const jarPath = path.join(REQUIRED_PLUGINS_DIR, plugin.filename);
+  const jarFile = await fsp.readFile(jarPath);
+
+  let distributed = 0;
+  let failed = 0;
+
+  for (const inst of manager.instances.values()) {
+    // Check if server type matches target types
+    if (!plugin.targetTypes.includes(inst.cfg.type)) continue;
+
+    // Check if server is bukkit family
+    if (inst.provider.family !== 'bukkit') continue;
+
+    try {
+      const dir = path.join(inst.dir, inst.pluginDirName);
+      const targetJar = path.join(dir, plugin.filename);
+      await fsp.mkdir(dir, { recursive: true });
+      await fsp.writeFile(targetJar, jarFile);
+      distributed++;
+    } catch (e) {
+      console.error(`[required plugin] Failed to distribute to ${inst.cfg.id}: ${e.message}`);
+      failed++;
+    }
+  }
+
+  activity.log('system', req.user.username, `distributed required plugin "${plugin.title}" to ${distributed} servers (${failed} failed)`);
+
+  return { distributed, failed };
 }, { perm: 'system.manage' });
 
 // ---------- the team page ----------

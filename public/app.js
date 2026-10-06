@@ -236,8 +236,8 @@ function renderMain() {
   if ((state.tab === 'files' && !can('files', s)) || (state.tab === 'settings' && !can('settings', s))) state.tab = 'console';
   main.innerHTML = `
     ${s.isDemo ? `
-    <div class="card" style="margin:0 0 16px;background:#fff3cd;border:1px solid #ffc107">
-      <p style="margin:0;font-size:14px">
+    <div class="card" style="margin:0 0 16px;background:#e3f2fd;border:1px solid #2196f3">
+      <p style="margin:0;font-size:14px;color:#1565c0">
         <b>🎮 Demo Server</b> - This is a shared demo server for exploration. You can start/stop it and run commands, but files, plugins, and settings are read-only.
       </p>
     </div>

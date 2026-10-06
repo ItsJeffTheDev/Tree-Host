@@ -18,6 +18,21 @@ const CONSOLE_SECTIONS = [
   { id: 'staff-plugin', icon: 'puzzle', label: 'Staff Plugin', perm: 'system.view', render: consoleStaffPlugin },
 ];
 
+// Helper functions
+function fmtSize(b) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1073741824) return `${(b / 1048576).toFixed(1)} MB`;
+  return `${(b / 1073741824).toFixed(2)} GB`;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+const $ = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+
 function initConsole() {
   document.title = 'Staff Console · Tree Host';
   const side = $('.sidebar');
@@ -222,7 +237,8 @@ async function consoleSystem(body) {
 
 // ---------- staff plugin management ----------
 async function consoleStaffPlugin(body) {
-  const canUpdate = hasPerm('system.manage');
+  const canView = hasPerm('system.view');
+  const canManage = hasPerm('system.manage');
   body.innerHTML = `
     <div class="card stack">
       <h3>Tree Host Staff Plugin</h3>
@@ -232,7 +248,7 @@ async function consoleStaffPlugin(body) {
       <h3>Current Version</h3>
       <div class="muted">Loading...</div>
     </div>
-    ${canUpdate ? `
+    ${canManage ? `
     <div class="card stack">
       <h3>Update Plugin</h3>
       <p class="hint" style="margin:0">Upload a new TreeHostStaff.jar file to update the plugin across all servers. This requires Owner, Admin, or Developer role.</p>
@@ -248,6 +264,19 @@ async function consoleStaffPlugin(body) {
         </label>
         <button type="submit" class="btn primary">Update Plugin</button>
       </form>
+    </div>
+    <div class="card stack">
+      <h3>Required Plugins</h3>
+      <p class="hint" style="margin:0">Additional plugins that are automatically installed on servers. You can add, update, and distribute them to all matching servers.</p>
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" id="btn-add-required-plugin">+ Add Required Plugin</button>
+      </div>
+      <div id="required-plugins-list" style="margin-top:12px"></div>
+    </div>` : canView ? `
+    <div class="card stack">
+      <h3>Required Plugins</h3>
+      <p class="hint" style="margin:0">Additional plugins that are automatically installed on servers. You need the system.manage permission to add, edit, or distribute plugins.</p>
+      <div id="required-plugins-list" style="margin-top:12px"></div>
     </div>` : ''}
   `;
 
@@ -310,5 +339,225 @@ async function consoleStaffPlugin(body) {
         toast(err.message, 'error');
       }
     });
+  }
+
+  // Load required plugins if has permission
+  if (canView) {
+    loadRequiredPlugins(canManage);
+    if (canManage) {
+      $('#btn-add-required-plugin')?.addEventListener('click', () => showAddPluginModal());
+    }
+  }
+}
+
+async function loadRequiredPlugins(canManage = false) {
+  try {
+    const plugins = await api('GET', '/api/admin/required-plugins');
+    const listEl = $('#required-plugins-list');
+    if (!listEl) return;
+
+    if (plugins.length === 0) {
+      listEl.innerHTML = '<p class="muted" style="margin:12px 0 0">No required plugins yet.</p>';
+      return;
+    }
+
+    listEl.innerHTML = plugins.map(p => `
+      <div class="card" style="margin-top:8px;padding:12px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div>
+            <b>${esc(p.title)}</b>
+            ${p.locked ? '<span class="badge" style="margin-left:8px">Locked</span>' : ''}
+            <div class="small muted">${esc(p.filename)} · ${fmtSize(p.size)} · ${p.targetTypes.join(', ')}</div>
+          </div>
+          <div class="row">
+            <button class="btn sm" data-view-plugin="${esc(p.id)}">View</button>
+            ${canManage ? `
+            <button class="btn sm" data-edit-plugin="${esc(p.id)}">Edit</button>
+            <button class="btn sm" data-distribute-plugin="${esc(p.id)}">Distribute</button>
+            <button class="btn sm danger" data-delete-plugin="${esc(p.id)}">Delete</button>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    `).join('');
+
+    // Add event listeners
+    $$('[data-view-plugin]').forEach(btn => {
+      btn.addEventListener('click', () => showPluginInfo(btn.dataset.viewPlugin));
+    });
+    if (canManage) {
+      $$('[data-edit-plugin]').forEach(btn => {
+        btn.addEventListener('click', () => showEditPluginModal(btn.dataset.editPlugin));
+      });
+      $$('[data-distribute-plugin]').forEach(btn => {
+        btn.addEventListener('click', () => distributePlugin(btn.dataset.distributePlugin));
+      });
+      $$('[data-delete-plugin]').forEach(btn => {
+        btn.addEventListener('click', () => deletePlugin(btn.dataset.deletePlugin));
+      });
+    }
+  } catch (e) {
+    console.error('Failed to load required plugins:', e);
+  }
+}
+
+function showAddPluginModal() {
+  const { root, close } = openModal(`
+    <h2>Add Required Plugin</h2>
+    <form id="add-plugin-form" class="stack">
+      <label class="field">Title
+        <input type="text" name="title" placeholder="e.g., EssentialsX" required>
+      </label>
+      <label class="field">Description
+        <textarea name="description" rows="3" placeholder="Describe what this plugin does..."></textarea>
+      </label>
+      <label class="field">JAR file
+        <input type="file" name="jarFile" accept=".jar" required>
+      </label>
+      <label class="check"><input type="checkbox" name="locked" checked> Lock plugin (cannot be removed/disabled by customers)</label>
+      <label class="field">Target server types
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <label class="check"><input type="checkbox" name="targetType" value="paper" checked> Paper</label>
+          <label class="check"><input type="checkbox" name="targetType" value="spigot" checked> Spigot</label>
+          <label class="check"><input type="checkbox" name="targetType" value="purpur" checked> Purpur</label>
+          <label class="check"><input type="checkbox" name="targetType" value="folia"> Folia</label>
+          <label class="check"><input type="checkbox" name="targetType" value="craftbukkit" checked> CraftBukkit</label>
+        </div>
+      </label>
+      <div class="modal-actions">
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="btn primary">Add Plugin</button>
+      </div>
+    </form>
+  `);
+
+  $('#add-plugin-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const file = form.jarFile.files[0];
+    if (!file) return toast('Please select a JAR file', 'error');
+
+    const formData = new FormData();
+    formData.append('jarFile', file);
+    formData.append('title', form.title.value.trim());
+    formData.append('description', form.description.value.trim());
+    formData.append('locked', form.locked.checked);
+    formData.append('targetTypes', JSON.stringify(
+      $$('[name="targetType"]:checked').map(cb => cb.value)
+    ));
+
+    try {
+      await api('POST', '/api/admin/required-plugins', formData);
+      toast('Plugin added successfully!');
+      close();
+      loadRequiredPlugins();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  });
+}
+
+async function showPluginInfo(id) {
+  try {
+    const plugins = await api('GET', '/api/admin/required-plugins');
+    const plugin = plugins.find(p => p.id === id);
+    if (!plugin) return toast('Plugin not found', 'error');
+
+    const { close } = openModal(`
+      <h2>${esc(plugin.title)}</h2>
+      <div class="card stack">
+        <table>
+          <tr><td class="muted">File</td><td><code>${esc(plugin.filename)}</code></td></tr>
+          <tr><td class="muted">Size</td><td>${fmtSize(plugin.size)}</td></tr>
+          <tr><td class="muted">SHA256</td><td><code class="small">${esc(plugin.hash)}</code></td></tr>
+          <tr><td class="muted">Target types</td><td>${plugin.targetTypes.join(', ')}</td></tr>
+          <tr><td class="muted">Locked</td><td>${plugin.locked ? 'Yes' : 'No'}</td></tr>
+          <tr><td class="muted">Uploaded</td><td>${new Date(plugin.uploadedAt).toLocaleString()}</td></tr>
+          <tr><td class="muted">Uploaded by</td><td>${esc(plugin.uploadedBy)}</td></tr>
+        </table>
+        ${plugin.description ? `<div style="margin-top:12px"><p class="muted" style="margin:0">Description</p><p>${esc(plugin.description)}</p></div>` : ''}
+      </div>
+      <div class="modal-actions"><button class="btn primary" data-close>Close</button></div>
+    `);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function showEditPluginModal(id) {
+  try {
+    const plugins = await api('GET', '/api/admin/required-plugins');
+    const plugin = plugins.find(p => p.id === id);
+    if (!plugin) return toast('Plugin not found', 'error');
+
+    const { root, close } = openModal(`
+      <h2>Edit Required Plugin</h2>
+      <form id="edit-plugin-form" class="stack">
+        <label class="field">Title
+          <input type="text" name="title" value="${esc(plugin.title)}" required>
+        </label>
+        <label class="field">Description
+          <textarea name="description" rows="3">${esc(plugin.description)}</textarea>
+        </label>
+        <label class="check"><input type="checkbox" name="locked" ${plugin.locked ? 'checked' : ''}> Lock plugin (cannot be removed/disabled by customers)</label>
+        <label class="field">Target server types
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <label class="check"><input type="checkbox" name="targetType" value="paper" ${plugin.targetTypes.includes('paper') ? 'checked' : ''}> Paper</label>
+            <label class="check"><input type="checkbox" name="targetType" value="spigot" ${plugin.targetTypes.includes('spigot') ? 'checked' : ''}> Spigot</label>
+            <label class="check"><input type="checkbox" name="targetType" value="purpur" ${plugin.targetTypes.includes('purpur') ? 'checked' : ''}> Purpur</label>
+            <label class="check"><input type="checkbox" name="targetType" value="folia" ${plugin.targetTypes.includes('folia') ? 'checked' : ''}> Folia</label>
+            <label class="check"><input type="checkbox" name="targetType" value="craftbukkit" ${plugin.targetTypes.includes('craftbukkit') ? 'checked' : ''}> CraftBukkit</label>
+          </div>
+        </label>
+        <div class="modal-actions">
+          <button type="button" data-close>Cancel</button>
+          <button type="submit" class="btn primary">Save Changes</button>
+        </div>
+      </form>
+    `);
+
+    $('#edit-plugin-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+
+      try {
+        await api('PUT', `/api/admin/required-plugins/${id}`, {
+          title: form.title.value.trim(),
+          description: form.description.value.trim(),
+          locked: form.locked.checked,
+          targetTypes: $$('[name="targetType"]:checked').map(cb => cb.value),
+        });
+        toast('Plugin updated successfully!');
+        close();
+        loadRequiredPlugins();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    });
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function distributePlugin(id) {
+  if (!confirm('Distribute this plugin to all matching servers? This may take a moment.')) return;
+
+  try {
+    const result = await api('POST', `/api/admin/required-plugins/${id}/distribute`);
+    toast(`Distributed to ${result.distributed} servers${result.failed > 0 ? ` (${result.failed} failed)` : ''}`);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function deletePlugin(id) {
+  if (!confirm('Delete this required plugin? This will remove the JAR file but will not remove it from existing servers.')) return;
+
+  try {
+    await api('DELETE', `/api/admin/required-plugins/${id}`);
+    toast('Plugin deleted successfully!');
+    loadRequiredPlugins();
+  } catch (e) {
+    toast(e.message, 'error');
   }
 }
