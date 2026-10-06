@@ -299,6 +299,24 @@ section { padding: 88px 0; position: relative; }
 .d-check input { accent-color: var(--accent); width: 16px; height: 16px; }
 .d-error { color: #ff8f8f; font-size: 14px; }
 .d-fine { margin: 0; }
+#d-go {
+  font-size: 16px;
+  padding: 14px 28px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #7beaa6 0%, #46c37b 100%);
+  color: #05200f !important;
+  font-weight: 700;
+  border: none;
+  box-shadow: 0 4px 20px rgba(70, 195, 123, 0.35);
+}
+#d-go:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 28px rgba(70, 195, 123, 0.45);
+  background: linear-gradient(180deg, #8cefb7 0%, #4fd284 100%);
+}
+#d-go:active {
+  transform: translateY(0);
+}
 .thanks { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; }
 .thanks[hidden], #donate-body[hidden] { display: none !important; }
 .thanks p { color: var(--muted); margin: 0 0 8px; }
