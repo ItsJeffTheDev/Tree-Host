@@ -1697,6 +1697,53 @@ route('GET', '/api/next-port', async (req, res, p, q) => {
 });
 
 route('GET', '/api/servers', (req) => visibleList(req.user));
+
+/** Create a demo server for new users to explore the dashboard. */
+route('POST', '/api/servers/demo', async (req) => {
+  if (!TEAM) throw httpError(400, 'Demo servers are only available in team mode.');
+  if (req.user.role !== 'customer') throw httpError(400, 'Demo servers are for new customers only.');
+  
+  // Check if user already has a demo server
+  const existingDemo = [...manager.instances.values()].find(i => i.cfg.owner === req.user.id && i.cfg.isDemo);
+  if (existingDemo) throw httpError(400, 'You already have a demo server.');
+  
+  // Check if user has any regular servers
+  const hasRegularServer = [...manager.instances.values()].some(i => i.cfg.owner === req.user.id && !i.cfg.isDemo);
+  if (hasRegularServer) throw httpError(400, 'You already have a regular server.');
+  
+  // Create demo server configuration
+  const demoConfig = {
+    name: `${req.user.username}'s Demo Server`,
+    type: 'paper',
+    version: '1.21.1',
+    eula: true,
+    space: 'solo',
+    isDemo: true,
+    memoryMb: 1024, // 1GB for demo
+  };
+  
+  const inst = await manager.create(demoConfig, {
+    space: 'solo',
+    owner: req.user.id,
+    createdBy: req.user.id,
+    extra: { isDemo: true },
+  });
+  
+  await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
+  
+  // Mark user as having demo server
+  const user = auth.userById(req.user.id);
+  if (user) {
+    user.hasDemoServer = true;
+    await auth.save();
+  }
+  
+  inst.logActivity('server', req.user.username, `created a demo server "${inst.cfg.name}"`);
+  activity.log('server', req.user.username, `created a demo server "${inst.cfg.name}"`);
+  
+  return inst.toJSON();
+});
+
 route('POST', '/api/servers', async (req) => {
   stagingBlock();
   const body = await readJson(req);

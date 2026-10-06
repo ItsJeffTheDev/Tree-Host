@@ -468,7 +468,7 @@ class Auth {
       user.emailVerified = !!(id.emailVerified || id.provider === 'google.com');
       user.lastLogin = Date.now();
       await this.save();
-      return { user, token: await this.createSession(user) };
+      return { user, token: await this.createSession(user), needsDemoServer: !user.hasDemoServer };
     }
 
     // A new account.
@@ -506,11 +506,12 @@ class Auth {
       tokens: [],
       createdAt: Date.now(),
       lastLogin: Date.now(),
+      hasDemoServer: false,
     };
     this.users.push(user);
     if (invite) this.invites = this.invites.filter((i) => i !== invite);
     await this.save();
-    return { user, token: await this.createSession(user), created: true };
+    return { user, token: await this.createSession(user), created: true, needsDemoServer: true };
   }
 
   // ----- sessions -----
