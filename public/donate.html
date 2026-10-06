@@ -145,7 +145,7 @@
       label();
       // Without payments on this site, the button opens the Stripe donation page, where the amount is chosen:
       // the amount buttons, name and message would be ignored, so they're hidden.
-      const viaLink = d.mode === 'off' && !!d.fallbackUrl;
+      const viaLink = !!d.fallbackUrl;
       ['#amounts', '#custom-wrap', '#d-name', '#d-message', '#d-listed'].forEach((sel) => {
         const el = $(sel).closest('.d-field, .d-check') || $(sel);
         el.hidden = viaLink || (sel === '#custom-wrap' && el.hidden);
@@ -233,7 +233,7 @@
     $('#donate-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       showError('');
-      if (info && info.mode === 'off' && info.fallbackUrl) return (location.href = info.fallbackUrl);
+      if (info && info.fallbackUrl) return (location.href = info.fallbackUrl);
       if (!(amount >= 100)) return showError('Choose an amount of at least $1.');
       const go = $('#d-go');
       go.disabled = true;
