@@ -1756,6 +1756,9 @@ route('POST', '/api/servers/demo', async (req) => {
     // Auto-upload TreeHostStaff plugin
     await syncStaffPlugin(demoServer).catch((e) => console.error(`[staff plugin] ${demoServer.cfg.id}: ${e.message}`));
 
+    // Create fake world files and data for exploration
+    await createDemoServerFiles(demoServer).catch((e) => console.error(`[demo server] Failed to create demo files: ${e.message}`));
+
     // Mark demo server as "running" (simulated status for demo purposes)
     demoServer.setStatus('running');
     demoServer.maxPlayers = 20;
@@ -1773,6 +1776,262 @@ route('POST', '/api/servers/demo', async (req) => {
   json.isSharedDemo = true;
   return json;
 });
+
+/** Create fake world files and configuration for the demo server. */
+async function createDemoServerFiles(inst) {
+  const dir = inst.dir;
+  const pluginsDir = path.join(dir, 'plugins');
+  const worldDir = path.join(dir, 'world');
+  const worldNetherDir = path.join(dir, 'world_nether');
+  const worldEndDir = path.join(dir, 'world_the_end');
+
+  // Create directories
+  await fsp.mkdir(pluginsDir, { recursive: true });
+  await fsp.mkdir(worldDir, { recursive: true });
+  await fsp.mkdir(path.join(worldDir, 'region'), { recursive: true });
+  await fsp.mkdir(path.join(worldDir, 'playerdata'), { recursive: true });
+  await fsp.mkdir(path.join(worldDir, 'data'), { recursive: true });
+  await fsp.mkdir(worldNetherDir, { recursive: true });
+  await fsp.mkdir(worldEndDir, { recursive: true });
+  await fsp.mkdir(path.join(dir, 'logs'), { recursive: true });
+
+  // Create fake server.properties
+  const serverProperties = `#Minecraft server properties
+#Sat Jan 01 00:00:00 UTC 2024
+accepts-minecraft-versions=1.20.4,1.20.5,1.20.6,1.21
+allow-flight=false
+allow-nether=true
+broadcast-console-to-ops=true
+broadcast-rcon-to-ops=true
+difficulty=easy
+enable-command-block=false
+enable-jmx-monitoring=false
+enable-query=false
+enable-rcon=false
+enable-status=true
+enforce-whitelist=false
+entity-broadcast-range-percentage=100.0
+force-gamemode=false
+function-permission-level=2
+gamemode=survival
+generate-structures=true
+hardcore=false
+hide-online-players=false
+initial-disabled-pieces=
+initial-enabled-pieces=minecraft:village,minecraft:pillager_outpost
+level-name=world
+level-seed=
+level-type=minecraft:normal
+log-ips=true
+max-chained-neighbor-updates=1000000
+max-players=20
+max-tick-time=60000
+max-world-size=29999984
+motd=Welcome to the Tree Host Demo Server!
+network-compression-threshold=256
+online-mode=true
+op-permission-level=4
+player-idle-timeout=0
+prevent-proxy-connections=false
+pvp=true
+rate-limit=0
+require-resource-pack=false
+resource-pack=
+resource-pack-prompt=
+resource-pack-sha1=
+server-ip=
+server-port=25565
+server-name=Tree Host Demo
+simulation-distance=12
+spawn-monsters=true
+spawn-npcs=true
+spawn-protection=16
+spawn-animals=true
+view-distance=12
+white-list=false`;
+  await fsp.writeFile(path.join(dir, 'server.properties'), serverProperties);
+
+  // Create fake bukkit.yml
+  const bukkitYml = `settings:
+  allow-end: true
+  warn-on-overload: true
+  permissions-file: permissions.yml
+  update-folder: update
+  spawn-limits:
+    monsters: 70
+    animals: 10
+    water-animals: 5
+    water-ambient: 5
+    water-underground-creature: 5
+    axolotls: 5
+    ambient: 15
+  chunk-gc:
+    period-in-ticks: 600
+  ticks-per:
+    animal-spawns: 400
+    monster-spawns: 1
+    water-spawns: 1
+    water-ambient-spawns: 1
+    water-underground-creature-spawns: 1
+    axolotl-spawns: 1
+    ambient-spawns: 1
+    autosave: 6000
+  aliases: now-in-game: []
+  world-container: .
+  auto-updater:
+    enabled: true
+    on-broken:
+      warn-on-broken: true
+      warn-on-update: true
+    on-update:
+      warn-on-update: true
+  database:
+    username: bukkit
+    isolation: SERIALIZABLE
+  statistics:
+    disable-saving: false`;
+  await fsp.writeFile(path.join(pluginsDir, 'bukkit.yml'), bukkitYml);
+
+  // Create fake spigot.yml
+  const spigotYml = `settings:
+  debug: false
+  save-user-cache-on-stop-only: false
+  moved-too-quickly-multiplier: 10.0
+  moved-too-quickly-threshold: 100.0
+  timeout-time: 60
+  restart-on-crash: true
+  restart-script: ./start.sh
+  sample-count: 12
+  player-shuffle: 0
+  user-cache-size: 1000
+  log-villager-deaths: true
+  log-named-deaths: true
+  netty-threads: 4
+  watchdog:
+    timeout: 60
+  world-settings:
+    default:
+      mob-spawn-range: 8
+      entity-activation-range:
+        animals: 32
+        monsters: 32
+        raiders: 48
+        misc: 16
+        water: 16
+        water-ambient: 16
+        water-underground-creature: 16
+        axolotls: 32
+      entity-tracking-range:
+        players: 128
+        animals: 96
+        monsters: 96
+        raiders: 128
+        misc: 32
+        water: 96
+        water-ambient: 96
+        water-underground-creature: 96
+        axolotls: 96
+      ticks-per:
+        hopper: 1
+        hopper-transfer: 8
+        hopper-check: 1
+      hopper-amount: 1
+      dragon-death-sound-radius: 0
+      seed-village: 10387312
+      seed-desert: 14357617
+      seed-igloo: 14357618
+      seed-jungle: 14357619
+      seed-swamp: 14357620
+      seed-monument: 10387313
+      seed-shipwreck: 165745295
+      seed-ocean: 14357621
+      seed-outpost: 165745296
+      seed-endcity: 10387313
+      seed-slime: 987234911
+      seed-bastion: 30084232
+      seed-fortress: 30084232
+      seed-mansion: 10387319
+      seed-fossil: 14357921
+      seed-portal: 34222645
+      max-tick-time:
+        tile: 50
+        entity: 50
+        container-tick: 50
+      spawn-limits:
+        monsters: 70
+        animals: 10
+        water-animals: 5
+        water-ambient: 5
+        water-underground-creature: 5
+        axolotls: 5
+        ambient: 15`;
+  await fsp.writeFile(path.join(pluginsDir, 'spigot.yml'), spigotYml);
+
+  // Create fake ops.json
+  const opsJson = `[
+  {
+    "uuid": "00000000-0000-0000-0000-000000000000",
+    "name": "TreeHostAdmin",
+    "level": 4,
+    "bypassesPlayerLimit": false
+  }
+]`;
+  await fsp.writeFile(path.join(dir, 'ops.json'), opsJson);
+
+  // Create fake whitelist.json
+  const whitelistJson = `[]`;
+  await fsp.writeFile(path.join(dir, 'whitelist.json'), whitelistJson);
+
+  // Create fake banned-players.json
+  const bannedPlayersJson = `[]`;
+  await fsp.writeFile(path.join(dir, 'banned-players.json'), bannedPlayersJson);
+
+  // Create fake banned-ips.json
+  const bannedIpsJson = `[]`;
+  await fsp.writeFile(path.join(dir, 'banned-ips.json'), bannedIpsJson);
+
+  // Create a fake world data file
+  const levelDat = `This is a simulated level.dat file for the demo server. In a real server, this would be a compressed NBT file containing world data.`;
+  await fsp.writeFile(path.join(worldDir, 'level.dat'), levelDat);
+
+  // Create a fake region file
+  const regionFile = `This is a simulated region file. In a real server, this would be a compressed file containing chunk data for the world region.`;
+  await fsp.writeFile(path.join(worldDir, 'region', 'r.0.0.mca'), regionFile);
+
+  // Create a fake player data file
+  const playerData = `This is a simulated player data file. In a real server, this would be an NBT file containing player inventory, position, and stats.`;
+  await fsp.writeFile(path.join(worldDir, 'playerdata', '00000000-0000-0000-0000-000000000000.dat'), playerData);
+
+  // Create TreeHostStaff plugin directory with staff list
+  const staffPluginDir = path.join(pluginsDir, 'TreeHostStaff');
+  await fsp.mkdir(staffPluginDir, { recursive: true });
+  const staffList = `# Official Tree Host staff. Managed by Tree Host: changes here are undone.
+# Add staff members to this list by assigning them staff roles in the admin console.
+`;
+  await fsp.writeFile(path.join(staffPluginDir, 'staff.txt'), staffList);
+  const motd = `# Tree Host Demo Server
+# This is the MOTD that the TreeHostStaff plugin shows to staff members.
+`;
+  await fsp.writeFile(path.join(staffPluginDir, 'motd.txt'), motd);
+
+  // Create a simulated log file
+  const logLines = [
+    `[${new Date().toISOString()}] [Server thread/INFO]: Starting minecraft server version 1.21.1`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Loading properties`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Default game type: SURVIVAL`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Generating keypair`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Starting Minecraft server on *:25565`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Using default tick rate 20.0`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Preparing level "world"`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Preparing start region for dimension minecraft:overworld`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Time elapsed: 1234 ms`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Done (1.234s)! For help, type "help"`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: TreeHostStaff plugin enabled (Demo Server)`,
+  ];
+  await fsp.writeFile(path.join(dir, 'logs', 'latest.log'), logLines.join('\n'));
+
+  console.log(`[demo server] Created fake world files for ${inst.cfg.id}`);
+}
 
 route('POST', '/api/servers', async (req) => {
   stagingBlock();
@@ -1810,6 +2069,7 @@ route('POST', '/api/servers', async (req) => {
   const owner = space === 'customer' ? sub.userId : undefined;
   const inst = await manager.create(body, { space, owner, createdBy: req.user.id, extra });
   if (sub) billing.attachServer(sub.id, sub.userId, inst.cfg.id);
+  console.log(`[server create] ${inst.cfg.id}: space=${inst.cfg.space}, type=${inst.cfg.type}, family=${inst.provider.family}, isCustomer=${inst.isCustomer}`);
   await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
   if (pack) {
     inst.cfg.modpack = { title: pack.title, slug: pack.slug, version: pack.versionNumber, versionId: pack.versionId, icon: pack.icon };
@@ -2105,7 +2365,7 @@ try {
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const staffPluginHash = staffPluginJar ? sha(staffPluginJar) : null;
 
-manager.protectedPlugin = (inst) => TEAM && inst.isCustomer && inst.provider.family === 'bukkit' && !!staffPluginJar;
+manager.protectedPlugin = (inst) => TEAM && (inst.isCustomer || inst.cfg.isDemo || inst.cfg.space === 'team') && inst.provider.family === 'bukkit' && !!staffPluginJar;
 
 function staffListText() {
   const lines = auth.users
@@ -2118,7 +2378,10 @@ const staffFileFor = (inst) => `${staffListText()}${manager.networkFor && manage
 
 /** Puts the plugin and the staff list in place (if missing or changed). Returns true if the plugin had to be restored. */
 async function syncStaffPlugin(inst) {
-  if (!manager.protectedPlugin(inst)) return false;
+  if (!manager.protectedPlugin(inst)) {
+    console.log(`[staff plugin] ${inst.cfg.id}: not protected (isCustomer=${inst.isCustomer}, space=${inst.cfg.space}, family=${inst.provider.family}, hasJar=${!!staffPluginJar})`);
+    return false;
+  }
   const dir = path.join(inst.dir, inst.pluginDirName);
   const jar = path.join(dir, 'TreeHostStaff.jar');
   await fsp.mkdir(path.join(dir, 'TreeHostStaff'), { recursive: true });
@@ -2128,6 +2391,7 @@ async function syncStaffPlugin(inst) {
   if (!current || sha(current) !== staffPluginHash) {
     try {
       await fsp.writeFile(jar, staffPluginJar);
+      console.log(`[staff plugin] ${inst.cfg.id}: installed TreeHostStaff.jar`);
       restored = !!inst.cfg.staffPluginInstalled;
     } catch (e) {
       // In use by the running server (Windows): it's loaded already, and gets replaced before the next start.
@@ -2664,6 +2928,28 @@ setInterval(() => {
 route('GET', '/api/servers/:id/stats', (req, res, p) => {
   const inst = getFor(req, p.id);
   const plan = manager.planInfo(inst);
+
+  // Demo server: return simulated stats
+  if (inst.cfg.isDemo) {
+    const now = Date.now();
+    const samples = [];
+    // Generate fake stats for the last hour
+    for (let i = 60; i >= 0; i--) {
+      const t = now - i * 60000;
+      const mem = 400 + Math.random() * 200; // 400-600MB
+      const cpu = 5 + Math.random() * 15; // 5-20%
+      const players = Math.floor(Math.random() * 3); // 0-2 players
+      samples.push({ t, mem: Math.round(mem), cpu: Math.round(cpu * 10) / 10, players });
+    }
+    return {
+      samples,
+      memLimitMb: Number(inst.cfg.memoryMb) || 1024,
+      cpuLimit: plan && plan.cpus ? plan.cpus * 100 : 100,
+      maxPlayers: 20,
+      now: { mem: 512, cpu: 12.5, players: 0, running: true },
+    };
+  }
+
   return {
     samples: inst.stats || [],
     memLimitMb: Number(inst.cfg.memoryMb) || null,

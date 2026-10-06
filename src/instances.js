@@ -299,6 +299,9 @@ class Instance extends EventEmitter {
     const simulatedPlayers = isDemo ? [] : [...this.players];
     const simulatedMaxPlayers = isDemo ? 20 : (this.proc ? this.maxPlayers || null : null);
     const simulatedMemUsed = isDemo ? 512 : (this.proc ? this.memUsedMb || null : null);
+    const simulatedDiskUsed = isDemo ? 250 : (this.diskUsedMb || null);
+    const simulatedStartedAt = isDemo ? (c.createdAt || Date.now() - 3600000) : this.startedAt;
+    const simulatedCpu = isDemo ? 12.5 : (this.proc && typeof this.cpuPct === 'number' ? this.cpuPct : null);
 
     return {
       id: c.id,
@@ -343,8 +346,9 @@ class Instance extends EventEmitter {
       maxPlayers: simulatedMaxPlayers,
       subscriptionId: c.subscriptionId || null,
       plan: this.manager.planInfo(this),
-      diskUsedMb: this.diskUsedMb || null,
+      diskUsedMb: simulatedDiskUsed,
       memUsedMb: simulatedMemUsed,
+      cpuPct: simulatedCpu,
       crashes: (this.crashTimes || []).length,
       gatewayDefault: c.gatewayDefault || null,
       gateway: this.manager.gatewayInfo(this),
@@ -375,7 +379,7 @@ class Instance extends EventEmitter {
       progress: this.progress,
       players: simulatedPlayers,
       pid: simulatedPid,
-      startedAt: this.startedAt,
+      startedAt: simulatedStartedAt,
       createdAt: c.createdAt,
       isDemo: isDemo,
     };

@@ -14,10 +14,36 @@ A **shared demo server** that all new users can explore to learn how Tree Host w
    - POST `/api/servers/demo` endpoint
    - Creates a single shared demo server (one for all users)
    - Server is in "team" space so all customers can see it
-   - Auto-starts the demo server when created
    - Server is marked with `isDemo: true` and `isSharedDemo: true`
+   - Auto-uploads TreeHostStaff plugin
+   - Creates fake world files and configuration for exploration
 
-2. **Visibility Rules**
+2. **Fake World Files (`createDemoServerFiles`)**
+   - Creates realistic directory structure:
+     - `world/` with `region/`, `playerdata/`, `data/`
+     - `world_nether/` and `world_the_end/`
+     - `plugins/` with `TreeHostStaff/`
+     - `logs/`
+   - Creates fake config files:
+     - `server.properties` - full server configuration
+     - `bukkit.yml` - Bukkit settings
+     - `spigot.yml` - Spigot settings
+     - `ops.json`, `whitelist.json`, `banned-players.json`, `banned-ips.json`
+   - Creates fake world data:
+     - `world/level.dat` - simulated world data
+     - `world/region/r.0.0.mca` - simulated region file
+     - `world/playerdata/*.dat` - simulated player data
+   - Creates fake log file:
+     - `logs/latest.log` - simulated server startup log
+
+3. **Simulated Stats**
+   - Modified GET `/api/servers/:id/stats` to return fake data for demo servers
+   - Generates 60 samples (1 hour) of fake memory, CPU, and player data
+   - Memory: 400-600MB (realistic for 1GB server)
+   - CPU: 5-20% (realistic idle server)
+   - Players: 0-2 (random simulation)
+
+4. **Visibility Rules**
    - Modified `canView()` function to allow all customers to see the shared demo server
    - Added `canControl()` function to allow customers to control the demo server (start/stop/commands)
    - Demo server is read-only for plugins, files, and settings (can't break it)
@@ -66,13 +92,16 @@ A **shared demo server** that all new users can explore to learn how Tree Host w
 - **Space:** Team (shared with all users)
 - **Status:** Shows as "running" (simulated for demo purposes)
 - **Auto-uploads:** TreeHostStaff plugin automatically
+- **Fake files:** Creates realistic world files, config files, and logs for exploration
+- **Fake stats:** Shows simulated memory, CPU, and player statistics
 - **Permissions:**
   - ✅ Start/stop/restart (simulated - doesn't actually start a Minecraft process)
   - ✅ Console commands (simulated - shows as if running)
   - ✅ View console output
   - ✅ View plugins (read-only)
-  - ✅ View files (read-only)
+  - ✅ View files (read-only) - can explore the file manager
   - ✅ View settings (read-only)
+  - ✅ View stats (simulated data)
   - ❌ Install/change plugins
   - ❌ Edit files
   - ❌ Change settings
