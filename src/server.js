@@ -493,6 +493,19 @@ function authenticate(req) {
 /** True if this user has the permission. Personal mode (no accounts) can do everything. */
 const can = (user, permission) => !TEAM || rbac.can(user, permission);
 
+/** Check if user can perform an action on a server instance. */
+const canDo = (user, inst, action) => {
+  if (!TEAM) return true;
+  if (!user || !inst) return false;
+  // For shared demo server, allow customers to do most actions (read-only demo)
+  if (inst.cfg.isSharedDemo && user.role === 'customer') {
+    if (['view', 'control', 'command'].includes(action)) return true;
+    if (['plugins', 'files', 'settings'].includes(action)) return false; // Read-only
+    return false;
+  }
+  return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, ACTION_PERMISSION[action] || 'servers.viewAll');
+};
+
 function requirePerm(req, permission) {
   if (!can(req.user, permission)) {
     const p = PERMISSIONS.find((x) => x.id === permission);
@@ -504,7 +517,18 @@ function requirePerm(req, permission) {
 function canView(user, inst) {
   if (!TEAM) return true;
   if (!user || !inst) return false;
+  // Customers can also see the shared demo server
+  if (inst.cfg.isSharedDemo && user.role === 'customer') return true;
   return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, 'servers.viewAll');
+}
+
+/** Customers can control the shared demo server. */
+function canControl(user, inst) {
+  if (!TEAM) return true;
+  if (!user || !inst) return false;
+  // Allow control of shared demo for all customers
+  if (inst.cfg.isSharedDemo && user.role === 'customer') return true;
+  return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, 'servers.operate');
 }
 
 // ---------- sharing a server with friends ----------
@@ -1698,50 +1722,58 @@ route('GET', '/api/next-port', async (req, res, p, q) => {
 
 route('GET', '/api/servers', (req) => visibleList(req.user));
 
-/** Create a demo server for new users to explore the dashboard. */
+/** Create or get the shared demo server for all users to explore. */
 route('POST', '/api/servers/demo', async (req) => {
   if (!TEAM) throw httpError(400, 'Demo servers are only available in team mode.');
-  if (req.user.role !== 'customer') throw httpError(400, 'Demo servers are for new customers only.');
   
-  // Check if user already has a demo server
-  const existingDemo = [...manager.instances.values()].find(i => i.cfg.owner === req.user.id && i.cfg.isDemo);
-  if (existingDemo) throw httpError(400, 'You already have a demo server.');
+  // Check if shared demo server already exists
+  let demoServer = [...manager.instances.values()].find(i => i.cfg.isDemo);
   
-  // Check if user has any regular servers
-  const hasRegularServer = [...manager.instances.values()].some(i => i.cfg.owner === req.user.id && !i.cfg.isDemo);
-  if (hasRegularServer) throw httpError(400, 'You already have a regular server.');
+  if (!demoServer) {
+    // Create the shared demo server
+    const demoConfig = {
+      name: 'Tree Host Demo Server',
+      type: 'paper',
+      version: '1.21.1',
+      eula: true,
+      space: 'team', // Team space so all can see it
+      isDemo: true,
+      isSharedDemo: true,
+      memoryMb: 1024,
+    };
+    
+    // Use the first owner/admin as the owner, or create a system account
+    const owner = auth.users.find(u => u.role === 'owner') || auth.users.find(u => u.role === 'admin') || auth.users[0];
+    if (!owner) throw httpError(400, 'No staff account exists to own the demo server. Please create an admin account first.');
+    
+    demoServer = await manager.create(demoConfig, {
+      space: 'team',
+      owner: owner.id,
+      createdBy: 'system',
+      extra: { isDemo: true, isSharedDemo: true },
+    });
+    
+    await syncStaffPlugin(demoServer).catch((e) => console.error(`[staff plugin] ${demoServer.cfg.id}: ${e.message}`));
+    
+    // Auto-start the demo server
+    try {
+      await demoServer.start();
+      activity.log('server', 'Tree Host', `started the shared demo server "${demoServer.cfg.name}"`);
+    } catch (e) {
+      console.error(`[demo server] Failed to start: ${e.message}`);
+    }
+    
+    activity.log('server', 'Tree Host', `created the shared demo server "${demoServer.cfg.name}"`);
+  }
   
-  // Create demo server configuration
-  const demoConfig = {
-    name: `${req.user.username}'s Demo Server`,
-    type: 'paper',
-    version: '1.21.1',
-    eula: true,
-    space: 'solo',
-    isDemo: true,
-    memoryMb: 1024, // 1GB for demo
-  };
-  
-  const inst = await manager.create(demoConfig, {
-    space: 'solo',
-    owner: req.user.id,
-    createdBy: req.user.id,
-    extra: { isDemo: true },
-  });
-  
-  await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
-  
-  // Mark user as having demo server
+  // Mark user as having seen the demo
   const user = auth.userById(req.user.id);
   if (user) {
-    user.hasDemoServer = true;
+    user.hasSeenDemo = true;
     await auth.save();
   }
   
-  inst.logActivity('server', req.user.username, `created a demo server "${inst.cfg.name}"`);
-  activity.log('server', req.user.username, `created a demo server "${inst.cfg.name}"`);
-  
-  return inst.toJSON();
+  return demoServer.toJSON();
 });
 
 route('POST', '/api/servers', async (req) => {

@@ -72,6 +72,27 @@ const STATUS_LABEL = {
 };
 const STATUS_BADGE = { stopped: '', installing: 'yellow', starting: 'yellow', running: 'green', stopping: 'yellow' };
 
+const ACTION_PERMISSION = {
+  control: 'servers.operate', command: 'servers.operate',
+  plugins: 'servers.edit', files: 'servers.edit', settings: 'servers.edit', deploy: 'servers.edit',
+  manage: 'servers.destroy',
+};
+const MEMBER_ACTIONS = { coowner: ['view', 'control', 'command', 'plugins', 'files', 'settings', 'deploy'], helper: ['view', 'control', 'command'], viewer: ['view'] };
+const MEMBER_LABEL = { coowner: 'Co-owner', helper: 'Helper', viewer: 'Viewer' };
+/** My role on a server someone shared with me (null if it isn't shared with me). */
+const myMembership = (s) => (s && s.members && state.me.user ? s.members.find((m) => m.id === state.me.user.id) : null) || null;
+
+function can(action, s) {
+  if (!isTeam()) return true;
+  const u = state.me.user;
+  if (!s || action === 'view' || s.owner === u.id) return true;
+  // Demo server read-only for certain actions
+  if (s.isDemo && ['plugins', 'files', 'settings', 'manage'].includes(action)) return false;
+  const mine = myMembership(s);
+  if (mine && !hasPerm('console.access')) return MEMBER_ACTIONS[mine.role].includes(action);
+  return hasPerm(ACTION_PERMISSION[action] || 'servers.viewAll');
+}
+
 // ---------- state ----------
 
 const state = {
@@ -140,7 +161,7 @@ function serverItem(s) {
       <button class="server-item ${s.id === state.selected ? 'active' : ''}" data-id="${esc(s.id)}">
         ${s.icon ? `<span class="si-icon"><img src="${iconUrl(s)}" alt=""><span class="dot ${esc(s.status)}"></span></span>` : `<span class="dot ${esc(s.status)}"></span>`}
         <div>
-          <div class="si-name">${esc(s.name)}</div>
+          <div class="si-name">${esc(s.name)}${s.isDemo ? ' <span class="badge" style="background:#f39c12;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px">DEMO</span>' : ''}</div>
           <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.status === 'running' && s.kind !== 'proxy' ? ` · <span class="si-online">${s.players.length}${s.maxPlayers ? `/${s.maxPlayers}` : ''}</span>` : ''}${s.sleeping ? ' · <span class="si-online" style="color:#8cc2ff">sleeping</span>' : ''}${myMembership(s) ? ` · <span title="Shared with you by ${esc(s.ownerName || '')}">${MEMBER_LABEL[myMembership(s).role]}</span>` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
         </div>
       </button>`;
@@ -210,6 +231,7 @@ function renderMain() {
     return;
   }
   if (!s) {
+    const needsDemo = state.me?.user?.needsDemoServer && state.me.user?.role === 'customer' && !state.servers.size;
     main.innerHTML = `
       <div class="welcome">
         <h1>Test your plugins on a real server</h1>
@@ -220,12 +242,27 @@ function renderMain() {
           <li>In <b>Plugins</b>, point auto-deploy at your build folder (e.g. <code>build/libs</code> or <code>target</code>).</li>
           <li>Build your plugin, and the server restarts with the new jar automatically.</li>
         </ol>
+        ${needsDemo ? `
+        <div class="card" style="margin:16px 0;padding:16px">
+          <h3>🎮 Try the demo server</h3>
+          <p class="hint" style="margin:0">Explore the dashboard with a shared demo server. Start, stop, and run commands to see how everything works before creating your own.</p>
+          <button class="btn primary" id="btn-create-demo">Launch Demo Server</button>
+        </div>
+        ` : ''}
         <button class="btn primary" onclick="openNewServer()">+ Create your first server</button>
       </div>`;
+    if ($('#btn-create-demo')) $('#btn-create-demo').addEventListener('click', createDemoServer);
     return;
   }
   if ((state.tab === 'files' && !can('files', s)) || (state.tab === 'settings' && !can('settings', s))) state.tab = 'console';
   main.innerHTML = `
+    ${s.isDemo ? `
+    <div class="card" style="margin:0 0 16px;background:#fff3cd;border:1px solid #ffc107">
+      <p style="margin:0;font-size:14px">
+        <b>🎮 Demo Server</b> - This is a shared demo server for exploration. You can start/stop it and run commands, but files, plugins, and settings are read-only.
+      </p>
+    </div>
+    ` : ''}
     <header class="srv-header">
       <div id="srv-head"></div>
       <div class="tabs">
@@ -893,6 +930,30 @@ function showStaffPluginInfo() {
     </div>
     <div class="modal-actions"><button class="btn primary" data-close>Got it</button></div>
   `);
+}
+
+async function createDemoServer() {
+  try {
+    toast('Creating demo server...');
+    const demo = await api('POST', '/api/servers/demo');
+    toast('Demo server created! Select it from the sidebar to explore.');
+    // Refresh the server list
+    if (state.me) {
+      state.me.user.needsDemoServer = false;
+    }
+    // Reload servers
+    const servers = await api('GET', '/api/servers');
+    state.servers.clear();
+    servers.forEach((s) => state.servers.set(s.id, s));
+    const first = spaceServers()[0];
+    if (first) {
+      state.selected = first.id;
+      renderSidebar();
+      renderMain();
+    }
+  } catch (e) {
+    toast(e.message, 'error');
+  }
 }
 
 // ---------- files ----------
