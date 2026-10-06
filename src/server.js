@@ -1766,13 +1766,6 @@ route('POST', '/api/servers/demo', async (req) => {
     activity.log('server', 'Tree Host', `created the shared demo server "${demoServer.cfg.name}"`);
   }
   
-  // Mark user as having seen the demo
-  const user = auth.userById(req.user.id);
-  if (user) {
-    user.hasSeenDemo = true;
-    await auth.save();
-  }
-  
   return demoServer.toJSON();
 });
 

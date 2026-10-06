@@ -210,7 +210,7 @@ function renderMain() {
     return;
   }
   if (!s) {
-    const needsDemo = state.me?.user?.needsDemoServer && state.me.user?.role === 'customer' && !state.servers.size;
+    const showDemo = !state.servers.size && isTeam();
     main.innerHTML = `
       <div class="welcome">
         <h1>Test your plugins on a real server</h1>
@@ -221,7 +221,7 @@ function renderMain() {
           <li>In <b>Plugins</b>, point auto-deploy at your build folder (e.g. <code>build/libs</code> or <code>target</code>).</li>
           <li>Build your plugin, and the server restarts with the new jar automatically.</li>
         </ol>
-        ${needsDemo ? `
+        ${showDemo ? `
         <div class="card" style="margin:16px 0;padding:16px">
           <h3>🎮 Try the demo server</h3>
           <p class="hint" style="margin:0">Explore the dashboard with a shared demo server. Start, stop, and run commands to see how everything works before creating your own.</p>
@@ -916,10 +916,6 @@ async function createDemoServer() {
     toast('Creating demo server...');
     const demo = await api('POST', '/api/servers/demo');
     toast('Demo server created! Select it from the sidebar to explore.');
-    // Refresh the server list
-    if (state.me) {
-      state.me.user.needsDemoServer = false;
-    }
     // Reload servers
     const servers = await api('GET', '/api/servers');
     state.servers.clear();

@@ -22,27 +22,24 @@ A **shared demo server** that all new users can explore to learn how Tree Host w
    - Added `canControl()` function to allow customers to control the demo server (start/stop/commands)
    - Demo server is read-only for plugins, files, and settings (can't break it)
 
-3. **User Tracking**
-   - Modified `firebaseLogin()` to return `needsDemoServer: true` for new customers
-   - Added `hasDemoServer` flag to user accounts (not currently used, but available)
-   - Added `hasSeenDemo` flag to track if user has seen the demo server
-
 ### Client-Side Changes
 
 **File:** `public/app.js`
 
 1. **Demo Server Card**
-   - Shows a "Try the demo server" card for new users with no servers
+   - Shows a "Try the demo server" card for any user with no servers
    - "Launch Demo Server" button to create/access the demo
-   - Only shows when `needsDemoServer` is true and user has no servers
+   - Shows when in team mode and user has no servers
 
 2. **Demo Server Creation**
    - `createDemoServer()` function calls the API endpoint
    - Refreshes the server list after creation
    - Auto-selects the demo server
 
-3. **User State Update**
-   - Clears `needsDemoServer` flag after creating demo server
+3. **Demo Server UI**
+   - Orange "DEMO" badge in sidebar for demo server
+   - Yellow warning banner explaining it's a shared demo
+   - Read-only restrictions on plugins, files, and settings tabs
 
 ## User Experience
 

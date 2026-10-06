@@ -511,7 +511,7 @@ class Auth {
     this.users.push(user);
     if (invite) this.invites = this.invites.filter((i) => i !== invite);
     await this.save();
-    return { user, token: await this.createSession(user), created: true, needsDemoServer: true };
+    return { user, token: await this.createSession(user), created: true };
   }
 
   // ----- sessions -----
