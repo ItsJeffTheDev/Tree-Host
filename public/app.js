@@ -2,8 +2,15 @@
 
 // ---------- helpers ----------
 
-const $ = (sel, el = document) => el.querySelector(sel);
-const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+// Define $ and $$ helpers if not already defined (may be defined by console.js)
+if (typeof $ === 'undefined') {
+  const $ = (sel, el = document) => el.querySelector(sel);
+  window.$ = $;
+}
+if (typeof $$ === 'undefined') {
+  const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+  window.$$ = $$;
+}
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 

@@ -30,8 +30,15 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-const $ = (sel, el = document) => el.querySelector(sel);
-const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+// Define $ and $$ helpers if not already defined (loaded before app.js)
+if (typeof $ === 'undefined') {
+  const $ = (sel, el = document) => el.querySelector(sel);
+  window.$ = $;
+}
+if (typeof $$ === 'undefined') {
+  const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+  window.$$ = $$;
+}
 
 function initConsole() {
   document.title = 'Staff Console · Tree Host';

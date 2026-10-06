@@ -1077,11 +1077,10 @@ async function adminPeople(body) {
   if ($('#inv-create', body)) $('#inv-create', body).addEventListener('click', () =>
     attempt(async () => {
       const { link } = await api('POST', '/api/team/invites', { role: $('#inv-role', body).value });
-      const shareLink = (state.me.publicUrl || location.origin) + link.slice(link.indexOf('/dashboard?invite='));
       const box = $('#inv-link', body);
       box.classList.remove('hidden');
       box.innerHTML = `<div class="token-box"><div class="small">Invite link (one use, 7 days):</div>
-        <code class="copy" data-copy="${esc(shareLink)}" title="Click to copy">${esc(shareLink)}</code></div>`;
+        <code class="copy" data-copy="${esc(link)}" title="Click to copy">${esc(link)}</code></div>`;
       $('[data-copy]', box).addEventListener('click', (ev) => navigator.clipboard.writeText(ev.target.dataset.copy).then(() => toast('Invite link copied')));
     }),
   );
@@ -1661,6 +1660,14 @@ async function adminSettings(body) {
       <h3>Sign-ups</h3>
       <label class="check"><input type="checkbox" id="allow-signup"> Anyone can create an account on the website</label>
     </div>
+    <div class="card stack">
+      <h3>Base URL</h3>
+      <p class="hint" style="margin:0 0 10px">The base URL used for invite links and other generated URLs. Leave empty to use the current domain.</p>
+      <div class="row" style="gap:8px">
+        <input type="text" id="base-url" placeholder="https://yourdomain.com" style="flex:1">
+        <button class="btn" id="save-base-url">Save</button>
+      </div>
+    </div>
     <div class="card stack" id="email-card">
       <h3>Emails</h3>
       <div id="email-body" class="muted">Loading...</div>
@@ -1679,6 +1686,14 @@ async function adminSettings(body) {
     attempt(async () => {
       await api('PUT', '/api/team/settings', { allowSignup: box.checked });
       toast(box.checked ? 'Sign-ups are open' : 'Sign-ups are closed');
+    }),
+  );
+  const baseUrlInput = $('#base-url', body);
+  baseUrlInput.value = st.baseUrl || '';
+  $('#save-base-url', body).addEventListener('click', () =>
+    attempt(async () => {
+      await api('PUT', '/api/team/settings', { baseUrl: baseUrlInput.value });
+      toast('Base URL saved');
     }),
   );
 }

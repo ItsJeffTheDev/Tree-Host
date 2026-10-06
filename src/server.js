@@ -175,13 +175,18 @@ billing.hooks.deleteServer = async (id) => {
 };
 billing.hooks.userById = (id) => auth.userById(id);
 billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || sub.donorName || 'A customer', text);
-billing.hooks.email = (user, subject, paragraphs) =>
-  mail.send(user.email, subject, paragraphs, PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null, { replyTo: EMAILS.billing });
-billing.hooks.sendEmail = (kind, user, sub) => (user && user.email ? sendEmail(user.email, EMAIL[kind](user, sub, siteUrl())) : Promise.resolve(false));
+billing.hooks.email = (user, subject, paragraphs) => {
+  const baseUrl = PUBLIC_URL || auth.settings.baseUrl;
+  return mail.send(user.email, subject, paragraphs, baseUrl ? { text: 'Open Billing', url: `${baseUrl}/dashboard?billing` } : null, { replyTo: EMAILS.billing });
+};
+billing.hooks.sendEmail = (kind, user, sub) => {
+  const baseUrl = auth.settings.baseUrl || PUBLIC_URL || 'https://treehost.online';
+  return user && user.email ? sendEmail(user.email, EMAIL[kind](user, sub, baseUrl)) : Promise.resolve(false);
+};
 
 // ---------- emails (the layout is in mail.js) ----------
 
-const siteUrl = (req) => PUBLIC_URL || (req ? publicOrigin(req) : 'https://treehost.online');
+const siteUrl = (req) => PUBLIC_URL || auth.settings.baseUrl || (req ? publicOrigin(req) : 'https://treehost.online');
 const niceDate = (t) => new Date(t).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
 /** Each email as [subject, paragraphs, button, options] (see mail.send). Used for sending and for the previews. */
@@ -775,7 +780,8 @@ route(
     if (!mail.enabled()) throw httpError(400, 'Password reset emails are not set up yet. Please contact support.');
     const r = await auth.createReset(email, clientIp(req));
     if (r) {
-      await sendEmail(r.user.email, EMAIL.reset(r.user.username, `${siteUrl(req)}/dashboard?reset=${r.token}`));
+      const baseUrl = auth.settings.baseUrl || siteUrl(req);
+      await sendEmail(r.user.email, EMAIL.reset(r.user.username, `${baseUrl}/dashboard?reset=${r.token}`));
     }
     // Same answer either way, so nobody can find out which emails have accounts.
     return { ok: true };
@@ -996,7 +1002,9 @@ route(
     const invite = await auth.createInvite(req.user, role);
     audit(req, `created a ${rbac.role(role).label} invite link`);
     // The dashboard reads ?invite= (on a hosted site "/" is the website, which would drop it).
-    return { link: `${PUBLIC_URL || publicOrigin(req)}/dashboard?invite=${invite}`, expiresInDays: 7 };
+    // Use the configured base URL if set, otherwise fall back to the request's host.
+    const baseUrl = auth.settings.baseUrl || publicOrigin(req);
+    return { link: `${baseUrl}/dashboard?invite=${invite}`, expiresInDays: 7 };
   },
   { perm: 'users.roles' },
 );
@@ -1527,10 +1535,10 @@ route('POST', '/api/billing/checkout', async (req) => {
   regionCheck(req, true);
   const body = await readJson(req);
   const consent = { ...(body.consent || {}), ip: clientIp(req), userAgent: req.headers['user-agent'] };
-  return billing.checkout(req.user, body.planId, PUBLIC_URL || publicOrigin(req), consent);
+  return billing.checkout(req.user, body.planId, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req), consent);
 });
 route('POST', '/api/billing/confirm', async (req) => billing.publicSub(await billing.confirmCheckout(req.user, (await readJson(req)).sessionId, auth)));
-route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || publicOrigin(req)));
+route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req)));
 // Promo codes: customers redeem them in Billing (free plans for creators, partners, giveaways).
 route('POST', '/api/billing/redeem', async (req) => {
   if (!TEAM) throw httpError(400, 'Codes only exist on a hosted Tree Host.');
@@ -1698,10 +1706,11 @@ route('GET', '/api/admin/audit', (req, res, p, q) => {
 /** Welcome email; for an email that isn't verified yet it carries the confirm button. */
 async function welcomeEmail(req, user) {
   let verifyLink = null;
+  const baseUrl = auth.settings.baseUrl || siteUrl(req);
   if (user.firebaseUid && !user.emailVerified && firebase.linksEnabled()) {
-    verifyLink = await firebase.emailLink('verify', user.email, `${siteUrl(req)}/dashboard`).catch(() => null);
+    verifyLink = await firebase.emailLink('verify', user.email, `${baseUrl}/dashboard`).catch(() => null);
   }
-  await sendEmail(user.email, EMAIL.welcome(user, siteUrl(req), verifyLink));
+  await sendEmail(user.email, EMAIL.welcome(user, baseUrl, verifyLink));
 }
 
 // Our own branded password reset and email confirmation emails (with Firebase making the one-time links).
@@ -1716,7 +1725,8 @@ route('POST', '/api/auth/email-link', async (req) => {
   auth.checkRate(keys);
   auth.recordFailure(keys);
   const user = auth.users.find((u) => u.email === email);
-  const link = await firebase.emailLink(type, email, `${siteUrl(req)}/dashboard`);
+  const baseUrl = auth.settings.baseUrl || siteUrl(req);
+  const link = await firebase.emailLink(type, email, `${baseUrl}/dashboard`);
   if (link) await sendEmail(email, type === 'verify' ? EMAIL.verify(user && user.username, link) : EMAIL.reset(user && user.username, link));
   // Same answer either way, so nobody can find out which emails have accounts.
   return { ok: true };
@@ -1744,7 +1754,8 @@ route('GET', '/api/admin/emails', () => ({
 route('GET', '/api/admin/emails/preview/:kind', (req, res, p) => {
   const make = PREVIEWS[p.kind];
   if (!make) throw httpError(404, 'No such email.');
-  const [subject, paragraphs, button, opts] = make(siteUrl(req));
+  const baseUrl = auth.settings.baseUrl || siteUrl(req);
+  const [subject, paragraphs, button, opts] = make(baseUrl);
   const { html } = mail.render(subject, paragraphs, button, { ...opts, preview: true });
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'" });
   res.end(html);
@@ -1754,7 +1765,8 @@ route('POST', '/api/admin/emails/test', async (req) => {
   if (!mail.enabled()) throw httpError(400, 'Emails are off: put RESEND_API_KEY in the settings file and restart.');
   if (!req.user.email) throw httpError(400, 'Your account has no email address.');
   const { kind } = await readJson(req);
-  await sendEmail(req.user.email, (PREVIEWS[kind] || PREVIEWS.welcome)(siteUrl(req)));
+  const baseUrl = auth.settings.baseUrl || siteUrl(req);
+  await sendEmail(req.user.email, (PREVIEWS[kind] || PREVIEWS.welcome)(baseUrl));
   audit(req, 'sent a test email to themselves');
   return { ok: true, to: req.user.email };
 }, { perm: 'settings.manage' });
@@ -2263,7 +2275,7 @@ route(
     auth.recordFailure([`donate:${ip}`]);
     const body = await readJson(req);
     const user = optionalUser(req);
-    return billing.donate({ ...body, userId: user && !user.local ? user.id : null }, PUBLIC_URL || publicOrigin(req));
+    return billing.donate({ ...body, userId: user && !user.local ? user.id : null }, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req));
   },
   { public: true },
 );
