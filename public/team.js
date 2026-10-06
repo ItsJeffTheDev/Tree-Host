@@ -38,6 +38,8 @@ function can(action, s) {
   if (!isTeam()) return true;
   const u = state.me.user;
   if (!s || action === 'view' || s.owner === u.id) return true;
+  // Demo server read-only for certain actions
+  if (s.isDemo && ['plugins', 'files', 'settings', 'manage'].includes(action)) return false;
   const mine = myMembership(s);
   if (mine && !hasPerm('console.access')) return MEMBER_ACTIONS[mine.role].includes(action);
   return hasPerm(ACTION_PERMISSION[action] || 'servers.viewAll');

@@ -72,27 +72,6 @@ const STATUS_LABEL = {
 };
 const STATUS_BADGE = { stopped: '', installing: 'yellow', starting: 'yellow', running: 'green', stopping: 'yellow' };
 
-const ACTION_PERMISSION = {
-  control: 'servers.operate', command: 'servers.operate',
-  plugins: 'servers.edit', files: 'servers.edit', settings: 'servers.edit', deploy: 'servers.edit',
-  manage: 'servers.destroy',
-};
-const MEMBER_ACTIONS = { coowner: ['view', 'control', 'command', 'plugins', 'files', 'settings', 'deploy'], helper: ['view', 'control', 'command'], viewer: ['view'] };
-const MEMBER_LABEL = { coowner: 'Co-owner', helper: 'Helper', viewer: 'Viewer' };
-/** My role on a server someone shared with me (null if it isn't shared with me). */
-const myMembership = (s) => (s && s.members && state.me.user ? s.members.find((m) => m.id === state.me.user.id) : null) || null;
-
-function can(action, s) {
-  if (!isTeam()) return true;
-  const u = state.me.user;
-  if (!s || action === 'view' || s.owner === u.id) return true;
-  // Demo server read-only for certain actions
-  if (s.isDemo && ['plugins', 'files', 'settings', 'manage'].includes(action)) return false;
-  const mine = myMembership(s);
-  if (mine && !hasPerm('console.access')) return MEMBER_ACTIONS[mine.role].includes(action);
-  return hasPerm(ACTION_PERMISSION[action] || 'servers.viewAll');
-}
-
 // ---------- state ----------
 
 const state = {
