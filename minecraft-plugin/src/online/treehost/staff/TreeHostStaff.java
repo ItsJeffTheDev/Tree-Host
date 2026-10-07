@@ -50,11 +50,20 @@ import net.md_5.bungee.api.chat.TextComponent;
  *  - are announced when they join, in green and gold,
  *  - wear a gold STAFF badge in chat (hover: "Official Tree Host Staff"), above their head and in the player list.
  * Only on online-mode servers (or behind a proxy that checks accounts), so a name really belongs to its owner.
+ *
+ * Creators (YouTubers) are in plugins/TreeHostStaff/creators.txt ("minecraftName|Label|perk,perk"), with the perks
+ * Tree Host staff gave their role:
+ *  - badge:     a red "▶ YOUTUBER" tag above their head, in chat and in the player list,
+ *  - announce:  everyone is told when they join,
+ *  - joinfull:  they can join when the server is full,
+ *  - whitelist: they can join through the whitelist.
+ * Creators get no protection from kicks or bans: those stay the owner's call.
  */
 public final class TreeHostStaff extends JavaPlugin implements Listener {
     private static final String BADGE = ChatColor.GOLD + "" + ChatColor.BOLD + "✔ STAFF " + ChatColor.RESET;
     private static final String PREFIX = ChatColor.GREEN + "" + ChatColor.BOLD + "Tree Host " + ChatColor.GOLD + "» ";
     private static final String TEAM = "th_staff";
+    private static final String CREATOR_TEAM = "th_creator";
     private static final Set<String> KICK_BAN_COMMANDS = new HashSet<>(Arrays.asList(
             "kick", "ban", "ban-ip", "banip", "ipban", "tempban", "tempbanip", "tempipban", "mute", "tempmute", "jail",
             "ekick", "eban", "ebanip", "etempban", "kickall", "kill", "minecraft:kick", "minecraft:ban", "minecraft:ban-ip",
@@ -63,6 +72,9 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             "advancedban:tempban", "deop", "minecraft:deop"));
 
     private volatile Map<String, String> staff = Collections.emptyMap(); // lower-case name -> role label
+    private volatile Map<String, Creator> creators = Collections.emptyMap(); // lower-case name -> label and perks
+    private File creatorsFile;
+    private long creatorsModified = -2;
     private volatile boolean proxyTrusted; // Tree Host put this server behind its owner's proxy, which checks accounts
     private volatile String[] motdFrames = new String[0]; // the owner's MOTD (several frames = animated)
     private volatile int motdInterval = 3;
@@ -77,10 +89,12 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         staffFile = new File(getDataFolder(), "staff.txt");
+        creatorsFile = new File(getDataFolder(), "creators.txt");
         motdFile = new File(getDataFolder(), "motd.txt");
         components = classExists("net.md_5.bungee.api.chat.TextComponent") && classExists("org.bukkit.entity.Player$Spigot");
         folia = classExists("io.papermc.paper.threadedregions.RegionizedServer");
         reload();
+        reloadCreators();
         reloadMotd();
         getServer().getPluginManager().registerEvents(this, this);
         timer = new Timer("TreeHostStaff", true);
@@ -88,11 +102,12 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             @Override
             public void run() {
                 reload();
+                reloadCreators();
                 reloadMotd();
                 runSync(TreeHostStaff.this::undoBans);
             }
         }, 5000L, 5000L);
-        getLogger().info("Tree Host staff protection is active (" + staff.size() + " staff, " + (trusted() ? "names verified" : "offline mode: no staff powers") + ").");
+        getLogger().info("Tree Host staff protection is active (" + staff.size() + " staff, " + creators.size() + " creators, " + (trusted() ? "names verified" : "offline mode: no staff powers") + ").");
     }
 
     @Override
@@ -126,6 +141,59 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         }
         staff = next;
         proxyTrusted = trust;
+    }
+
+    // ---------- creators (YouTubers) ----------
+
+    private static final class Creator {
+        final String label;
+        final Set<String> perks;
+
+        Creator(String label, Set<String> perks) {
+            this.label = label;
+            this.perks = perks;
+        }
+
+        boolean has(String perk) {
+            return perks.contains(perk);
+        }
+
+        /** "▶ YOUTUBER " in red, for nametags, the player list and chat. */
+        String badge() {
+            return ChatColor.RED + "" + ChatColor.BOLD + "▶ " + label.toUpperCase(Locale.ROOT) + " " + ChatColor.RESET;
+        }
+    }
+
+    private void reloadCreators() {
+        long m = creatorsFile.exists() ? creatorsFile.lastModified() : -1;
+        if (m == creatorsModified) return;
+        creatorsModified = m;
+        Map<String, Creator> next = new HashMap<>();
+        if (m >= 0) {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(creatorsFile), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty() || line.startsWith("#")) continue;
+                    String[] parts = line.split("\\|", 3);
+                    String name = parts[0].trim();
+                    if (!name.matches("[A-Za-z0-9_]{3,16}")) continue;
+                    String label = parts.length > 1 && parts[1].trim().matches("[A-Za-z0-9 ]{1,16}") ? parts[1].trim() : "YouTuber";
+                    Set<String> perks = new HashSet<>();
+                    if (parts.length > 2) for (String p : parts[2].split(",")) if (!p.trim().isEmpty()) perks.add(p.trim().toLowerCase(Locale.ROOT));
+                    next.put(name.toLowerCase(Locale.ROOT), new Creator(label, perks));
+                }
+            } catch (Exception e) {
+                getLogger().warning("Could not read the Tree Host creator list: " + e.getMessage());
+            }
+        }
+        creators = next;
+    }
+
+    /** A creator's perks (null for everyone else, for staff, and on servers where names can't be trusted). */
+    private Creator creatorOf(String name) {
+        if (name == null || !trusted() || roleOf(name) != null) return null;
+        return creators.get(name.toLowerCase(Locale.ROOT));
     }
 
     /** motd.txt from Tree Host: "#interval=3", then frames (1-2 lines each, section codes) separated by "---". */
@@ -198,7 +266,11 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         if (roleOf(e.getName()) != null && e.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED) {
             e.allow();
             runSync(() -> pardon(e.getName()));
+            return;
         }
+        Creator c = creatorOf(e.getName());
+        AsyncPlayerPreLoginEvent.Result r = e.getLoginResult();
+        if (c != null && ((r == AsyncPlayerPreLoginEvent.Result.KICK_FULL && c.has("joinfull")) || (r == AsyncPlayerPreLoginEvent.Result.KICK_WHITELIST && c.has("whitelist")))) e.allow();
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -206,7 +278,12 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         if (roleOf(e.getPlayer().getName()) != null && e.getResult() != PlayerLoginEvent.Result.ALLOWED) {
             e.allow();
             pardon(e.getPlayer().getName());
+            return;
         }
+        // Creators: only a full server or the whitelist, never a ban (that's the owner's decision).
+        Creator c = creatorOf(e.getPlayer().getName());
+        PlayerLoginEvent.Result r = e.getResult();
+        if (c != null && ((r == PlayerLoginEvent.Result.KICK_FULL && c.has("joinfull")) || (r == PlayerLoginEvent.Result.KICK_WHITELIST && c.has("whitelist")))) e.allow();
     }
 
     // ---------- no kicks or bans ----------
@@ -285,7 +362,10 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
         String role = roleOf(p.getName());
-        if (role == null) return;
+        if (role == null) {
+            creatorJoined(e, p);
+            return;
+        }
         e.setJoinMessage(BADGE + ChatColor.GOLD + p.getName() + ChatColor.YELLOW + " (" + role + ") joined the game");
         try {
             p.setPlayerListName(BADGE + ChatColor.GOLD + p.getName());
@@ -319,12 +399,55 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         getServer().getConsoleSender().sendMessage(ChatColor.stripColor(text));
     }
 
+    /** A creator joins: their badge above their head and in the player list, and the announcement. */
+    private void creatorJoined(PlayerJoinEvent e, Player p) {
+        Creator c = creatorOf(p.getName());
+        if (c == null) return;
+        if (c.has("badge")) {
+            try {
+                p.setPlayerListName(c.badge() + ChatColor.WHITE + p.getName());
+            } catch (Throwable ignored) {
+            }
+            try {
+                Scoreboard board = getServer().getScoreboardManager().getMainScoreboard();
+                Team team = board.getTeam(CREATOR_TEAM);
+                if (team == null) team = board.registerNewTeam(CREATOR_TEAM);
+                team.setPrefix(c.badge());
+                try {
+                    team.setColor(ChatColor.WHITE);
+                } catch (Throwable ignored) {
+                }
+                team.addEntry(p.getName());
+            } catch (Throwable ignored) {
+                // Folia has no scoreboards; the chat and player list badges still work.
+            }
+        }
+        if (c.has("announce")) {
+            e.setJoinMessage(null);
+            String text = ChatColor.RED + "" + ChatColor.BOLD + "▶ " + ChatColor.WHITE + ChatColor.BOLD + p.getName() + ChatColor.RESET + ChatColor.GRAY
+                    + " joined the game. " + ChatColor.RED + c.label + ChatColor.GRAY + " on Tree Host";
+            for (Player other : getServer().getOnlinePlayers()) {
+                if (components) {
+                    try {
+                        other.spigot().sendMessage(withHover(text, "Tree Host " + c.label));
+                        continue;
+                    } catch (Throwable ignored) {
+                    }
+                }
+                other.sendMessage(text);
+            }
+            getServer().getConsoleSender().sendMessage(ChatColor.stripColor(text));
+        }
+    }
+
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
-        if (roleOf(e.getPlayer().getName()) == null) return;
+        String name = e.getPlayer().getName();
+        String team = roleOf(name) != null ? TEAM : creatorOf(name) != null ? CREATOR_TEAM : null;
+        if (team == null) return;
         try {
-            Team team = getServer().getScoreboardManager().getMainScoreboard().getTeam(TEAM);
-            if (team != null) team.removeEntry(e.getPlayer().getName());
+            Team t = getServer().getScoreboardManager().getMainScoreboard().getTeam(team);
+            if (t != null) t.removeEntry(name);
         } catch (Throwable ignored) {
         }
     }
@@ -334,7 +457,12 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     public void onChat(AsyncPlayerChatEvent e) {
         Player p = e.getPlayer();
         String role = roleOf(p.getName());
-        if (role == null) return;
+        if (role == null) {
+            // Creators: the badge goes in front of whatever chat format the server uses (other chat plugins keep working).
+            Creator c = creatorOf(p.getName());
+            if (c != null && c.has("badge")) e.setFormat(c.badge() + e.getFormat());
+            return;
+        }
         if (!components) {
             e.setFormat(BADGE + ChatColor.GOLD + "%1$s" + ChatColor.GRAY + ": " + ChatColor.WHITE + "%2$s");
             return;

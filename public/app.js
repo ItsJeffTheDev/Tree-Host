@@ -959,6 +959,7 @@ function showStaffPluginInfo() {
         <li><b>Visual identification</b> - Staff wear a gold <b>✔ STAFF</b> badge in chat so players know who they are</li>
         <li><b>Hover information</b> - Hovering over the badge shows "Official Tree Host Staff"</li>
         <li><b>No commands</b> - The plugin has no commands and doesn't change your gameplay</li>
+        <li><b>Tree Host YouTubers</b> - Creators we work with wear a red <b>▶ YOUTUBER</b> tag. They can't get past bans, and you can still kick them</li>
         <li><b>Tiny footprint</b> - Minimal performance impact on your server</li>
       </ul>
 

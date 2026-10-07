@@ -31,7 +31,16 @@ const PERMISSIONS = [
   { id: 'system.manage', group: 'Platform', label: 'Manage required plugins', description: 'Add, edit, delete, and distribute required plugins to all servers.' },
   { id: 'settings.manage', group: 'Platform', label: 'Change site settings', description: 'Open or close sign-ups, Discord notifications.' },
   { id: 'roles.manage', group: 'Platform', label: 'Edit roles', description: 'Change what each role can do (this page).' },
+  // Perks for creators (the YouTuber role). They work on every Tree Host Paper/Spigot/Purpur/Folia server through the
+  // Tree Host staff plugin, and only for people who aren't staff (staff wear the STAFF badge instead).
+  { id: 'creator.badge', group: 'Creator perks', label: 'YouTuber badge in-game', description: 'A red ▶ YOUTUBER tag above their head, in chat and in the player list on every Tree Host server.' },
+  { id: 'creator.announce', group: 'Creator perks', label: 'Join announcement', description: 'Everyone on the server is told when they join.' },
+  { id: 'creator.joinFull', group: 'Creator perks', label: 'Join full servers', description: 'They can still join when a server is full.' },
+  { id: 'creator.joinWhitelist', group: 'Creator perks', label: 'Skip whitelists', description: "They can join servers that have a whitelist on, even if they're not on it. Bans still apply." },
+  { id: 'creator.featured', group: 'Creator perks', label: 'Featured on the server list', description: 'Their listed servers are shown first on the public Servers page, with a Featured badge.' },
 ];
+/** Creator perks, and what the staff plugin calls them in creators.txt. */
+const CREATOR_PERKS = { 'creator.badge': 'badge', 'creator.announce': 'announce', 'creator.joinFull': 'joinfull', 'creator.joinWhitelist': 'whitelist' };
 const PERMISSION_IDS = new Set(PERMISSIONS.map((p) => p.id));
 // The permissions that existed before roles remembered which ones they knew (for adding new ones on upgrade).
 const FIRST_PERMISSIONS = ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'servers.destroy', 'servers.host', 'users.view', 'users.manage',
@@ -42,7 +51,7 @@ const FIRST_PERMISSIONS = ['console.access', 'servers.viewAll', 'servers.operate
  * own level (Owners can assign anything). Owner always has every permission; Customer never has any.
  */
 // Admins run the business but don't touch the machine itself or what roles can do.
-const ADMIN_EXCLUDED = ['roles.manage', 'servers.host'];
+const ADMIN_EXCLUDED = ['roles.manage', 'servers.host', ...PERMISSIONS.filter((p) => p.group === 'Creator perks').map((p) => p.id)];
 // Taken away from saved roles once (the Owner can give them back in Roles & permissions).
 const REVOKED = { 2: { staff: ['servers.edit', 'servers.host'], developer: ['servers.edit', 'servers.host'], admin: ['servers.host'] } };
 
@@ -62,8 +71,8 @@ const DEFAULT_ROLES = [
   },
   {
     id: 'youtuber', label: 'YouTuber', level: 10, customer: true,
-    description: 'Content creators. A customer account with a YouTuber badge on their profile and on their servers in the public list. No staff powers unless you add some here.',
-    permissions: [],
+    description: 'Content creators. A customer account with creator perks: a YouTuber badge on their profile, on their listed servers and above their head in-game. No staff powers unless you add some here.',
+    permissions: ['creator.badge', 'creator.announce', 'creator.joinFull', 'creator.featured'],
   },
   { id: 'customer', label: 'Customer', level: 0, locked: true, customer: true, description: 'Everyone who signs up. Manages only their own servers.' },
 ];
@@ -181,4 +190,4 @@ class Rbac {
   }
 }
 
-module.exports = { Rbac, PERMISSIONS, DEFAULT_ROLES, CUSTOMER_ROLES };
+module.exports = { Rbac, PERMISSIONS, DEFAULT_ROLES, CUSTOMER_ROLES, CREATOR_PERKS };

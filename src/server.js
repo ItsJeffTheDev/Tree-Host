@@ -11,7 +11,7 @@ const { PUBLIC, DATA } = require('./paths');
 const { Manager, readPluginMeta } = require('./instances');
 const { ManagedPlugins, STAFF_ID, BUKKIT_TYPES, MAX_JAR } = require('./managed-plugins');
 const { Auth } = require('./auth');
-const { Rbac, PERMISSIONS } = require('./rbac');
+const { Rbac, PERMISSIONS, CREATOR_PERKS } = require('./rbac');
 const { Billing, durationText } = require('./billing');
 const mail = require('./mail');
 const firebase = require('./firebase');
@@ -1003,6 +1003,7 @@ route(
     const before = rbac.role(target.role).label;
     const u = await auth.setRole(p.uid, role);
     publicListCache = null; // the YouTuber badge on their listed servers
+    syncStaffListsSoon(); // and in-game
     audit(req, `changed ${u.username}'s role from ${before} to ${rbac.role(u.role).label}`);
     return auth.publicUser(u);
   },
@@ -1673,6 +1674,8 @@ route('PUT', '/api/admin/roles/:role', async (req, res, p) => {
   const after = rbac.role(p.role).permissions;
   const added = after.filter((x) => !before.includes(x));
   const removed = before.filter((x) => !after.includes(x));
+  publicListCache = null;
+  syncStaffListsSoon();
   audit(req, `changed the ${rbac.role(p.role).label} role${added.length ? ` (+ ${added.join(', ')})` : ''}${removed.length ? ` (- ${removed.join(', ')})` : ''}`);
   return r;
 }, { perm: 'roles.manage' });
@@ -2312,6 +2315,22 @@ function staffListText() {
 }
 const staffFileFor = (inst) => `${staffListText()}${manager.networkFor && manager.networkFor(inst) ? '#trust=proxy\n' : ''}`;
 
+/** creators.txt for the staff plugin: "minecraftName|Role|perk,perk" for everyone (not staff) with creator perks. */
+function creatorListText() {
+  const lines = [];
+  for (const u of auth.users) {
+    if (!u.mcName || !/^[A-Za-z0-9_]{3,16}$/.test(u.mcName) || u.restriction || rbac.isStaff(u)) continue;
+    const perks = Object.entries(CREATOR_PERKS).filter(([perm]) => rbac.can(u, perm)).map(([, perk]) => perk);
+    if (perks.length) lines.push(`${u.mcName}|${rbac.role(u.role).label.replace(/[^A-Za-z0-9 ]/g, '').slice(0, 16) || 'Creator'}|${perks.join(',')}`);
+  }
+  return `# Tree Host creators (YouTubers) and their perks. Managed by Tree Host: changes here are undone.\n${lines.sort().join('\n')}\n`;
+}
+
+/** Every server's staff and creator lists, now (after a role or its permissions change). */
+const syncStaffListsSoon = () => setTimeout(() => {
+  for (const i of manager.instances.values()) syncStaffPlugin(i).catch(() => {});
+}, 100);
+
 /** Puts the plugin and the staff list in place (if missing or changed). Returns true if the plugin had to be restored. */
 async function syncStaffPlugin(inst) {
   if (!manager.protectedPlugin(inst)) return false;
@@ -2342,6 +2361,9 @@ async function syncStaffPlugin(inst) {
   const list = path.join(dir, 'TreeHostStaff', 'staff.txt');
   const text = staffFileFor(inst);
   if ((await fsp.readFile(list, 'utf8').catch(() => null)) !== text) await fsp.writeFile(list, text);
+  const creatorsFile = path.join(dir, 'TreeHostStaff', 'creators.txt');
+  const creators = creatorListText();
+  if ((await fsp.readFile(creatorsFile, 'utf8').catch(() => null)) !== creators) await fsp.writeFile(creatorsFile, creators);
   if (current && (!inst.cfg.staffPluginInstalled || inst.cfg.staffPluginHash !== want)) {
     inst.cfg.staffPluginInstalled = true;
     inst.cfg.staffPluginHash = want;
@@ -3335,6 +3357,7 @@ route('GET', '/api/public/servers', () => {
         maxPlayers: maxPlayers(i),
         listedSince: i.cfg.listing.since || null,
         creator: TEAM && (auth.userById(i.cfg.owner) || {}).role === 'youtuber',
+        featured: TEAM && !rbac.isStaff(auth.userById(i.cfg.owner)) && rbac.can(auth.userById(i.cfg.owner), 'creator.featured'),
       };
     }),
   };

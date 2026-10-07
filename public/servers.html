@@ -6,6 +6,9 @@
   <title>Server list - Tree Host</title>
   <meta name="description" content="Minecraft servers hosted on Tree Host: survival SMPs, modded worlds, minigames and more. Find one and join.">
   <link rel="icon" href="/brand/tree-host-icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&display=swap">
   <link rel="stylesheet" href="/site.css">
   <style>
     .sl-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 18px; }
@@ -33,6 +36,7 @@
     .sl-addr button { border: 0; border-radius: 8px; padding: 9px 14px; background: var(--accent); color: var(--dark); font-weight: 800; cursor: pointer; font: inherit; font-weight: 800; }
     .sl-demo { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #e8c27a; border: 1px solid rgba(217,164,65,.5); background: rgba(217,164,65,.14); border-radius: 999px; padding: 1px 7px; vertical-align: 3px; }
     .sl-yt { color: #ff8a8a; border-color: rgba(255,72,72,.5); background: rgba(255,48,48,.13); }
+    .sl-feat { color: #8fe6b6; border-color: rgba(70,195,123,.5); background: rgba(70,195,123,.14); }
     .sl-try { border-radius: 8px; padding: 9px 14px; background: var(--accent); color: var(--dark); font-weight: 800; text-decoration: none; white-space: nowrap; }
     .sl-links { display: flex; gap: 12px; font-size: 13px; }
     .sl-links a { color: var(--accent2); }
@@ -82,7 +86,7 @@
         <div class="sl-top">
           ${s.icon ? `<img class="sl-icon" src="${esc(s.icon)}" alt="">` : '<div class="sl-icon">' + ic('tree') + '</div>'}
           <div style="min-width:0;flex:1">
-            <div class="sl-name" title="${esc(s.name)}">${esc(s.name)}${s.demo ? ' <span class="sl-demo">Demo</span>' : ''}${s.creator ? ' <span class="sl-demo sl-yt" title="Run by a YouTuber">YouTuber</span>' : ''}</div>
+            <div class="sl-name" title="${esc(s.name)}">${esc(s.name)}${s.demo ? ' <span class="sl-demo">Demo</span>' : ''}${s.creator ? ' <span class="sl-demo sl-yt" title="Run by a YouTuber">YouTuber</span>' : ''}${s.featured ? ' <span class="sl-demo sl-feat" title="Featured by Tree Host">Featured</span>' : ''}</div>
             <div class="sl-meta">${esc(s.software)} ${esc(s.version)}${s.kind === 'proxy' ? ' · network' : ''}</div>
             <div class="sl-status ${s.online ? 'on' : ''}"><span class="sl-dot"></span>${s.online ? `${s.players}${s.maxPlayers ? ` / ${s.maxPlayers}` : ''} online` : 'Offline'}</div>
           </div>
@@ -100,7 +104,7 @@
           && (!q || [s.name, s.description, s.software, s.version, ...s.tags].some((x) => String(x || '').toLowerCase().includes(q))));
         list.sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name)
           : sort === 'new' ? (b.listedSince || 0) - (a.listedSince || 0)
-          : (b.online - a.online) || (b.players - a.players) || a.name.localeCompare(b.name));
+          : (b.featured - a.featured) || (b.online - a.online) || (b.players - a.players) || a.name.localeCompare(b.name));
         $('#sl-grid').innerHTML = list.length ? list.map(card).join('')
           : `<div class="sl-empty" style="grid-column:1/-1">${data.servers.length ? 'No servers match your search.' : 'No servers are listed yet. Be the first: turn on Settings → Public server list for your server.'}</div>`;
         document.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => {
