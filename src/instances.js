@@ -10,6 +10,7 @@ const { spawn } = require('child_process');
 const EventEmitter = require('events');
 const { SERVERS, CONFIG_FILE, DATA, CACHE } = require('./paths');
 const { getProvider } = require('./providers');
+const { DemoSim } = require('./demo-sim');
 const java = require('./java');
 const os = require('os');
 const backups = require('./backups');
@@ -262,6 +263,7 @@ class Instance extends EventEmitter {
     this.lastProgressEmit = 0;
     this.client = null;
     this.clientsRunning = 0;
+    if (cfg.isDemo) this.demo = new DemoSim(this); // the shared demo server never runs a real process
   }
 
   /** Runs in a Docker container (always for customer servers on a production host). */
@@ -292,16 +294,8 @@ class Instance extends EventEmitter {
   toJSON() {
     const c = this.cfg;
     const p = this.provider;
-    // Demo server simulation: show as running even if not actually running
-    const isDemo = c.isDemo || false;
-    const simulatedStatus = isDemo ? 'running' : this.status;
-    const simulatedPid = isDemo ? 'demo-simulated' : (this.proc ? this.proc.pid : null);
-    const simulatedPlayers = isDemo ? [] : [...this.players];
-    const simulatedMaxPlayers = isDemo ? 20 : (this.proc ? this.maxPlayers || null : null);
-    const simulatedMemUsed = isDemo ? 512 : (this.proc ? this.memUsedMb || null : null);
-    const simulatedDiskUsed = isDemo ? 250 : (this.diskUsedMb || null);
-    const simulatedStartedAt = isDemo ? (c.createdAt || Date.now() - 3600000) : this.startedAt;
-    const simulatedCpu = isDemo ? 12.5 : (this.proc && typeof this.cpuPct === 'number' ? this.cpuPct : null);
+    // A running process, or the demo server's simulated one (src/demo-sim.js).
+    const live = !!this.proc || !!(this.demo && this.demo.alive);
 
     return {
       id: c.id,
@@ -343,12 +337,12 @@ class Instance extends EventEmitter {
       schedules: c.schedules || [],
       timeZone: c.timeZone || null,
       members: (c.members || []).map((m) => ({ id: m.userId, username: this.manager.ownerName(m.userId) || '(deleted)', role: m.role })),
-      maxPlayers: simulatedMaxPlayers,
+      maxPlayers: live ? this.maxPlayers || null : null,
       subscriptionId: c.subscriptionId || null,
       plan: this.manager.planInfo(this),
-      diskUsedMb: simulatedDiskUsed,
-      memUsedMb: simulatedMemUsed,
-      cpuPct: simulatedCpu,
+      diskUsedMb: this.diskUsedMb || null,
+      memUsedMb: live ? this.memUsedMb || null : null,
+      cpuPct: live && typeof this.cpuPct === 'number' ? this.cpuPct : null,
       crashes: (this.crashTimes || []).length,
       gatewayDefault: c.gatewayDefault || null,
       gateway: this.manager.gatewayInfo(this),
@@ -375,13 +369,13 @@ class Instance extends EventEmitter {
         missing: !!(this.watchState.get(w.id) || {}).missing,
       })),
       pluginDir: this.pluginDirName,
-      status: simulatedStatus,
+      status: this.status,
       progress: this.progress,
-      players: simulatedPlayers,
-      pid: simulatedPid,
-      startedAt: simulatedStartedAt,
+      players: [...this.players],
+      pid: this.proc ? this.proc.pid : live ? 'demo' : null,
+      startedAt: this.startedAt,
       createdAt: c.createdAt,
-      isDemo: isDemo,
+      isDemo: !!c.isDemo,
     };
   }
 
@@ -1939,10 +1933,12 @@ class Manager extends EventEmitter {
     await this.saveNow();
     this.emit('status', inst);
     this.serversChanged();
-    inst
-      .install()
-      .then(() => (body.startAfterInstall ? inst.start() : null))
-      .catch(() => {});
+    if (!cfg.isDemo) {
+      inst
+        .install()
+        .then(() => (body.startAfterInstall ? inst.start() : null))
+        .catch(() => {});
+    }
     return inst;
   }
 

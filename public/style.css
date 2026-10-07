@@ -433,6 +433,23 @@ details.menu > summary::-webkit-details-marker { display: none; }
   .mp-actions { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
 }
 
+/* ---------- the shared demo server ---------- */
+.badge.demo-badge { background: rgba(217,164,65,.14); border-color: rgba(217,164,65,.5); color: #e8c27a; font-size: 10.5px; padding: 1px 6px; text-transform: uppercase; letter-spacing: .04em; }
+.demo-banner { display: flex; align-items: center; gap: 14px; padding: 12px 14px; margin-bottom: 14px; border: 1px solid rgba(74,158,255,.35); border-radius: 10px; background: linear-gradient(90deg, rgba(74,158,255,.10), rgba(70,195,123,.06)); }
+.demo-banner-icon { width: 38px; height: 38px; flex: none; border-radius: 9px; display: grid; place-items: center; background: rgba(74,158,255,.15); color: var(--info); }
+.demo-banner-icon .ic { width: 20px; height: 20px; }
+.demo-banner-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.demo-banner-text b { font-size: 14px; }
+.demo-banner-text > span { color: var(--muted); }
+.demo-try { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; }
+.demo-cmd { font: 12px var(--mono); color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.demo-cmd:hover { border-color: var(--info); color: #8cc2ff; }
+.demo-banner > .btn { flex: none; }
+@media (max-width: 760px) {
+  .demo-banner { flex-wrap: wrap; }
+  .demo-banner > .btn { width: 100%; }
+}
+
 /* ---------- proportional scaling on big screens ----------
    Everything is sized in px, so the whole interface is zoomed a step at a time on large monitors.
    .app divides its height by --z so it still fills exactly one screen. */
