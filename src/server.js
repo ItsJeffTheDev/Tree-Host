@@ -499,19 +499,6 @@ function authenticate(req) {
 /** True if this user has the permission. Personal mode (no accounts) can do everything. */
 const can = (user, permission) => !TEAM || rbac.can(user, permission);
 
-/** Check if user can perform an action on a server instance. */
-const canDo = (user, inst, action) => {
-  if (!TEAM) return true;
-  if (!user || !inst) return false;
-  // For shared demo server, allow customers to do most actions (read-only demo)
-  if (inst.cfg.isSharedDemo && user.role === 'customer') {
-    if (['view', 'control', 'command'].includes(action)) return true;
-    if (['plugins', 'files', 'settings'].includes(action)) return false; // Read-only
-    return false;
-  }
-  return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, ACTION_PERMISSION[action] || 'servers.viewAll');
-};
-
 function requirePerm(req, permission) {
   if (!can(req.user, permission)) {
     const p = PERMISSIONS.find((x) => x.id === permission);
@@ -526,15 +513,6 @@ function canView(user, inst) {
   // Customers can also see the shared demo server
   if (inst.cfg.isSharedDemo && user.role === 'customer') return true;
   return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, 'servers.viewAll');
-}
-
-/** Customers can control the shared demo server. */
-function canControl(user, inst) {
-  if (!TEAM) return true;
-  if (!user || !inst) return false;
-  // Allow control of shared demo for all customers
-  if (inst.cfg.isSharedDemo && user.role === 'customer') return true;
-  return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, 'servers.operate');
 }
 
 // ---------- sharing a server with friends ----------
@@ -574,6 +552,10 @@ function permissionError(user, action, inst) {
   if (!TEAM) return null;
   if (!user) return 'Please sign in.';
   if (action === 'view' || (inst && inst.cfg.owner === user.id)) return null;
+  // The shared demo server: anyone may start, stop and type commands; the rest is read-only for them.
+  if (inst && inst.cfg.isSharedDemo && !rbac.isStaff(user)) {
+    return ['control', 'command'].includes(action) ? null : "The demo server's files, plugins and settings are read-only. Create your own server to change them.";
+  }
   const member = inst ? memberOf(inst, user) : null;
   if (member && !rbac.isStaff(user)) {
     return MEMBER_ROLES[member.role].actions.includes(action) ? null : `As a ${MEMBER_ROLES[member.role].label} on this server you can't ${ACTION_TEXT[action] || action}. Ask the owner.`;
@@ -1837,316 +1819,106 @@ route('GET', '/api/next-port', async (req, res, p, q) => {
 
 route('GET', '/api/servers', (req) => visibleList(req.user));
 
-/** Create or get the shared demo server for all users to explore. */
-route('POST', '/api/servers/demo', async (req) => {
-  if (!TEAM) throw httpError(400, 'Demo servers are only available in team mode.');
+// ---------- the shared demo server ----------
+// One Paper server everyone can explore before buying a plan: start, stop, restart and commands work (simulated by
+// src/demo-sim.js, so no Java runs and nothing is downloaded); files, plugins and settings are read-only.
 
-  // Check if shared demo server already exists
-  let demoServer = [...manager.instances.values()].find(i => i.cfg.isDemo);
-
-  if (!demoServer) {
-    // Create the shared demo server
-    const demoConfig = {
-      name: 'Tree Host Demo Server',
-      type: 'paper',
-      version: '1.21.1',
-      eula: true,
-      space: 'team', // Team space so all can see it
-      isDemo: true,
-      isSharedDemo: true,
-      memoryMb: 1024,
-    };
-
-    // Use the first owner/admin as the owner, or create a system account
-    const owner = auth.users.find(u => u.role === 'owner') || auth.users.find(u => u.role === 'admin') || auth.users[0];
-    if (!owner) throw httpError(400, 'No staff account exists to own the demo server. Please create an admin account first.');
-
-    demoServer = await manager.create(demoConfig, {
-      space: 'team',
-      owner: owner.id,
-      createdBy: 'system',
-      extra: { isDemo: true, isSharedDemo: true },
-    });
-
-    // The Tree Host staff plugin and the other managed plugins
-    await syncStaffPlugin(demoServer).catch((e) => console.error(`[staff plugin] ${demoServer.cfg.id}: ${e.message}`));
-    await managedPlugins.syncInstance(demoServer).catch((e) => console.error(`[managed plugins] ${demoServer.cfg.id}: ${e.message}`));
-
-    // Create fake world files and data for exploration
-    await createDemoServerFiles(demoServer).catch((e) => console.error(`[demo server] Failed to create demo files: ${e.message}`));
-
-    // Mark demo server as "running" (simulated status for demo purposes)
-    demoServer.setStatus('running');
-    demoServer.maxPlayers = 20;
-    demoServer.players = [];
-
-    // Save the demo server state
-    manager.save();
-
-    // Log the demo server creation
-    activity.log('server', 'Tree Host', `created the shared demo server "${demoServer.cfg.name}"`);
+/** Create (first time) or get the shared demo server. */
+route('POST', '/api/servers/demo', async () => {
+  if (!TEAM) throw httpError(400, 'The demo server is only available when accounts are on.');
+  let demo = [...manager.instances.values()].find((i) => i.cfg.isDemo);
+  if (!demo) {
+    const owner = auth.users.find((u) => u.role === 'owner') || auth.users.find((u) => u.role === 'admin');
+    if (!owner) throw httpError(400, 'The demo server needs an Owner or Admin account to belong to. Create one first.');
+    demo = await manager.create(
+      { name: 'Tree Host Demo', type: 'paper', version: '1.21.1', eula: true, memoryMb: 2048 },
+      { space: 'team', owner: owner.id, createdBy: owner.id, extra: { isDemo: true, isSharedDemo: true, notes: '' } },
+    );
+    await setUpDemoServer(demo);
+    activity.log('server', 'Tree Host', `created the shared demo server "${demo.cfg.name}"`);
   }
-
-  const json = demoServer.toJSON();
-  json.isDemo = true;
-  json.isSharedDemo = true;
-  return json;
+  return demo.toJSON();
 });
 
-/** Create fake world files and configuration for the demo server. */
-async function createDemoServerFiles(inst) {
+/** A tiny jar holding just a plugin.yml, so the demo's Plugins tab lists real-looking plugins (it never runs them). */
+function demoPluginJar(name, version, description) {
+  const { crc32 } = require('./zip');
+  const data = Buffer.from(`name: ${name}\nversion: '${version}'\nmain: demo.${name}\napi-version: '1.21'\ndescription: ${description}\n`);
+  const fileName = Buffer.from('plugin.yml');
+  const crc = crc32(data);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(data.length, 22);
+  local.writeUInt16LE(fileName.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(data.length, 20);
+  central.writeUInt32LE(data.length, 24);
+  central.writeUInt16LE(fileName.length, 28);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(46 + fileName.length, 12);
+  end.writeUInt32LE(30 + fileName.length + data.length, 16);
+  return Buffer.concat([local, fileName, data, central, fileName, end]);
+}
+
+const DEMO_PLUGINS = [
+  ['EssentialsX', '2.20.1', 'Homes, warps, kits, an economy and 130+ everyday commands.'],
+  ['LuckPerms', '5.4.141', 'Permissions: groups, ranks and who may use which command.'],
+  ['WorldEdit', '7.3.6', 'Build fast: select, copy, paste and reshape big areas.'],
+  ['Vault', '1.7.3', 'Lets economy, chat and permission plugins work together.'],
+];
+
+/** The demo's folder: the usual Paper config files and a few plugins. Also tidies demos made by older versions. */
+async function setUpDemoServer(inst) {
   const dir = inst.dir;
-  const pluginsDir = path.join(dir, 'plugins');
-  const worldDir = path.join(dir, 'world');
-  const worldNetherDir = path.join(dir, 'world_nether');
-  const worldEndDir = path.join(dir, 'world_the_end');
-
-  // Create directories
-  await fsp.mkdir(pluginsDir, { recursive: true });
-  await fsp.mkdir(worldDir, { recursive: true });
-  await fsp.mkdir(path.join(worldDir, 'region'), { recursive: true });
-  await fsp.mkdir(path.join(worldDir, 'playerdata'), { recursive: true });
-  await fsp.mkdir(path.join(worldDir, 'data'), { recursive: true });
-  await fsp.mkdir(worldNetherDir, { recursive: true });
-  await fsp.mkdir(worldEndDir, { recursive: true });
-  await fsp.mkdir(path.join(dir, 'logs'), { recursive: true });
-
-  // Create fake server.properties
-  const serverProperties = `#Minecraft server properties
-#Sat Jan 01 00:00:00 UTC 2024
-accepts-minecraft-versions=1.20.4,1.20.5,1.20.6,1.21
-allow-flight=false
-allow-nether=true
-broadcast-console-to-ops=true
-broadcast-rcon-to-ops=true
-difficulty=easy
-enable-command-block=false
-enable-jmx-monitoring=false
-enable-query=false
-enable-rcon=false
-enable-status=true
-enforce-whitelist=false
-entity-broadcast-range-percentage=100.0
-force-gamemode=false
-function-permission-level=2
-gamemode=survival
-generate-structures=true
-hardcore=false
-hide-online-players=false
-initial-disabled-pieces=
-initial-enabled-pieces=minecraft:village,minecraft:pillager_outpost
-level-name=world
-level-seed=
-level-type=minecraft:normal
-log-ips=true
-max-chained-neighbor-updates=1000000
-max-players=20
-max-tick-time=60000
-max-world-size=29999984
-motd=Welcome to the Tree Host Demo Server!
-network-compression-threshold=256
-online-mode=true
-op-permission-level=4
-player-idle-timeout=0
-prevent-proxy-connections=false
-pvp=true
-rate-limit=0
-require-resource-pack=false
-resource-pack=
-resource-pack-prompt=
-resource-pack-sha1=
-server-ip=
-server-port=25565
-server-name=Tree Host Demo
-simulation-distance=12
-spawn-monsters=true
-spawn-npcs=true
-spawn-protection=16
-spawn-animals=true
-view-distance=12
-white-list=false`;
-  await fsp.writeFile(path.join(dir, 'server.properties'), serverProperties);
-
-  // Create fake bukkit.yml
-  const bukkitYml = `settings:
-  allow-end: true
-  warn-on-overload: true
-  permissions-file: permissions.yml
-  update-folder: update
-  spawn-limits:
-    monsters: 70
-    animals: 10
-    water-animals: 5
-    water-ambient: 5
-    water-underground-creature: 5
-    axolotls: 5
-    ambient: 15
-  chunk-gc:
-    period-in-ticks: 600
-  ticks-per:
-    animal-spawns: 400
-    monster-spawns: 1
-    water-spawns: 1
-    water-ambient-spawns: 1
-    water-underground-creature-spawns: 1
-    axolotl-spawns: 1
-    ambient-spawns: 1
-    autosave: 6000
-  aliases: now-in-game: []
-  world-container: .
-  auto-updater:
-    enabled: true
-    on-broken:
-      warn-on-broken: true
-      warn-on-update: true
-    on-update:
-      warn-on-update: true
-  database:
-    username: bukkit
-    isolation: SERIALIZABLE
-  statistics:
-    disable-saving: false`;
-  await fsp.writeFile(path.join(pluginsDir, 'bukkit.yml'), bukkitYml);
-
-  // Create fake spigot.yml
-  const spigotYml = `settings:
-  debug: false
-  save-user-cache-on-stop-only: false
-  moved-too-quickly-multiplier: 10.0
-  moved-too-quickly-threshold: 100.0
-  timeout-time: 60
-  restart-on-crash: true
-  restart-script: ./start.sh
-  sample-count: 12
-  player-shuffle: 0
-  user-cache-size: 1000
-  log-villager-deaths: true
-  log-named-deaths: true
-  netty-threads: 4
-  watchdog:
-    timeout: 60
-  world-settings:
-    default:
-      mob-spawn-range: 8
-      entity-activation-range:
-        animals: 32
-        monsters: 32
-        raiders: 48
-        misc: 16
-        water: 16
-        water-ambient: 16
-        water-underground-creature: 16
-        axolotls: 32
-      entity-tracking-range:
-        players: 128
-        animals: 96
-        monsters: 96
-        raiders: 128
-        misc: 32
-        water: 96
-        water-ambient: 96
-        water-underground-creature: 96
-        axolotls: 96
-      ticks-per:
-        hopper: 1
-        hopper-transfer: 8
-        hopper-check: 1
-      hopper-amount: 1
-      dragon-death-sound-radius: 0
-      seed-village: 10387312
-      seed-desert: 14357617
-      seed-igloo: 14357618
-      seed-jungle: 14357619
-      seed-swamp: 14357620
-      seed-monument: 10387313
-      seed-shipwreck: 165745295
-      seed-ocean: 14357621
-      seed-outpost: 165745296
-      seed-endcity: 10387313
-      seed-slime: 987234911
-      seed-bastion: 30084232
-      seed-fortress: 30084232
-      seed-mansion: 10387319
-      seed-fossil: 14357921
-      seed-portal: 34222645
-      max-tick-time:
-        tile: 50
-        entity: 50
-        container-tick: 50
-      spawn-limits:
-        monsters: 70
-        animals: 10
-        water-animals: 5
-        water-ambient: 5
-        water-underground-creature: 5
-        axolotls: 5
-        ambient: 15`;
-  await fsp.writeFile(path.join(pluginsDir, 'spigot.yml'), spigotYml);
-
-  // Create fake ops.json
-  const opsJson = `[
-  {
-    "uuid": "00000000-0000-0000-0000-000000000000",
-    "name": "TreeHostAdmin",
-    "level": 4,
-    "bypassesPlayerLimit": false
+  const plugins = path.join(dir, 'plugins');
+  await fsp.mkdir(plugins, { recursive: true });
+  // Left behind by the first demo: configs in the plugins folder and text files pretending to be world data.
+  for (const junk of ['plugins/bukkit.yml', 'plugins/spigot.yml', 'world', 'world_nether', 'world_the_end', 'logs/latest.log']) {
+    await fsp.rm(path.join(dir, junk), { recursive: true, force: true }).catch(() => {});
   }
-]`;
-  await fsp.writeFile(path.join(dir, 'ops.json'), opsJson);
-
-  // Create fake whitelist.json
-  const whitelistJson = `[]`;
-  await fsp.writeFile(path.join(dir, 'whitelist.json'), whitelistJson);
-
-  // Create fake banned-players.json
-  const bannedPlayersJson = `[]`;
-  await fsp.writeFile(path.join(dir, 'banned-players.json'), bannedPlayersJson);
-
-  // Create fake banned-ips.json
-  const bannedIpsJson = `[]`;
-  await fsp.writeFile(path.join(dir, 'banned-ips.json'), bannedIpsJson);
-
-  // Create a fake world data file
-  const levelDat = `This is a simulated level.dat file for the demo server. In a real server, this would be a compressed NBT file containing world data.`;
-  await fsp.writeFile(path.join(worldDir, 'level.dat'), levelDat);
-
-  // Create a fake region file
-  const regionFile = `This is a simulated region file. In a real server, this would be a compressed file containing chunk data for the world region.`;
-  await fsp.writeFile(path.join(worldDir, 'region', 'r.0.0.mca'), regionFile);
-
-  // Create a fake player data file
-  const playerData = `This is a simulated player data file. In a real server, this would be an NBT file containing player inventory, position, and stats.`;
-  await fsp.writeFile(path.join(worldDir, 'playerdata', '00000000-0000-0000-0000-000000000000.dat'), playerData);
-
-  // Create TreeHostStaff plugin directory with staff list
-  const staffPluginDir = path.join(pluginsDir, 'TreeHostStaff');
-  await fsp.mkdir(staffPluginDir, { recursive: true });
-  const staffList = `# Official Tree Host staff. Managed by Tree Host: changes here are undone.
-# Add staff members to this list by assigning them staff roles in the admin console.
-`;
-  await fsp.writeFile(path.join(staffPluginDir, 'staff.txt'), staffList);
-  const motd = `# Tree Host Demo Server
-# This is the MOTD that the TreeHostStaff plugin shows to staff members.
-`;
-  await fsp.writeFile(path.join(staffPluginDir, 'motd.txt'), motd);
-
-  // Create a simulated log file
-  const logLines = [
-    `[${new Date().toISOString()}] [Server thread/INFO]: Starting minecraft server version 1.21.1`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Loading properties`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Default game type: SURVIVAL`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Generating keypair`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Starting Minecraft server on *:25565`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Using default tick rate 20.0`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Preparing level "world"`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Preparing start region for dimension minecraft:overworld`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Time elapsed: 1234 ms`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: Done (1.234s)! For help, type "help"`,
-    `[${new Date().toISOString()}] [Server thread/INFO]: TreeHostStaff plugin enabled (Demo Server)`,
-  ];
-  await fsp.writeFile(path.join(dir, 'logs', 'latest.log'), logLines.join('\n'));
-
-  console.log(`[demo server] Created fake world files for ${inst.cfg.id}`);
+  const files = {
+    'eula.txt': 'eula=true\n',
+    'server.properties': [
+      'motd=\\u00a7aTree Host \\u00a77Demo Server',
+      'max-players=20',
+      'gamemode=survival',
+      'difficulty=easy',
+      'pvp=true',
+      'online-mode=true',
+      'white-list=false',
+      'view-distance=10',
+      'simulation-distance=10',
+      'spawn-protection=16',
+      'level-name=world',
+      `server-port=${inst.cfg.port}`,
+      '',
+    ].join('\n'),
+    'bukkit.yml': 'settings:\n  allow-end: true\n  warn-on-overload: true\n  connection-throttle: 4000\nspawn-limits:\n  monsters: 70\n  animals: 10\nticks-per:\n  autosave: 6000\n',
+    'spigot.yml': 'settings:\n  restart-on-crash: false\n  timeout-time: 60\nworld-settings:\n  default:\n    view-distance: default\n    mob-spawn-range: 8\n',
+    'ops.json': '[]\n',
+    'whitelist.json': '[]\n',
+    'banned-players.json': '[]\n',
+    'banned-ips.json': '[]\n',
+  };
+  for (const [name, text] of Object.entries(files)) await fsp.writeFile(path.join(dir, name), text);
+  for (const [name, version, description] of DEMO_PLUGINS) {
+    await fsp.writeFile(path.join(plugins, `${name}-${version}.jar`), demoPluginJar(name, version, description));
+  }
+  inst.cfg.installed = { type: inst.cfg.type, version: inst.cfg.version, build: inst.cfg.build, resolvedBuild: '130' };
+  inst.cfg.notes = '';
+  manager.save();
+  await syncStaffPlugin(inst).catch(() => {});
+  await managedPlugins.syncInstance(inst).catch(() => {});
 }
 
 route('POST', '/api/servers', async (req) => {
@@ -2535,6 +2307,8 @@ setInterval(async () => {
     await managedPlugins.syncInstance(inst).catch(() => {});
   }
 }, 30 * 1000);
+// Demo servers made by an older version get their folder tidied (and every start puts the files back if needed).
+for (const inst of manager.instances.values()) if (inst.cfg.isDemo) setUpDemoServer(inst).catch((e) => console.error(`[demo server] ${e.message}`));
 
 /** True if Minecraft version a is older than b (1.20.4 < 1.21.1 < 26.2). Snapshots and unknown formats: false. */
 function olderMinecraft(a, b) {
@@ -3025,7 +2799,7 @@ const STATS_KEEP = 24 * 60;
 setInterval(() => {
   const t = Date.now();
   for (const inst of manager.instances.values()) {
-    if (!inst.proc || inst.status !== 'running') continue;
+    if (!(inst.proc || (inst.demo && inst.demo.alive)) || inst.status !== 'running') continue;
     inst.stats = inst.stats || [];
     inst.stats.push({ t, mem: inst.memUsedMb || null, cpu: typeof inst.cpuPct === 'number' ? inst.cpuPct : null, players: inst.players.size });
     if (inst.stats.length > STATS_KEEP) inst.stats.splice(0, inst.stats.length - STATS_KEEP);
@@ -3036,33 +2810,13 @@ route('GET', '/api/servers/:id/stats', (req, res, p) => {
   const inst = getFor(req, p.id);
   const plan = manager.planInfo(inst);
 
-  // Demo server: return simulated stats
-  if (inst.cfg.isDemo) {
-    const now = Date.now();
-    const samples = [];
-    // Generate fake stats for the last hour
-    for (let i = 60; i >= 0; i--) {
-      const t = now - i * 60000;
-      const mem = 400 + Math.random() * 200; // 400-600MB
-      const cpu = 5 + Math.random() * 15; // 5-20%
-      const players = Math.floor(Math.random() * 3); // 0-2 players
-      samples.push({ t, mem: Math.round(mem), cpu: Math.round(cpu * 10) / 10, players });
-    }
-    return {
-      samples,
-      memLimitMb: Number(inst.cfg.memoryMb) || 1024,
-      cpuLimit: plan && plan.cpus ? plan.cpus * 100 : 100,
-      maxPlayers: 20,
-      now: { mem: 512, cpu: 12.5, players: 0, running: true },
-    };
-  }
-
+  const live = !!inst.proc || !!(inst.demo && inst.demo.alive); // the demo's numbers come from src/demo-sim.js
   return {
     samples: inst.stats || [],
     memLimitMb: Number(inst.cfg.memoryMb) || null,
     cpuLimit: plan && plan.cpus ? plan.cpus * 100 : null,
     maxPlayers: inst.maxPlayers || null,
-    now: { mem: inst.proc ? inst.memUsedMb || null : null, cpu: inst.proc && typeof inst.cpuPct === 'number' ? inst.cpuPct : null, players: inst.players.size, running: !!inst.proc },
+    now: { mem: live ? inst.memUsedMb || null : null, cpu: live && typeof inst.cpuPct === 'number' ? inst.cpuPct : null, players: inst.players.size, running: live },
   };
 });
 
@@ -3697,7 +3451,7 @@ route('POST', '/api/servers/:id/:action', async (req, res, p, q) => {
     case 'start': {
       const blocked = manager.startBlock(inst);
       if (blocked) throw httpError(402, `Can't start: ${blocked}`);
-      if (!inst.proc) inst.logActivity('start', who(req), 'started the server');
+      if (!inst.proc && !inst.cfg.isDemo) inst.logActivity('start', who(req), 'started the server');
       inst.crashTimes = [];
       inst.start();
       break;
@@ -3708,7 +3462,7 @@ route('POST', '/api/servers/:id/:action', async (req, res, p, q) => {
       break;
     case 'restart':
       if (manager.startBlock(inst)) throw httpError(402, `Can't restart: ${manager.startBlock(inst)}`);
-      inst.logActivity('start', who(req), 'restarted the server');
+      if (!inst.cfg.isDemo) inst.logActivity('start', who(req), 'restarted the server');
       inst.crashTimes = [];
       inst.restart();
       break;

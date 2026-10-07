@@ -151,7 +151,7 @@ function serverItem(s) {
       <button class="server-item ${s.id === state.selected ? 'active' : ''}" data-id="${esc(s.id)}">
         ${s.icon ? `<span class="si-icon"><img src="${iconUrl(s)}" alt=""><span class="dot ${esc(s.status)}"></span></span>` : `<span class="dot ${esc(s.status)}"></span>`}
         <div>
-          <div class="si-name">${esc(s.name)}${s.isDemo ? ' <span class="badge" style="background:#f39c12;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px">DEMO</span>' : ''}</div>
+          <div class="si-name">${esc(s.name)}${s.isDemo ? ' <span class="badge demo-badge">Demo</span>' : ''}</div>
           <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.status === 'running' && s.kind !== 'proxy' ? ` · <span class="si-online">${s.players.length}${s.maxPlayers ? `/${s.maxPlayers}` : ''}</span>` : ''}${s.sleeping ? ' · <span class="si-online" style="color:#8cc2ff">sleeping</span>' : ''}${myMembership(s) ? ` · <span title="Shared with you by ${esc(s.ownerName || '')}">${MEMBER_LABEL[myMembership(s).role]}</span>` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
         </div>
       </button>`;
@@ -215,9 +215,11 @@ function renderMain() {
           <li><b>Create your server</b>: choose Paper, Purpur, Fabric, Vanilla... and any version. It's ready in about a minute.</li>
         </ol>
         <div class="row"><button class="btn primary" id="welcome-go">Get started</button>
+          <button class="btn" id="welcome-demo">${ic('gamepad')} Try the demo server</button>
           <a class="btn" href="help.html" target="_blank">${ic('book')} Read the guide</a></div>
       </div>`;
     $('#welcome-go').addEventListener('click', openNewServer);
+    $('#welcome-demo').addEventListener('click', createDemoServer);
     return;
   }
   if (!s) {
@@ -233,10 +235,11 @@ function renderMain() {
           <li>Build your plugin, and the server restarts with the new jar automatically.</li>
         </ol>
         ${showDemo ? `
-        <div class="card" style="margin:16px 0;padding:16px">
-          <h3>🎮 Try the demo server</h3>
-          <p class="hint" style="margin:0">Explore the dashboard with a shared demo server. Start, stop, and run commands to see how everything works before creating your own.</p>
-          <button class="btn primary" id="btn-create-demo">Launch Demo Server</button>
+        <div class="demo-banner" style="margin:16px 0;text-align:left">
+          <div class="demo-banner-icon">${ic('gamepad')}</div>
+          <div class="demo-banner-text"><b>Try the demo server</b>
+            <span>A shared server to look around on: start it, stop it and type commands before you make your own.</span></div>
+          <button class="btn" id="btn-create-demo">Open the demo</button>
         </div>
         ` : ''}
         <button class="btn primary" onclick="openNewServer()">+ Create your first server</button>
@@ -246,14 +249,8 @@ function renderMain() {
   }
   if ((state.tab === 'files' && !can('files', s)) || (state.tab === 'settings' && !can('settings', s))) state.tab = 'console';
   main.innerHTML = `
-    ${s.isDemo ? `
-    <div class="card" style="margin:0 0 16px;background:#e3f2fd;border:1px solid #2196f3">
-      <p style="margin:0;font-size:14px;color:#1565c0">
-        <b>🎮 Demo Server</b> - This is a shared demo server for exploration. You can start/stop it and run commands, but files, plugins, and settings are read-only.
-      </p>
-    </div>
-    ` : ''}
     <header class="srv-header">
+      ${s.isDemo ? demoBannerHtml() : ''}
       <div id="srv-head"></div>
       <div class="tabs">
         ${['console', 'stats', 'plugins', 'backups', 'files', 'settings']
@@ -277,8 +274,42 @@ function renderMain() {
       renderTab();
     }),
   );
+  bindDemoBanner(s, main);
   renderHeader();
   renderTab();
+}
+
+// ---------- the shared demo server ----------
+
+const DEMO_COMMANDS = ['list', 'tps', 'plugins', 'say Hello everyone!', 'time set night', 'weather thunder', 'help'];
+
+function demoBannerHtml() {
+  const own = isCustomer() || !isTeam() ? '<button class="btn primary sm" id="demo-own">Get your own server</button>' : '';
+  return `
+    <div class="demo-banner">
+      <div class="demo-banner-icon">${ic('gamepad')}</div>
+      <div class="demo-banner-text">
+        <b>Shared demo server</b>
+        <span>Everyone exploring Tree Host shares this one. Start, stop, restart and type commands to see how it works.
+          Files and settings are locked, and it's simulated, so you can't join it in Minecraft.</span>
+        <div class="demo-try"><span class="muted">Try:</span>${DEMO_COMMANDS.map((c) => `<button type="button" class="demo-cmd" data-demo-cmd="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      </div>
+      ${own}
+    </div>`;
+}
+
+function bindDemoBanner(s, root) {
+  if (!s.isDemo) return;
+  $('[data-demo-cmd]', root).forEach((b) =>
+    b.addEventListener('click', () =>
+      attempt(async () => {
+        if (current()?.status !== 'running') throw new Error('Start the demo server first, then try a command.');
+        if (state.tab !== 'console') $('.tab[data-tab="console"]', root)?.click();
+        await api('POST', `/api/servers/${s.id}/command`, { command: b.dataset.demoCmd });
+      }),
+    ),
+  );
+  $('#demo-own', root)?.addEventListener('click', openNewServer);
 }
 
 function renderHeader() {
@@ -335,9 +366,11 @@ function renderHeader() {
           ${s.kind !== 'proxy' && alive ? `<span title="${esc(s.players.join(', '))}">Players <b>${s.players.length}${s.maxPlayers ? ` / ${s.maxPlayers}` : ''}</b>${s.players.length ? `: ${esc(s.players.slice(0, 5).join(', '))}${s.players.length > 5 ? '…' : ''}` : ''}</span>` : ''}
         </div>
       </div>
-      <div class="address" title="In Minecraft: Multiplayer → Add Server → paste this as the Server Address">
+      <div class="address" title="${s.isDemo ? 'The demo is simulated: there is no Minecraft server to join' : 'In Minecraft: Multiplayer → Add Server → paste this as the Server Address'}">
         ${
-          s.gateway
+          s.isDemo
+            ? `<div class="addr-label">Join address</div><div class="addr-lan">None: the demo is simulated. Your own server gets an address to share with friends.</div>`
+            : s.gateway
             ? `<div class="addr-label">Join through the Gateway <span class="muted">(click to copy)</span></div>
                ${
                  s.gateway.address
@@ -366,7 +399,7 @@ function renderHeader() {
         }
       </div>
       ${
-        hostFeatures() && !s.gateway
+        hostFeatures() && !s.gateway && !s.isDemo
           ? `<div class="play">
         <button class="btn play-btn" id="btn-play" ${s.client ? 'disabled' : ''} title="Downloads this Minecraft version if needed, starts the server and joins it${isTeam() ? ' (opens on the host PC)' : ''}">Play${isTeam() ? ' on host' : ''}${s.clientsRunning ? ` (${s.clientsRunning} open)` : ''}</button>
         <div class="play-as">as <a id="play-name" title="Change username">${esc(player)}</a></div>
@@ -377,10 +410,10 @@ function renderHeader() {
         <button class="btn primary" data-act="start" ${alive || busy || s.suspended || s.moderation ? 'disabled' : ''}>${ic('play')} Start</button>
         <button class="btn" data-act="restart" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>⟳ Restart</button>
         <button class="btn" data-act="stop" ${!alive || s.status === 'stopping' ? 'disabled' : ''}>${ic('stop')} Stop</button>
-        <button class="btn danger" data-act="kill" ${!alive ? 'disabled' : ''} title="Force kill the Java process">Kill</button>
-        ${hostFeatures() ? '<button class="btn" data-act="open-folder" title="Open the server folder">Folder</button>' : ''}
-        ${isTeam() && s.owner && s.owner !== state.me.user.id && hasPerm('console.access') && s.kind !== 'proxy' ? `<button class="btn" id="btn-staff-join" ${s.status === 'running' ? '' : 'disabled'} title="Join this server in Minecraft as Tree Host staff (gets you past the whitelist)">Join as staff</button>` : ''}
-        ${isTeam() && s.owner && s.owner !== state.me.user.id && canTakeAction('server') ? '<button class="btn" id="btn-take-action" title="Warn, suspend, ban or delete this server, with a reason and evidence">Take action</button>' : ''}
+        ${s.isDemo ? '' : `<button class="btn danger" data-act="kill" ${!alive ? 'disabled' : ''} title="Force kill the Java process">Kill</button>`}
+        ${hostFeatures() && !s.isDemo ? '<button class="btn" data-act="open-folder" title="Open the server folder">Folder</button>' : ''}
+        ${isTeam() && !s.isDemo && s.owner && s.owner !== state.me.user.id && hasPerm('console.access') && s.kind !== 'proxy' ? `<button class="btn" id="btn-staff-join" ${s.status === 'running' ? '' : 'disabled'} title="Join this server in Minecraft as Tree Host staff (gets you past the whitelist)">Join as staff</button>` : ''}
+        ${isTeam() && !s.isDemo && s.owner && s.owner !== state.me.user.id && canTakeAction('server') ? '<button class="btn" id="btn-take-action" title="Warn, suspend, ban or delete this server, with a reason and evidence">Take action</button>' : ''}
       </div>
     </div>
     ${s.notes ? `<div class="srv-notes"><span class="muted small">${ic('note')} Notes</span> ${esc(s.notes)}</div>` : ''}
@@ -940,24 +973,14 @@ function showManagedPluginInfo(p) {
     <div class="modal-actions"><button class="btn primary" data-close>Got it</button></div>`);
 }
 
+/** Opens the shared demo server (made the first time anyone asks for it). */
 async function createDemoServer() {
-  try {
-    toast('Creating demo server...');
+  await attempt(async () => {
     const demo = await api('POST', '/api/servers/demo');
-    toast('Demo server created! Select it from the sidebar to explore.');
-    // Reload servers
-    const servers = await api('GET', '/api/servers');
-    state.servers.clear();
-    servers.forEach((s) => state.servers.set(s.id, s));
-    const first = spaceServers()[0];
-    if (first) {
-      state.selected = first.id;
-      renderSidebar();
-      renderMain();
-    }
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+    state.servers.set(demo.id, demo);
+    if (isTeam() && hasPerm('servers.viewAll') && demo.owner !== state.me.user.id) setSpace('all'); // staff see it under All servers
+    select(demo.id);
+  });
 }
 
 // ---------- files ----------
