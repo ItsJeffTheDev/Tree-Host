@@ -42,7 +42,7 @@
   <script src="/site.js"></script>
   <script>
   (() => {
-    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    const esc = window.esc || ((v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]));
     const box = document.getElementById('team');
     const since = (t) => (t ? new Date(t).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : '');
     fetch('/api/team-page')

@@ -292,6 +292,17 @@ class Instance extends EventEmitter {
   toJSON() {
     const c = this.cfg;
     const p = this.provider;
+    // Demo server simulation: show as running even if not actually running
+    const isDemo = c.isDemo || false;
+    const simulatedStatus = isDemo ? 'running' : this.status;
+    const simulatedPid = isDemo ? 'demo-simulated' : (this.proc ? this.proc.pid : null);
+    const simulatedPlayers = isDemo ? [] : [...this.players];
+    const simulatedMaxPlayers = isDemo ? 20 : (this.proc ? this.maxPlayers || null : null);
+    const simulatedMemUsed = isDemo ? 512 : (this.proc ? this.memUsedMb || null : null);
+    const simulatedDiskUsed = isDemo ? 250 : (this.diskUsedMb || null);
+    const simulatedStartedAt = isDemo ? (c.createdAt || Date.now() - 3600000) : this.startedAt;
+    const simulatedCpu = isDemo ? 12.5 : (this.proc && typeof this.cpuPct === 'number' ? this.cpuPct : null);
+
     return {
       id: c.id,
       name: c.name,
@@ -332,11 +343,12 @@ class Instance extends EventEmitter {
       schedules: c.schedules || [],
       timeZone: c.timeZone || null,
       members: (c.members || []).map((m) => ({ id: m.userId, username: this.manager.ownerName(m.userId) || '(deleted)', role: m.role })),
-      maxPlayers: this.proc ? this.maxPlayers || null : null,
+      maxPlayers: simulatedMaxPlayers,
       subscriptionId: c.subscriptionId || null,
       plan: this.manager.planInfo(this),
-      diskUsedMb: this.diskUsedMb || null,
-      memUsedMb: this.proc ? this.memUsedMb || null : null,
+      diskUsedMb: simulatedDiskUsed,
+      memUsedMb: simulatedMemUsed,
+      cpuPct: simulatedCpu,
       crashes: (this.crashTimes || []).length,
       gatewayDefault: c.gatewayDefault || null,
       gateway: this.manager.gatewayInfo(this),
@@ -363,12 +375,13 @@ class Instance extends EventEmitter {
         missing: !!(this.watchState.get(w.id) || {}).missing,
       })),
       pluginDir: this.pluginDirName,
-      status: this.status,
+      status: simulatedStatus,
       progress: this.progress,
-      players: [...this.players],
-      pid: this.proc ? this.proc.pid : null,
-      startedAt: this.startedAt,
+      players: simulatedPlayers,
+      pid: simulatedPid,
+      startedAt: simulatedStartedAt,
       createdAt: c.createdAt,
+      isDemo: isDemo,
     };
   }
 

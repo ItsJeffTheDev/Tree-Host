@@ -28,13 +28,14 @@ const PERMISSIONS = [
   { id: 'activity.viewAll', group: 'Platform', label: 'See all activity', description: 'Including sign-ups and payments, not just server events.' },
   { id: 'audit.view', group: 'Platform', label: 'See the audit log', description: 'Every staff action: who did what, when.' },
   { id: 'system.view', group: 'Platform', label: 'See system info', description: 'Memory, Java versions, data folder, full error details.' },
+  { id: 'system.manage', group: 'Platform', label: 'Manage required plugins', description: 'Add, edit, delete, and distribute required plugins to all servers.' },
   { id: 'settings.manage', group: 'Platform', label: 'Change site settings', description: 'Open or close sign-ups, Discord notifications.' },
   { id: 'roles.manage', group: 'Platform', label: 'Edit roles', description: 'Change what each role can do (this page).' },
 ];
 const PERMISSION_IDS = new Set(PERMISSIONS.map((p) => p.id));
 // The permissions that existed before roles remembered which ones they knew (for adding new ones on upgrade).
 const FIRST_PERMISSIONS = ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'servers.destroy', 'servers.host', 'users.view', 'users.manage',
-  'users.roles', 'billing.view', 'billing.manage', 'promos.manage', 'activity.viewAll', 'audit.view', 'system.view', 'settings.manage', 'roles.manage'];
+  'users.roles', 'billing.view', 'billing.manage', 'promos.manage', 'activity.viewAll', 'audit.view', 'system.view', 'system.manage', 'settings.manage', 'roles.manage'];
 
 /**
  * Roles from most to least access. `level` decides who may manage whom: you can only assign roles below your
@@ -53,7 +54,7 @@ const DEFAULT_ROLES = [
   },
   {
     id: 'developer', label: 'Developer', level: 60, description: "Builds and fixes Tree Host: sees every server and its console, system info. Can't open customers' files or settings.",
-    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'users.view', 'audit.view', 'system.view', 'moderation.view'],
+    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'users.view', 'audit.view', 'system.view', 'system.manage', 'moderation.view'],
   },
   {
     id: 'staff', label: 'Support', level: 40, description: "Helps customers: sees any server and its console, starts and stops it, sees accounts and plans. Can't open customers' files or settings, or delete anything.",

@@ -37,7 +37,11 @@ const clean = (data) => JSON.parse(JSON.stringify(data ?? null));
 /** Loads a collection. With Firebase: the database copy wins; a local-only copy is uploaded once (migration). */
 async function load(name) {
   const local = await readLocal(name);
-  if (!firebase.dbEnabled()) return local;
+  if (!firebase.dbEnabled()) {
+    console.warn(`  ⚠️  Firebase not enabled: ${name} loaded from local file only.`);
+    console.warn(`  ⚠️  Data will be lost on redeploy. Set FIREBASE_SERVICE_ACCOUNT to enable Firebase sync.`);
+    return local;
+  }
   const remote = await firebase.dbGet(name);
   if (remote !== null && remote !== undefined) {
     writeLocal(name, remote).catch(() => {});
@@ -45,7 +49,12 @@ async function load(name) {
   }
   if (local !== undefined) {
     console.log(`  Uploading ${name} to the Firebase Realtime Database...`);
-    await firebase.dbSet(name, clean(local));
+    try {
+      await firebase.dbSet(name, clean(local));
+    } catch (e) {
+      console.error(`  ⚠️  Failed to upload ${name} to Firebase: ${e.message}`);
+      console.error(`  ⚠️  Data exists locally but not in Firebase. Check FIREBASE_SERVICE_ACCOUNT.`);
+    }
   }
   return local;
 }
@@ -76,12 +85,18 @@ async function flush(name, w) {
             break;
           } catch (e) {
             if (attempt >= 3 || w.pending !== null) {
-              console.error(`  Could not save ${name} to Firebase: ${e.message}${w.pending !== null ? ' (a newer version follows)' : ''}`);
+              console.error(`  ⚠️  Could not save ${name} to Firebase: ${e.message}${w.pending !== null ? ' (a newer version follows)' : ''}`);
+              console.error(`  ⚠️  Data saved locally only. Check FIREBASE_SERVICE_ACCOUNT configuration.`);
+              console.error(`  ⚠️  See FIREBASE_DEBUGGING.md for troubleshooting.`);
               break;
             }
+            console.error(`  Firebase save failed (attempt ${attempt}/3), retrying...`);
             await new Promise((r) => setTimeout(r, attempt * 2000));
           }
         }
+      } else {
+        console.warn(`  ⚠️  Firebase not enabled: ${name} saved locally only. Data will be lost on redeploy.`);
+        console.warn(`  ⚠️  Set FIREBASE_SERVICE_ACCOUNT and TREEHOST_TEAM=1 to enable Firebase sync.`);
       }
     }
   } finally {

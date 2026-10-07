@@ -2,10 +2,21 @@
 
 // ---------- helpers ----------
 
-const $ = (sel, el = document) => el.querySelector(sel);
-const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
-const esc = (s) =>
-  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// Define $ and $$ helpers if not already defined (may be defined by console.js)
+if (typeof $ === 'undefined') {
+  const $ = (sel, el = document) => el.querySelector(sel);
+  window.$ = $;
+}
+if (typeof $$ === 'undefined') {
+  const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+  window.$$ = $$;
+}
+// Define esc helper if not already defined (may be defined by site.js)
+if (typeof esc === 'undefined') {
+  const esc = (s) =>
+    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  window.esc = esc;
+}
 
 async function api(method, url, body) {
   const opts = { method, headers: {} };
@@ -140,7 +151,7 @@ function serverItem(s) {
       <button class="server-item ${s.id === state.selected ? 'active' : ''}" data-id="${esc(s.id)}">
         ${s.icon ? `<span class="si-icon"><img src="${iconUrl(s)}" alt=""><span class="dot ${esc(s.status)}"></span></span>` : `<span class="dot ${esc(s.status)}"></span>`}
         <div>
-          <div class="si-name">${esc(s.name)}</div>
+          <div class="si-name">${esc(s.name)}${s.isDemo ? ' <span class="badge" style="background:#f39c12;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px">DEMO</span>' : ''}</div>
           <div class="si-sub">${esc(s.typeLabel)} ${esc(s.version)}${isCustomer() ? '' : ` · :${s.port}`}${s.status === 'running' && s.kind !== 'proxy' ? ` · <span class="si-online">${s.players.length}${s.maxPlayers ? `/${s.maxPlayers}` : ''}</span>` : ''}${s.sleeping ? ' · <span class="si-online" style="color:#8cc2ff">sleeping</span>' : ''}${myMembership(s) ? ` · <span title="Shared with you by ${esc(s.ownerName || '')}">${MEMBER_LABEL[myMembership(s).role]}</span>` : ''}${s.suspended ? ' · <span style="color:var(--danger)">suspended</span>' : ''}${state.space === 'all' && !isCustomer() && s.ownerName ? ` · ${esc(s.ownerName)}` : ''}</div>
         </div>
       </button>`;
@@ -210,6 +221,7 @@ function renderMain() {
     return;
   }
   if (!s) {
+    const showDemo = !state.servers.size && isTeam();
     main.innerHTML = `
       <div class="welcome">
         <h1>Test your plugins on a real server</h1>
@@ -220,12 +232,27 @@ function renderMain() {
           <li>In <b>Plugins</b>, point auto-deploy at your build folder (e.g. <code>build/libs</code> or <code>target</code>).</li>
           <li>Build your plugin, and the server restarts with the new jar automatically.</li>
         </ol>
+        ${showDemo ? `
+        <div class="card" style="margin:16px 0;padding:16px">
+          <h3>🎮 Try the demo server</h3>
+          <p class="hint" style="margin:0">Explore the dashboard with a shared demo server. Start, stop, and run commands to see how everything works before creating your own.</p>
+          <button class="btn primary" id="btn-create-demo">Launch Demo Server</button>
+        </div>
+        ` : ''}
         <button class="btn primary" onclick="openNewServer()">+ Create your first server</button>
       </div>`;
+    if ($('#btn-create-demo')) $('#btn-create-demo').addEventListener('click', createDemoServer);
     return;
   }
   if ((state.tab === 'files' && !can('files', s)) || (state.tab === 'settings' && !can('settings', s))) state.tab = 'console';
   main.innerHTML = `
+    ${s.isDemo ? `
+    <div class="card" style="margin:0 0 16px;background:#e3f2fd;border:1px solid #2196f3">
+      <p style="margin:0;font-size:14px;color:#1565c0">
+        <b>🎮 Demo Server</b> - This is a shared demo server for exploration. You can start/stop it and run commands, but files, plugins, and settings are read-only.
+      </p>
+    </div>
+    ` : ''}
     <header class="srv-header">
       <div id="srv-head"></div>
       <div class="tabs">
@@ -799,9 +826,10 @@ async function loadPlugins() {
         ${list
           .map(
             (p) => `
-          <tr class="${p.enabled ? '' : 'disabled'}">
+          <tr class="${p.enabled ? '' : 'disabled'}${p.locked ? ' staff-plugin-row' : ''}">
             <td>
-              <div class="p-name">${esc(p.name || p.file.replace(/\.jar(\.disabled)?$/i, ''))}
+              <div class="p-name${p.locked ? ' staff-plugin-name' : ''}" ${p.locked ? 'data-staff-plugin="true"' : ''}>
+                ${esc(p.name || p.file.replace(/\.jar(\.disabled)?$/i, ''))}
                 ${p.locked ? '<span class="badge lifetime-badge" title="Required by Tree Host on every server: lets official Tree Host staff help you">Required by Tree Host</span>' : ''}
                 ${p.watched ? '<span class="badge blue" title="Deployed automatically from your build folder">auto</span>' : ''}
                 ${p.format === 'paper-plugin.yml' ? '<span class="badge">paper-plugin</span>' : ''}
@@ -844,6 +872,11 @@ async function loadPlugins() {
       });
     }),
   );
+  // Click handler for TreeHostStaff plugin to show description popup
+  $$('.staff-plugin-name', el).forEach((el) => {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', () => showStaffPluginInfo());
+  });
 }
 
 async function uploadPlugins(files) {
@@ -857,6 +890,56 @@ async function uploadPlugins(files) {
     });
   }
   loadPlugins();
+}
+
+function showStaffPluginInfo() {
+  const { root, close } = openModal(`
+    <h2>${ic('shield')} Tree Host Staff Plugin</h2>
+    <div class="card stack">
+      <h3>What is this plugin?</h3>
+      <p>The TreeHostStaff plugin is automatically installed on every Paper, Spigot, Purpur, Folia, and CraftBukkit server. It's a small, lightweight plugin that enables official Tree Host staff to help you.</p>
+
+      <h3>Features</h3>
+      <ul>
+        <li><b>Staff can always join</b> - Even when your server is whitelisted, full, or has certain restrictions</li>
+        <li><b>Staff protection</b> - Staff members cannot be kicked or banned by mistake</li>
+        <li><b>Visual identification</b> - Staff wear a gold <b>✔ STAFF</b> badge in chat so players know who they are</li>
+        <li><b>Hover information</b> - Hovering over the badge shows "Official Tree Host Staff"</li>
+        <li><b>No commands</b> - The plugin has no commands and doesn't change your gameplay</li>
+        <li><b>Tiny footprint</b> - Minimal performance impact on your server</li>
+      </ul>
+
+      <h3>Security</h3>
+      <p>This plugin cannot be removed, disabled, or replaced from the dashboard. Tree Host automatically keeps it up to date and ensures it's always running on supported server types.</p>
+
+      <h3>Staff List</h3>
+      <p>The plugin maintains a list of official Tree Host staff members in <code>plugins/TreeHostStaff/staff.txt</code>. This file is automatically updated by Tree Host when staff roles change.</p>
+
+      <h3>Version</h3>
+      <p>The current version is managed by Tree Host and is automatically updated across all servers when needed.</p>
+    </div>
+    <div class="modal-actions"><button class="btn primary" data-close>Got it</button></div>
+  `);
+}
+
+async function createDemoServer() {
+  try {
+    toast('Creating demo server...');
+    const demo = await api('POST', '/api/servers/demo');
+    toast('Demo server created! Select it from the sidebar to explore.');
+    // Reload servers
+    const servers = await api('GET', '/api/servers');
+    state.servers.clear();
+    servers.forEach((s) => state.servers.set(s.id, s));
+    const first = spaceServers()[0];
+    if (first) {
+      state.selected = first.id;
+      renderSidebar();
+      renderMain();
+    }
+  } catch (e) {
+    toast(e.message, 'error');
+  }
 }
 
 // ---------- files ----------

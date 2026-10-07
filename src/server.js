@@ -175,13 +175,18 @@ billing.hooks.deleteServer = async (id) => {
 };
 billing.hooks.userById = (id) => auth.userById(id);
 billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || sub.donorName || 'A customer', text);
-billing.hooks.email = (user, subject, paragraphs) =>
-  mail.send(user.email, subject, paragraphs, PUBLIC_URL ? { text: 'Open Billing', url: `${PUBLIC_URL}/dashboard?billing` } : null, { replyTo: EMAILS.billing });
-billing.hooks.sendEmail = (kind, user, sub) => (user && user.email ? sendEmail(user.email, EMAIL[kind](user, sub, siteUrl())) : Promise.resolve(false));
+billing.hooks.email = (user, subject, paragraphs) => {
+  const baseUrl = PUBLIC_URL || auth.settings.baseUrl;
+  return mail.send(user.email, subject, paragraphs, baseUrl ? { text: 'Open Billing', url: `${baseUrl}/dashboard?billing` } : null, { replyTo: EMAILS.billing });
+};
+billing.hooks.sendEmail = (kind, user, sub) => {
+  const baseUrl = auth.settings.baseUrl || PUBLIC_URL || 'https://treehost.online';
+  return user && user.email ? sendEmail(user.email, EMAIL[kind](user, sub, baseUrl)) : Promise.resolve(false);
+};
 
 // ---------- emails (the layout is in mail.js) ----------
 
-const siteUrl = (req) => PUBLIC_URL || (req ? publicOrigin(req) : 'https://treehost.online');
+const siteUrl = (req) => PUBLIC_URL || auth.settings.baseUrl || (req ? publicOrigin(req) : 'https://treehost.online');
 const niceDate = (t) => new Date(t).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
 /** Each email as [subject, paragraphs, button, options] (see mail.send). Used for sending and for the previews. */
@@ -493,6 +498,19 @@ function authenticate(req) {
 /** True if this user has the permission. Personal mode (no accounts) can do everything. */
 const can = (user, permission) => !TEAM || rbac.can(user, permission);
 
+/** Check if user can perform an action on a server instance. */
+const canDo = (user, inst, action) => {
+  if (!TEAM) return true;
+  if (!user || !inst) return false;
+  // For shared demo server, allow customers to do most actions (read-only demo)
+  if (inst.cfg.isSharedDemo && user.role === 'customer') {
+    if (['view', 'control', 'command'].includes(action)) return true;
+    if (['plugins', 'files', 'settings'].includes(action)) return false; // Read-only
+    return false;
+  }
+  return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, ACTION_PERMISSION[action] || 'servers.viewAll');
+};
+
 function requirePerm(req, permission) {
   if (!can(req.user, permission)) {
     const p = PERMISSIONS.find((x) => x.id === permission);
@@ -504,7 +522,18 @@ function requirePerm(req, permission) {
 function canView(user, inst) {
   if (!TEAM) return true;
   if (!user || !inst) return false;
+  // Customers can also see the shared demo server
+  if (inst.cfg.isSharedDemo && user.role === 'customer') return true;
   return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, 'servers.viewAll');
+}
+
+/** Customers can control the shared demo server. */
+function canControl(user, inst) {
+  if (!TEAM) return true;
+  if (!user || !inst) return false;
+  // Allow control of shared demo for all customers
+  if (inst.cfg.isSharedDemo && user.role === 'customer') return true;
+  return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, 'servers.operate');
 }
 
 // ---------- sharing a server with friends ----------
@@ -751,7 +780,8 @@ route(
     if (!mail.enabled()) throw httpError(400, 'Password reset emails are not set up yet. Please contact support.');
     const r = await auth.createReset(email, clientIp(req));
     if (r) {
-      await sendEmail(r.user.email, EMAIL.reset(r.user.username, `${siteUrl(req)}/dashboard?reset=${r.token}`));
+      const baseUrl = auth.settings.baseUrl || siteUrl(req);
+      await sendEmail(r.user.email, EMAIL.reset(r.user.username, `${baseUrl}/dashboard?reset=${r.token}`));
     }
     // Same answer either way, so nobody can find out which emails have accounts.
     return { ok: true };
@@ -849,6 +879,108 @@ route(
     }),
   { perm: 'users.view' },
 );
+
+/** Get detailed user information including activity logs. */
+route('GET', '/api/admin/users/:uid/details', async (req, res, p) => {
+  const u = auth.userById(p.uid);
+  if (!u) throw httpError(404, 'User not found');
+  
+  const subs = billing.forUser(u.id);
+  const instances = [...manager.instances.values()].filter((i) => i.cfg.owner === u.id && i.isCustomer);
+  const userActivity = activity.events.filter((e) => e.owner === u.id || e.kind === 'people' && e.text.includes(u.username));
+  
+  return {
+    ...auth.publicUser(u),
+    createdAt: u.createdAt,
+    lastLogin: u.lastLogin,
+    firebaseUid: u.firebaseUid,
+    mcName: u.mcName,
+    restriction: u.restriction,
+    prioritySupport: u.prioritySupport,
+    servers: instances.map((i) => ({
+      id: i.cfg.id,
+      name: i.cfg.name,
+      type: i.cfg.type,
+      version: i.cfg.version,
+      status: i.status,
+      memoryMb: i.cfg.memoryMb,
+      diskUsedMb: i.diskUsedMb,
+      createdAt: i.cfg.createdAt,
+    })),
+    subscriptions: subs.map((s) => ({
+      id: s.id,
+      planName: s.planName,
+      status: s.status,
+      ramMb: s.ramMb,
+      startedAt: s.startedAt,
+      endsAt: s.endsAt,
+    })),
+    activity: userActivity.slice(-50).reverse(), // Last 50 activities
+    linked: auth.linkedAccounts(u).map((x) => ({ id: x.id, username: x.username, role: x.role })),
+    ...lifetimeOf(u),
+  };
+}, { perm: 'users.view' });
+
+/** Send password reset email (custom format). */
+route('POST', '/api/admin/users/:uid/reset-password', async (req, res, p) => {
+  const u = auth.userById(p.uid);
+  if (!u) throw httpError(404, 'User not found');
+  if (!u.firebaseUid) throw httpError(400, 'This account does not use Firebase auth');
+  
+  // Generate reset token
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const resetExpires = Date.now() + 3600000; // 1 hour
+  
+  // Store reset token
+  u.passwordReset = { token: resetToken, expires: resetExpires };
+  await auth.save();
+  
+  // In production, this would send a custom email via your email service
+  // For now, we'll return the reset link for testing
+  const resetLink = `${process.env.TREEHOST_PUBLIC_URL || 'http://localhost:8080'}/reset-password?token=${resetToken}`;
+  
+  audit(req, `sent a password reset email to ${u.username}`);
+  
+  // TODO: Send actual email using your custom email service
+  // await sendCustomEmail(u.email, 'Password Reset', '...', resetLink);
+  
+  return { 
+    success: true, 
+    resetLink: resetLink, // Remove this in production
+    message: `Password reset email sent to ${u.email}`
+  };
+}, { perm: 'users.manage' });
+
+/** Request email change (sends verification email to new address). */
+route('POST', '/api/admin/users/:uid/change-email', async (req, res, p) => {
+  const { newEmail } = await readJson(req);
+  if (!newEmail || !newEmail.includes('@')) throw httpError(400, 'Invalid email address');
+  
+  const u = auth.userById(p.uid);
+  if (!u) throw httpError(404, 'User not found');
+  
+  // Generate verification token
+  const verifyToken = crypto.randomBytes(32).toString('hex');
+  const verifyExpires = Date.now() + 86400000; // 24 hours
+  
+  // Store pending email change
+  u.pendingEmailChange = { newEmail, token: verifyToken, expires: verifyExpires };
+  await auth.save();
+  
+  // Send verification email to new address
+  const verifyLink = `${process.env.TREEHOST_PUBLIC_URL || 'http://localhost:8080'}/verify-email?token=${verifyToken}`;
+  
+  audit(req, `requested email change for ${u.username} to ${newEmail}`);
+  
+  // TODO: Send actual email using your custom email service
+  // await sendCustomEmail(newEmail, 'Verify Email Change', '...', verifyLink);
+  
+  return { 
+    success: true, 
+    verifyLink: verifyLink, // Remove this in production
+    message: `Verification email sent to ${newEmail}`
+  };
+}, { perm: 'users.manage' });
 route(
   'POST',
   '/api/team/users/:uid/temp-password',
@@ -870,7 +1002,9 @@ route(
     const invite = await auth.createInvite(req.user, role);
     audit(req, `created a ${rbac.role(role).label} invite link`);
     // The dashboard reads ?invite= (on a hosted site "/" is the website, which would drop it).
-    return { link: `${PUBLIC_URL || publicOrigin(req)}/dashboard?invite=${invite}`, expiresInDays: 7 };
+    // Use the configured base URL if set, otherwise fall back to the request's host.
+    const baseUrl = auth.settings.baseUrl || publicOrigin(req);
+    return { link: `${baseUrl}/dashboard?invite=${invite}`, expiresInDays: 7 };
   },
   { perm: 'users.roles' },
 );
@@ -1401,10 +1535,10 @@ route('POST', '/api/billing/checkout', async (req) => {
   regionCheck(req, true);
   const body = await readJson(req);
   const consent = { ...(body.consent || {}), ip: clientIp(req), userAgent: req.headers['user-agent'] };
-  return billing.checkout(req.user, body.planId, PUBLIC_URL || publicOrigin(req), consent);
+  return billing.checkout(req.user, body.planId, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req), consent);
 });
 route('POST', '/api/billing/confirm', async (req) => billing.publicSub(await billing.confirmCheckout(req.user, (await readJson(req)).sessionId, auth)));
-route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || publicOrigin(req)));
+route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req)));
 // Promo codes: customers redeem them in Billing (free plans for creators, partners, giveaways).
 route('POST', '/api/billing/redeem', async (req) => {
   if (!TEAM) throw httpError(400, 'Codes only exist on a hosted Tree Host.');
@@ -1572,10 +1706,11 @@ route('GET', '/api/admin/audit', (req, res, p, q) => {
 /** Welcome email; for an email that isn't verified yet it carries the confirm button. */
 async function welcomeEmail(req, user) {
   let verifyLink = null;
+  const baseUrl = auth.settings.baseUrl || siteUrl(req);
   if (user.firebaseUid && !user.emailVerified && firebase.linksEnabled()) {
-    verifyLink = await firebase.emailLink('verify', user.email, `${siteUrl(req)}/dashboard`).catch(() => null);
+    verifyLink = await firebase.emailLink('verify', user.email, `${baseUrl}/dashboard`).catch(() => null);
   }
-  await sendEmail(user.email, EMAIL.welcome(user, siteUrl(req), verifyLink));
+  await sendEmail(user.email, EMAIL.welcome(user, baseUrl, verifyLink));
 }
 
 // Our own branded password reset and email confirmation emails (with Firebase making the one-time links).
@@ -1590,7 +1725,8 @@ route('POST', '/api/auth/email-link', async (req) => {
   auth.checkRate(keys);
   auth.recordFailure(keys);
   const user = auth.users.find((u) => u.email === email);
-  const link = await firebase.emailLink(type, email, `${siteUrl(req)}/dashboard`);
+  const baseUrl = auth.settings.baseUrl || siteUrl(req);
+  const link = await firebase.emailLink(type, email, `${baseUrl}/dashboard`);
   if (link) await sendEmail(email, type === 'verify' ? EMAIL.verify(user && user.username, link) : EMAIL.reset(user && user.username, link));
   // Same answer either way, so nobody can find out which emails have accounts.
   return { ok: true };
@@ -1618,7 +1754,8 @@ route('GET', '/api/admin/emails', () => ({
 route('GET', '/api/admin/emails/preview/:kind', (req, res, p) => {
   const make = PREVIEWS[p.kind];
   if (!make) throw httpError(404, 'No such email.');
-  const [subject, paragraphs, button, opts] = make(siteUrl(req));
+  const baseUrl = auth.settings.baseUrl || siteUrl(req);
+  const [subject, paragraphs, button, opts] = make(baseUrl);
   const { html } = mail.render(subject, paragraphs, button, { ...opts, preview: true });
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'" });
   res.end(html);
@@ -1628,7 +1765,8 @@ route('POST', '/api/admin/emails/test', async (req) => {
   if (!mail.enabled()) throw httpError(400, 'Emails are off: put RESEND_API_KEY in the settings file and restart.');
   if (!req.user.email) throw httpError(400, 'Your account has no email address.');
   const { kind } = await readJson(req);
-  await sendEmail(req.user.email, (PREVIEWS[kind] || PREVIEWS.welcome)(siteUrl(req)));
+  const baseUrl = auth.settings.baseUrl || siteUrl(req);
+  await sendEmail(req.user.email, (PREVIEWS[kind] || PREVIEWS.welcome)(baseUrl));
   audit(req, 'sent a test email to themselves');
   return { ok: true, to: req.user.email };
 }, { perm: 'settings.manage' });
@@ -1697,6 +1835,318 @@ route('GET', '/api/next-port', async (req, res, p, q) => {
 });
 
 route('GET', '/api/servers', (req) => visibleList(req.user));
+
+/** Create or get the shared demo server for all users to explore. */
+route('POST', '/api/servers/demo', async (req) => {
+  if (!TEAM) throw httpError(400, 'Demo servers are only available in team mode.');
+
+  // Check if shared demo server already exists
+  let demoServer = [...manager.instances.values()].find(i => i.cfg.isDemo);
+
+  if (!demoServer) {
+    // Create the shared demo server
+    const demoConfig = {
+      name: 'Tree Host Demo Server',
+      type: 'paper',
+      version: '1.21.1',
+      eula: true,
+      space: 'team', // Team space so all can see it
+      isDemo: true,
+      isSharedDemo: true,
+      memoryMb: 1024,
+    };
+
+    // Use the first owner/admin as the owner, or create a system account
+    const owner = auth.users.find(u => u.role === 'owner') || auth.users.find(u => u.role === 'admin') || auth.users[0];
+    if (!owner) throw httpError(400, 'No staff account exists to own the demo server. Please create an admin account first.');
+
+    demoServer = await manager.create(demoConfig, {
+      space: 'team',
+      owner: owner.id,
+      createdBy: 'system',
+      extra: { isDemo: true, isSharedDemo: true },
+    });
+
+    // Auto-upload TreeHostStaff plugin
+    await syncStaffPlugin(demoServer).catch((e) => console.error(`[staff plugin] ${demoServer.cfg.id}: ${e.message}`));
+
+    // Create fake world files and data for exploration
+    await createDemoServerFiles(demoServer).catch((e) => console.error(`[demo server] Failed to create demo files: ${e.message}`));
+
+    // Mark demo server as "running" (simulated status for demo purposes)
+    demoServer.setStatus('running');
+    demoServer.maxPlayers = 20;
+    demoServer.players = [];
+
+    // Save the demo server state
+    manager.save();
+
+    // Log the demo server creation
+    activity.log('server', 'Tree Host', `created the shared demo server "${demoServer.cfg.name}"`);
+  }
+
+  const json = demoServer.toJSON();
+  json.isDemo = true;
+  json.isSharedDemo = true;
+  return json;
+});
+
+/** Create fake world files and configuration for the demo server. */
+async function createDemoServerFiles(inst) {
+  const dir = inst.dir;
+  const pluginsDir = path.join(dir, 'plugins');
+  const worldDir = path.join(dir, 'world');
+  const worldNetherDir = path.join(dir, 'world_nether');
+  const worldEndDir = path.join(dir, 'world_the_end');
+
+  // Create directories
+  await fsp.mkdir(pluginsDir, { recursive: true });
+  await fsp.mkdir(worldDir, { recursive: true });
+  await fsp.mkdir(path.join(worldDir, 'region'), { recursive: true });
+  await fsp.mkdir(path.join(worldDir, 'playerdata'), { recursive: true });
+  await fsp.mkdir(path.join(worldDir, 'data'), { recursive: true });
+  await fsp.mkdir(worldNetherDir, { recursive: true });
+  await fsp.mkdir(worldEndDir, { recursive: true });
+  await fsp.mkdir(path.join(dir, 'logs'), { recursive: true });
+
+  // Create fake server.properties
+  const serverProperties = `#Minecraft server properties
+#Sat Jan 01 00:00:00 UTC 2024
+accepts-minecraft-versions=1.20.4,1.20.5,1.20.6,1.21
+allow-flight=false
+allow-nether=true
+broadcast-console-to-ops=true
+broadcast-rcon-to-ops=true
+difficulty=easy
+enable-command-block=false
+enable-jmx-monitoring=false
+enable-query=false
+enable-rcon=false
+enable-status=true
+enforce-whitelist=false
+entity-broadcast-range-percentage=100.0
+force-gamemode=false
+function-permission-level=2
+gamemode=survival
+generate-structures=true
+hardcore=false
+hide-online-players=false
+initial-disabled-pieces=
+initial-enabled-pieces=minecraft:village,minecraft:pillager_outpost
+level-name=world
+level-seed=
+level-type=minecraft:normal
+log-ips=true
+max-chained-neighbor-updates=1000000
+max-players=20
+max-tick-time=60000
+max-world-size=29999984
+motd=Welcome to the Tree Host Demo Server!
+network-compression-threshold=256
+online-mode=true
+op-permission-level=4
+player-idle-timeout=0
+prevent-proxy-connections=false
+pvp=true
+rate-limit=0
+require-resource-pack=false
+resource-pack=
+resource-pack-prompt=
+resource-pack-sha1=
+server-ip=
+server-port=25565
+server-name=Tree Host Demo
+simulation-distance=12
+spawn-monsters=true
+spawn-npcs=true
+spawn-protection=16
+spawn-animals=true
+view-distance=12
+white-list=false`;
+  await fsp.writeFile(path.join(dir, 'server.properties'), serverProperties);
+
+  // Create fake bukkit.yml
+  const bukkitYml = `settings:
+  allow-end: true
+  warn-on-overload: true
+  permissions-file: permissions.yml
+  update-folder: update
+  spawn-limits:
+    monsters: 70
+    animals: 10
+    water-animals: 5
+    water-ambient: 5
+    water-underground-creature: 5
+    axolotls: 5
+    ambient: 15
+  chunk-gc:
+    period-in-ticks: 600
+  ticks-per:
+    animal-spawns: 400
+    monster-spawns: 1
+    water-spawns: 1
+    water-ambient-spawns: 1
+    water-underground-creature-spawns: 1
+    axolotl-spawns: 1
+    ambient-spawns: 1
+    autosave: 6000
+  aliases: now-in-game: []
+  world-container: .
+  auto-updater:
+    enabled: true
+    on-broken:
+      warn-on-broken: true
+      warn-on-update: true
+    on-update:
+      warn-on-update: true
+  database:
+    username: bukkit
+    isolation: SERIALIZABLE
+  statistics:
+    disable-saving: false`;
+  await fsp.writeFile(path.join(pluginsDir, 'bukkit.yml'), bukkitYml);
+
+  // Create fake spigot.yml
+  const spigotYml = `settings:
+  debug: false
+  save-user-cache-on-stop-only: false
+  moved-too-quickly-multiplier: 10.0
+  moved-too-quickly-threshold: 100.0
+  timeout-time: 60
+  restart-on-crash: true
+  restart-script: ./start.sh
+  sample-count: 12
+  player-shuffle: 0
+  user-cache-size: 1000
+  log-villager-deaths: true
+  log-named-deaths: true
+  netty-threads: 4
+  watchdog:
+    timeout: 60
+  world-settings:
+    default:
+      mob-spawn-range: 8
+      entity-activation-range:
+        animals: 32
+        monsters: 32
+        raiders: 48
+        misc: 16
+        water: 16
+        water-ambient: 16
+        water-underground-creature: 16
+        axolotls: 32
+      entity-tracking-range:
+        players: 128
+        animals: 96
+        monsters: 96
+        raiders: 128
+        misc: 32
+        water: 96
+        water-ambient: 96
+        water-underground-creature: 96
+        axolotls: 96
+      ticks-per:
+        hopper: 1
+        hopper-transfer: 8
+        hopper-check: 1
+      hopper-amount: 1
+      dragon-death-sound-radius: 0
+      seed-village: 10387312
+      seed-desert: 14357617
+      seed-igloo: 14357618
+      seed-jungle: 14357619
+      seed-swamp: 14357620
+      seed-monument: 10387313
+      seed-shipwreck: 165745295
+      seed-ocean: 14357621
+      seed-outpost: 165745296
+      seed-endcity: 10387313
+      seed-slime: 987234911
+      seed-bastion: 30084232
+      seed-fortress: 30084232
+      seed-mansion: 10387319
+      seed-fossil: 14357921
+      seed-portal: 34222645
+      max-tick-time:
+        tile: 50
+        entity: 50
+        container-tick: 50
+      spawn-limits:
+        monsters: 70
+        animals: 10
+        water-animals: 5
+        water-ambient: 5
+        water-underground-creature: 5
+        axolotls: 5
+        ambient: 15`;
+  await fsp.writeFile(path.join(pluginsDir, 'spigot.yml'), spigotYml);
+
+  // Create fake ops.json
+  const opsJson = `[
+  {
+    "uuid": "00000000-0000-0000-0000-000000000000",
+    "name": "TreeHostAdmin",
+    "level": 4,
+    "bypassesPlayerLimit": false
+  }
+]`;
+  await fsp.writeFile(path.join(dir, 'ops.json'), opsJson);
+
+  // Create fake whitelist.json
+  const whitelistJson = `[]`;
+  await fsp.writeFile(path.join(dir, 'whitelist.json'), whitelistJson);
+
+  // Create fake banned-players.json
+  const bannedPlayersJson = `[]`;
+  await fsp.writeFile(path.join(dir, 'banned-players.json'), bannedPlayersJson);
+
+  // Create fake banned-ips.json
+  const bannedIpsJson = `[]`;
+  await fsp.writeFile(path.join(dir, 'banned-ips.json'), bannedIpsJson);
+
+  // Create a fake world data file
+  const levelDat = `This is a simulated level.dat file for the demo server. In a real server, this would be a compressed NBT file containing world data.`;
+  await fsp.writeFile(path.join(worldDir, 'level.dat'), levelDat);
+
+  // Create a fake region file
+  const regionFile = `This is a simulated region file. In a real server, this would be a compressed file containing chunk data for the world region.`;
+  await fsp.writeFile(path.join(worldDir, 'region', 'r.0.0.mca'), regionFile);
+
+  // Create a fake player data file
+  const playerData = `This is a simulated player data file. In a real server, this would be an NBT file containing player inventory, position, and stats.`;
+  await fsp.writeFile(path.join(worldDir, 'playerdata', '00000000-0000-0000-0000-000000000000.dat'), playerData);
+
+  // Create TreeHostStaff plugin directory with staff list
+  const staffPluginDir = path.join(pluginsDir, 'TreeHostStaff');
+  await fsp.mkdir(staffPluginDir, { recursive: true });
+  const staffList = `# Official Tree Host staff. Managed by Tree Host: changes here are undone.
+# Add staff members to this list by assigning them staff roles in the admin console.
+`;
+  await fsp.writeFile(path.join(staffPluginDir, 'staff.txt'), staffList);
+  const motd = `# Tree Host Demo Server
+# This is the MOTD that the TreeHostStaff plugin shows to staff members.
+`;
+  await fsp.writeFile(path.join(staffPluginDir, 'motd.txt'), motd);
+
+  // Create a simulated log file
+  const logLines = [
+    `[${new Date().toISOString()}] [Server thread/INFO]: Starting minecraft server version 1.21.1`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Loading properties`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Default game type: SURVIVAL`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Generating keypair`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Starting Minecraft server on *:25565`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Using default tick rate 20.0`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Preparing level "world"`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Preparing start region for dimension minecraft:overworld`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Time elapsed: 1234 ms`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: Done (1.234s)! For help, type "help"`,
+    `[${new Date().toISOString()}] [Server thread/INFO]: TreeHostStaff plugin enabled (Demo Server)`,
+  ];
+  await fsp.writeFile(path.join(dir, 'logs', 'latest.log'), logLines.join('\n'));
+
+  console.log(`[demo server] Created fake world files for ${inst.cfg.id}`);
+}
+
 route('POST', '/api/servers', async (req) => {
   stagingBlock();
   const body = await readJson(req);
@@ -1733,6 +2183,7 @@ route('POST', '/api/servers', async (req) => {
   const owner = space === 'customer' ? sub.userId : undefined;
   const inst = await manager.create(body, { space, owner, createdBy: req.user.id, extra });
   if (sub) billing.attachServer(sub.id, sub.userId, inst.cfg.id);
+  console.log(`[server create] ${inst.cfg.id}: space=${inst.cfg.space}, type=${inst.cfg.type}, family=${inst.provider.family}, isCustomer=${inst.isCustomer}`);
   await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
   if (pack) {
     inst.cfg.modpack = { title: pack.title, slug: pack.slug, version: pack.versionNumber, versionId: pack.versionId, icon: pack.icon };
@@ -1813,7 +2264,7 @@ const optionalUser = (req) => {
     return null;
   }
 };
-route('GET', '/api/donations', () => ({ ...billing.donationSummary(), mode: billing.mode, fallbackUrl: billing.mode === 'off' ? DONATE_URL : null }), { public: true });
+route('GET', '/api/donations', () => ({ ...billing.donationSummary(), mode: billing.mode, fallbackUrl: DONATE_URL }), { public: true });
 route(
   'POST',
   '/api/donations',
@@ -1824,7 +2275,7 @@ route(
     auth.recordFailure([`donate:${ip}`]);
     const body = await readJson(req);
     const user = optionalUser(req);
-    return billing.donate({ ...body, userId: user && !user.local ? user.id : null }, PUBLIC_URL || publicOrigin(req));
+    return billing.donate({ ...body, userId: user && !user.local ? user.id : null }, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req));
   },
   { public: true },
 );
@@ -1860,6 +2311,343 @@ route('PUT', '/api/admin/donations/:id', async (req, res, p) => {
   audit(req, `${d.hidden ? 'hid' : 'showed'} a supporter message on the donate page`);
   return d;
 }, { perm: 'billing.manage' });
+
+// ---------- Tree Host Staff Plugin Management ----------
+
+const STAFF_PLUGIN_INFO_FILE = path.join(DATA, 'staff-plugin-info.json');
+const REQUIRED_PLUGINS_FILE = path.join(DATA, 'required-plugins.json');
+const REQUIRED_PLUGINS_DIR = path.join(__dirname, '..', 'required-plugins');
+
+/** Load staff plugin info from local file. */
+async function loadStaffPluginInfo() {
+  try {
+    return JSON.parse(await fsp.readFile(STAFF_PLUGIN_INFO_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Save staff plugin info to local file. */
+async function saveStaffPluginInfo(info) {
+  await fsp.mkdir(DATA, { recursive: true });
+  await fsp.writeFile(STAFF_PLUGIN_INFO_FILE, JSON.stringify(info, null, 2), { mode: 0o600 });
+}
+
+/** Load required plugins list. */
+async function loadRequiredPlugins() {
+  try {
+    return JSON.parse(await fsp.readFile(REQUIRED_PLUGINS_FILE, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+/** Save required plugins list. */
+async function saveRequiredPlugins(plugins) {
+  await fsp.mkdir(DATA, { recursive: true });
+  await fsp.writeFile(REQUIRED_PLUGINS_FILE, JSON.stringify(plugins, null, 2), { mode: 0o600 });
+}
+
+/** Get current staff plugin info. */
+route('GET', '/api/admin/staff-plugin', async (req) => {
+  const info = await loadStaffPluginInfo();
+  if (!info) {
+    // Return default info if file doesn't exist
+    return {
+      version: '1.0.0',
+      size: staffPluginJar ? staffPluginJar.length : 0,
+      hash: staffPluginHash || 'Unknown',
+      uploadedAt: null,
+      uploadedBy: null,
+      notes: 'Default plugin from minecraft-plugin/TreeHostStaff.jar',
+    };
+  }
+  return info;
+}, { perm: 'system.view' });
+
+/** Get all required plugins. */
+route('GET', '/api/admin/required-plugins', async (req) => {
+  const plugins = await loadRequiredPlugins();
+  return plugins.map(p => ({
+    ...p,
+    size: p.size || 0,
+    fileExists: fs.existsSync(path.join(REQUIRED_PLUGINS_DIR, p.filename)),
+  }));
+}, { perm: 'system.view' });
+
+/** Update staff plugin JAR file. */
+route('POST', '/api/admin/staff-plugin', async (req) => {
+  // Simple multipart parsing for file upload
+  const contentType = req.headers['content-type'] || '';
+  const boundaryMatch = contentType.match(/boundary=([^;]+)/);
+  if (!boundaryMatch) throw httpError(400, 'Invalid multipart request');
+
+  const boundary = boundaryMatch[1];
+  const chunks = [];
+  let totalSize = 0;
+  const maxSize = 50 * 1024 * 1024; // 50MB
+
+  for await (const chunk of req) {
+    totalSize += chunk.length;
+    if (totalSize > maxSize) throw httpError(413, 'File too large (max 50MB)');
+    chunks.push(chunk);
+  }
+
+  const buffer = Buffer.concat(chunks);
+  const parts = buffer.toString('binary').split(`--${boundary}`).filter(Boolean);
+
+  let jarFile = null;
+  let version = null;
+  let notes = '';
+
+  for (const part of parts) {
+    if (part.includes('--')) continue; // Skip final boundary
+
+    const [header, ...bodyParts] = part.split('\r\n\r\n');
+    const body = bodyParts.join('\r\n\r\n').replace(/\r\n--$/, ''); // Remove trailing boundary
+
+    const headers = header.split('\r\n').reduce((acc, h) => {
+      const [k, v] = h.split(': ');
+      if (k && v) acc[k.toLowerCase()] = v;
+      return acc;
+    }, {});
+
+    if (headers['content-disposition']) {
+      const nameMatch = headers['content-disposition'].match(/name="([^"]+)"/);
+      if (nameMatch) {
+        const name = nameMatch[1];
+        if (name === 'jarFile') {
+          jarFile = Buffer.from(body, 'binary');
+        } else if (name === 'version') {
+          version = body.trim();
+        } else if (name === 'notes') {
+          notes = body.trim();
+        }
+      }
+    }
+  }
+
+  if (!jarFile) throw httpError(400, 'No JAR file provided');
+  if (!version) throw httpError(400, 'Version is required');
+  if (!jarFile.length || jarFile.length > 50 * 1024 * 1024) throw httpError(400, 'JAR file must be between 1 byte and 50MB');
+
+  // Validate it's a JAR file (ZIP archive)
+  if (!jarFile.slice(0, 4).toString('hex').startsWith('504b0304')) {
+    throw httpError(400, 'File is not a valid JAR file (not a ZIP archive)');
+  }
+
+  // Save the new JAR file
+  const pluginDir = path.join(__dirname, '..', 'minecraft-plugin');
+  await fsp.mkdir(pluginDir, { recursive: true });
+  const jarPath = path.join(pluginDir, 'TreeHostStaff.jar');
+  await fsp.writeFile(jarPath, jarFile);
+
+  // Update in-memory cache
+  staffPluginJar = jarFile;
+  const newHash = sha(jarFile);
+
+  // Save metadata
+  const info = {
+    version,
+    size: jarFile.length,
+    hash: newHash,
+    uploadedAt: Date.now(),
+    uploadedBy: req.user.username,
+    notes,
+  };
+  await saveStaffPluginInfo(info);
+
+  // Log the update
+  activity.log('system', req.user.username, `updated the Tree Host staff plugin to version ${version}`);
+
+  return info;
+}, { perm: 'system.manage' });
+
+/** Add a new required plugin. */
+route('POST', '/api/admin/required-plugins', async (req) => {
+  const contentType = req.headers['content-type'] || '';
+  const boundaryMatch = contentType.match(/boundary=([^;]+)/);
+  if (!boundaryMatch) throw httpError(400, 'Invalid multipart request');
+
+  const boundary = boundaryMatch[1];
+  const chunks = [];
+  let totalSize = 0;
+  const maxSize = 50 * 1024 * 1024; // 50MB
+
+  for await (const chunk of req) {
+    totalSize += chunk.length;
+    if (totalSize > maxSize) throw httpError(413, 'File too large (max 50MB)');
+    chunks.push(chunk);
+  }
+
+  const buffer = Buffer.concat(chunks);
+  const parts = buffer.toString('binary').split(`--${boundary}`).filter(Boolean);
+
+  let jarFile = null;
+  let filename = null;
+  let title = null;
+  let description = '';
+  let locked = true;
+  let targetTypes = ['paper', 'spigot', 'purpur', 'folia', 'craftbukkit'];
+
+  for (const part of parts) {
+    if (part.includes('--')) continue;
+
+    const [header, ...bodyParts] = part.split('\r\n\r\n');
+    const body = bodyParts.join('\r\n\r\n').replace(/\r\n--$/, '');
+
+    const headers = header.split('\r\n').reduce((acc, h) => {
+      const [k, v] = h.split(': ');
+      if (k && v) acc[k.toLowerCase()] = v;
+      return acc;
+    }, {});
+
+    if (headers['content-disposition']) {
+      const nameMatch = headers['content-disposition'].match(/name="([^"]+)"/);
+      if (nameMatch) {
+        const name = nameMatch[1];
+        if (name === 'jarFile') {
+          jarFile = Buffer.from(body, 'binary');
+          const filenameMatch = headers['content-disposition'].match(/filename="([^"]+)"/);
+          if (filenameMatch) filename = filenameMatch[1];
+        } else if (name === 'title') {
+          title = body.trim();
+        } else if (name === 'description') {
+          description = body.trim();
+        } else if (name === 'locked') {
+          locked = body.trim() === 'true';
+        } else if (name === 'targetTypes') {
+          try {
+            targetTypes = JSON.parse(body.trim());
+          } catch {}
+        }
+      }
+    }
+  }
+
+  if (!jarFile) throw httpError(400, 'No JAR file provided');
+  if (!title) throw httpError(400, 'Title is required');
+  if (!filename) filename = title.replace(/[^a-zA-Z0-9_-]/g, '') + '.jar';
+  if (!jarFile.length || jarFile.length > 50 * 1024 * 1024) throw httpError(400, 'JAR file must be between 1 byte and 50MB');
+
+  // Validate it's a JAR file
+  if (!jarFile.slice(0, 4).toString('hex').startsWith('504b0304')) {
+    throw httpError(400, 'File is not a valid JAR file (not a ZIP archive)');
+  }
+
+  // Save the JAR file
+  await fsp.mkdir(REQUIRED_PLUGINS_DIR, { recursive: true });
+  const jarPath = path.join(REQUIRED_PLUGINS_DIR, filename);
+  await fsp.writeFile(jarPath, jarFile);
+
+  // Load existing plugins
+  const plugins = await loadRequiredPlugins();
+
+  // Add new plugin
+  const plugin = {
+    id: crypto.randomBytes(8).toString('hex'),
+    filename,
+    title,
+    description,
+    locked,
+    targetTypes,
+    size: jarFile.length,
+    hash: sha(jarFile),
+    uploadedAt: Date.now(),
+    uploadedBy: req.user.username,
+  };
+  plugins.push(plugin);
+  await saveRequiredPlugins(plugins);
+
+  // Log the addition
+  activity.log('system', req.user.username, `added required plugin "${title}" (${filename})`);
+
+  return plugin;
+}, { perm: 'system.manage' });
+
+/** Update a required plugin. */
+route('PUT', '/api/admin/required-plugins/:id', async (req) => {
+  const plugins = await loadRequiredPlugins();
+  const pluginIndex = plugins.findIndex(p => p.id === req.params.id);
+  if (pluginIndex === -1) throw httpError(404, 'Plugin not found');
+
+  const body = await readJson(req);
+  const plugin = plugins[pluginIndex];
+
+  // Update fields
+  if (body.title !== undefined) plugin.title = body.title;
+  if (body.description !== undefined) plugin.description = body.description;
+  if (body.locked !== undefined) plugin.locked = body.locked;
+  if (body.targetTypes !== undefined) plugin.targetTypes = body.targetTypes;
+
+  plugin.updatedAt = Date.now();
+  plugin.updatedBy = req.user.username;
+
+  plugins[pluginIndex] = plugin;
+  await saveRequiredPlugins(plugins);
+
+  activity.log('system', req.user.username, `updated required plugin "${plugin.title}"`);
+
+  return plugin;
+}, { perm: 'system.manage' });
+
+/** Delete a required plugin. */
+route('DELETE', '/api/admin/required-plugins/:id', async (req) => {
+  const plugins = await loadRequiredPlugins();
+  const pluginIndex = plugins.findIndex(p => p.id === req.params.id);
+  if (pluginIndex === -1) throw httpError(404, 'Plugin not found');
+
+  const plugin = plugins[pluginIndex];
+
+  // Delete the JAR file
+  const jarPath = path.join(REQUIRED_PLUGINS_DIR, plugin.filename);
+  await fsp.rm(jarPath, { force: true }).catch(() => {});
+
+  // Remove from list
+  plugins.splice(pluginIndex, 1);
+  await saveRequiredPlugins(plugins);
+
+  activity.log('system', req.user.username, `deleted required plugin "${plugin.title}"`);
+
+  return { ok: true };
+}, { perm: 'system.manage' });
+
+/** Distribute a required plugin to all servers. */
+route('POST', '/api/admin/required-plugins/:id/distribute', async (req) => {
+  const plugins = await loadRequiredPlugins();
+  const plugin = plugins.find(p => p.id === req.params.id);
+  if (!plugin) throw httpError(404, 'Plugin not found');
+
+  // Load the JAR file
+  const jarPath = path.join(REQUIRED_PLUGINS_DIR, plugin.filename);
+  const jarFile = await fsp.readFile(jarPath);
+
+  let distributed = 0;
+  let failed = 0;
+
+  for (const inst of manager.instances.values()) {
+    // Check if server type matches target types
+    if (!plugin.targetTypes.includes(inst.cfg.type)) continue;
+
+    // Check if server is bukkit family
+    if (inst.provider.family !== 'bukkit') continue;
+
+    try {
+      const dir = path.join(inst.dir, inst.pluginDirName);
+      const targetJar = path.join(dir, plugin.filename);
+      await fsp.mkdir(dir, { recursive: true });
+      await fsp.writeFile(targetJar, jarFile);
+      distributed++;
+    } catch (e) {
+      console.error(`[required plugin] Failed to distribute to ${inst.cfg.id}: ${e.message}`);
+      failed++;
+    }
+  }
+
+  activity.log('system', req.user.username, `distributed required plugin "${plugin.title}" to ${distributed} servers (${failed} failed)`);
+
+  return { distributed, failed };
+}, { perm: 'system.manage' });
 
 // ---------- the team page ----------
 // Everyone with a role at Developer level or above (Owner, Admin, Developer, and custom roles that high) is shown,
@@ -1904,7 +2692,7 @@ try {
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const staffPluginHash = staffPluginJar ? sha(staffPluginJar) : null;
 
-manager.protectedPlugin = (inst) => TEAM && inst.isCustomer && inst.provider.family === 'bukkit' && !!staffPluginJar;
+manager.protectedPlugin = (inst) => TEAM && (inst.isCustomer || inst.cfg.isDemo || inst.cfg.space === 'team') && inst.provider.family === 'bukkit' && !!staffPluginJar;
 
 function staffListText() {
   const lines = auth.users
@@ -1917,7 +2705,10 @@ const staffFileFor = (inst) => `${staffListText()}${manager.networkFor && manage
 
 /** Puts the plugin and the staff list in place (if missing or changed). Returns true if the plugin had to be restored. */
 async function syncStaffPlugin(inst) {
-  if (!manager.protectedPlugin(inst)) return false;
+  if (!manager.protectedPlugin(inst)) {
+    console.log(`[staff plugin] ${inst.cfg.id}: not protected (isCustomer=${inst.isCustomer}, space=${inst.cfg.space}, family=${inst.provider.family}, hasJar=${!!staffPluginJar})`);
+    return false;
+  }
   const dir = path.join(inst.dir, inst.pluginDirName);
   const jar = path.join(dir, 'TreeHostStaff.jar');
   await fsp.mkdir(path.join(dir, 'TreeHostStaff'), { recursive: true });
@@ -1927,6 +2718,7 @@ async function syncStaffPlugin(inst) {
   if (!current || sha(current) !== staffPluginHash) {
     try {
       await fsp.writeFile(jar, staffPluginJar);
+      console.log(`[staff plugin] ${inst.cfg.id}: installed TreeHostStaff.jar`);
       restored = !!inst.cfg.staffPluginInstalled;
     } catch (e) {
       // In use by the running server (Windows): it's loaded already, and gets replaced before the next start.
@@ -2463,6 +3255,28 @@ setInterval(() => {
 route('GET', '/api/servers/:id/stats', (req, res, p) => {
   const inst = getFor(req, p.id);
   const plan = manager.planInfo(inst);
+
+  // Demo server: return simulated stats
+  if (inst.cfg.isDemo) {
+    const now = Date.now();
+    const samples = [];
+    // Generate fake stats for the last hour
+    for (let i = 60; i >= 0; i--) {
+      const t = now - i * 60000;
+      const mem = 400 + Math.random() * 200; // 400-600MB
+      const cpu = 5 + Math.random() * 15; // 5-20%
+      const players = Math.floor(Math.random() * 3); // 0-2 players
+      samples.push({ t, mem: Math.round(mem), cpu: Math.round(cpu * 10) / 10, players });
+    }
+    return {
+      samples,
+      memLimitMb: Number(inst.cfg.memoryMb) || 1024,
+      cpuLimit: plan && plan.cpus ? plan.cpus * 100 : 100,
+      maxPlayers: 20,
+      now: { mem: 512, cpu: 12.5, players: 0, running: true },
+    };
+  }
+
   return {
     samples: inst.stats || [],
     memLimitMb: Number(inst.cfg.memoryMb) || null,

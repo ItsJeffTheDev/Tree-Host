@@ -2,6 +2,7 @@
 // Tree Host website: one header and footer for every public page, live plans, contact details and the animations.
 (() => {
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  window.esc = esc;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const page = document.body.dataset.page || '';
 

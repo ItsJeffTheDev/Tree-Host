@@ -74,7 +74,7 @@ class Auth {
     this.resets = [];
     this.sessions = new Map();
     this.attempts = new Map();
-    this.settings = { allowSignup: true };
+    this.settings = { allowSignup: true, baseUrl: '' };
     // Who becomes an admin: the emails in TREEHOST_ADMIN_EMAILS (once the email is verified).
     // allowFirstAdmin (local testing only): the very first account becomes an admin.
     this.adminEmails = new Set(
@@ -92,7 +92,7 @@ class Auth {
     this.users = Object.values(d.users || {}).map((u) => ({ ...u, tokens: Object.values(u.tokens || {}) }));
     this.invites = Object.values(d.invites || {}).filter((i) => i.expires > Date.now());
     this.resets = Object.values(d.resets || {}).filter((r) => r.expires > Date.now());
-    this.settings = { ...this.settings, ...(d.settings || {}) };
+    this.settings = { allowSignup: true, baseUrl: '', ...this.settings, ...(d.settings || {}) };
     // Roles from the old team-only version.
     let migrated = false;
     for (const u of this.users) {
@@ -174,8 +174,23 @@ class Auth {
     return this.users.some(isOwner);
   }
 
-  async setSettings({ allowSignup }) {
+  async setSettings({ allowSignup, baseUrl }) {
     if (allowSignup !== undefined) this.settings.allowSignup = !!allowSignup;
+    if (baseUrl !== undefined) {
+      // Validate and normalize the base URL
+      const url = String(baseUrl || '').trim();
+      if (url) {
+        // Ensure it has a protocol and ends without a trailing slash
+        let normalized = url;
+        if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+          normalized = 'https://' + normalized;
+        }
+        normalized = normalized.replace(/\/$/, '');
+        this.settings.baseUrl = normalized;
+      } else {
+        this.settings.baseUrl = '';
+      }
+    }
     await this.save();
     return this.settings;
   }
@@ -468,7 +483,7 @@ class Auth {
       user.emailVerified = !!(id.emailVerified || id.provider === 'google.com');
       user.lastLogin = Date.now();
       await this.save();
-      return { user, token: await this.createSession(user) };
+      return { user, token: await this.createSession(user), needsDemoServer: !user.hasDemoServer };
     }
 
     // A new account.
@@ -506,6 +521,7 @@ class Auth {
       tokens: [],
       createdAt: Date.now(),
       lastLogin: Date.now(),
+      hasDemoServer: false,
     };
     this.users.push(user);
     if (invite) this.invites = this.invites.filter((i) => i !== invite);

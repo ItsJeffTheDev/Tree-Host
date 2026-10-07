@@ -38,6 +38,8 @@ function can(action, s) {
   if (!isTeam()) return true;
   const u = state.me.user;
   if (!s || action === 'view' || s.owner === u.id) return true;
+  // Demo server read-only for certain actions
+  if (s.isDemo && ['plugins', 'files', 'settings', 'manage'].includes(action)) return false;
   const mine = myMembership(s);
   if (mine && !hasPerm('console.access')) return MEMBER_ACTIONS[mine.role].includes(action);
   return hasPerm(ACTION_PERMISSION[action] || 'servers.viewAll');
@@ -54,6 +56,15 @@ function money(cents, currency = 'usd') {
   } catch {
     return `${(cents / 100).toFixed(2)} ${currency.toUpperCase()}`;
   }
+}
+
+function fmtMem(mb) {
+  return mb >= 1024 ? `${+(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+}
+
+// Icon helper (uses icons.js which is loaded before team.js)
+function ic(name, cls = '') {
+  return `<svg class="ic${cls ? ` ${cls}` : ''}" aria-hidden="true" focusable="false"><use href="/icons.svg#${name}"/></svg>`;
 }
 
 // ---------- Firebase sign-in ----------
@@ -130,10 +141,10 @@ async function checkEmailVerified() {
 }
 
 /** Age gate: a neutral birth-year question (no hint about the minimum age). Under-13s are remembered on this device. */
-function birthYearField() {
+function birthYearField(defaultYear = '') {
   const now = new Date().getFullYear();
   const years = Array.from({ length: 100 }, (_, i) => now - i);
-  return `<label class="field">Year you were born <select name="birthYear" required><option value="">Choose...</option>${years.map((y) => `<option>${y}</option>`).join('')}</select></label>`;
+  return `<label class="field">Year you were born <select name="birthYear" required><option value="">Choose...</option>${years.map((y) => `<option value="${y}"${y === Number(defaultYear) ? ' selected' : ''}>${y}</option>`).join('')}</select></label>`;
 }
 const tooYoungKey = 'th_age_block';
 const ageBlocked = () => {
@@ -164,6 +175,9 @@ function showFirebaseAuth(forceMode) {
   };
   const [title, sub] = titles[mode];
   const newAccount = ['signup', 'invite', 'profile'].includes(mode);
+  // Pre-fill saved onboarding data if available (fallback for Firebase sync issues)
+  const savedUsername = localStorage.getItem('th_onboarding_username') || '';
+  const savedBirthYear = localStorage.getItem('th_onboarding_birth_year') || '';
   document.body.innerHTML = `
     <div class="auth-screen">
       <form class="auth-card stack" id="auth-form" autocomplete="on">
@@ -171,12 +185,12 @@ function showFirebaseAuth(forceMode) {
         ${addAccountBanner()}
         <h2>${esc(title)}</h2>
         <p class="muted" style="margin:0">${esc(sub)}</p>
-        ${newAccount ? `<label class="field">Username <input type="text" name="username" required minlength="3" maxlength="32" autocomplete="username" value="${esc(state.pendingProfile?.suggested || '')}"></label>` : ''}
+        ${newAccount ? `<label class="field">Username <input type="text" name="username" required minlength="3" maxlength="32" autocomplete="username" value="${esc(state.pendingProfile?.suggested || savedUsername)}"></label>` : ''}
         ${mode !== 'profile' ? '<label class="field">Email <input type="email" name="email" required autocomplete="email"></label>' : ''}
         ${!['forgot', 'profile'].includes(mode) ? `<label class="field">Password <input type="password" name="password" required minlength="${mode === 'login' ? 1 : 8}" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}"></label>` : ''}
         ${
           ['signup', 'profile'].includes(mode) && !invite
-            ? `${birthYearField()}<label class="check"><input type="checkbox" name="acceptTerms" required>
+            ? `${birthYearField(savedBirthYear)}<label class="check"><input type="checkbox" name="acceptTerms" required>
                  <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span></label>`
             : ''
         }
@@ -231,8 +245,24 @@ function showFirebaseAuth(forceMode) {
     const r = await api('POST', '/api/auth/firebase', { idToken, ...more });
     if (r.needsProfile) {
       state.pendingProfile = { suggested: r.suggested || '' };
+      // Check if we've saved the username locally (fallback for Firebase sync issues)
+      const savedUsername = localStorage.getItem('th_onboarding_username');
+      const savedBirthYear = localStorage.getItem('th_onboarding_birth_year');
+      if (savedUsername && savedBirthYear) {
+        // Auto-fill with saved data to help user
+        state.pendingProfile.suggested = savedUsername;
+        $('#auth-form').elements.username.value = savedUsername;
+        if ($('#auth-form').elements.birthYear) {
+          $('#auth-form').elements.birthYear.value = savedBirthYear;
+        }
+      }
       return showFirebaseAuth('profile');
     }
+    // Clear saved onboarding data after successful profile completion
+    try {
+      localStorage.removeItem('th_onboarding_username');
+      localStorage.removeItem('th_onboarding_birth_year');
+    } catch {}
     location.href = r.created ? '/dashboard?welcome' : '/dashboard';
   };
 
@@ -350,6 +380,9 @@ function showAuth(forceMode) {
   };
   const [title, sub] = titles[mode];
   const field = (html) => html;
+  // Pre-fill saved onboarding data if available (fallback for Firebase sync issues)
+  const savedUsername = localStorage.getItem('th_onboarding_username') || '';
+  const savedBirthYear = localStorage.getItem('th_onboarding_birth_year') || '';
   document.body.innerHTML = `
     <div class="auth-screen">
       <form class="auth-card stack" id="auth-form" autocomplete="on">
@@ -361,7 +394,7 @@ function showAuth(forceMode) {
           mode === 'login'
             ? '<label class="field">Username or email <input type="text" name="username" required autocomplete="username"></label>'
             : ['invite', 'signup'].includes(mode)
-              ? '<label class="field">Username <input type="text" name="username" required autocomplete="username" minlength="3" maxlength="32"></label>'
+              ? `<label class="field">Username <input type="text" name="username" required autocomplete="username" minlength="3" maxlength="32" value="${esc(savedUsername)}"></label>`
               : ''
         }
         ${
@@ -376,7 +409,7 @@ function showAuth(forceMode) {
         }
         ${
           mode === 'signup'
-            ? `${birthYearField()}<label class="check"><input type="checkbox" name="acceptTerms" required>
+            ? `${birthYearField(savedBirthYear)}<label class="check"><input type="checkbox" name="acceptTerms" required>
                  <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span></label>`
             : ''
         }
@@ -427,6 +460,20 @@ function showAuth(forceMode) {
         ok.textContent = 'If an account uses that email, a reset link is on its way. Check your inbox (and spam).';
         ok.classList.remove('hidden');
         return;
+      }
+      // Save onboarding data locally as fallback for Firebase sync issues
+      if (body.username) {
+        try {
+          localStorage.setItem('th_onboarding_username', body.username);
+          if (body.birthYear) localStorage.setItem('th_onboarding_birth_year', body.birthYear);
+        } catch {}
+      }
+      // Clear saved data after successful login (not signup)
+      if (mode === 'login') {
+        try {
+          localStorage.removeItem('th_onboarding_username');
+          localStorage.removeItem('th_onboarding_birth_year');
+        } catch {}
       }
       location.href = mode === 'signup' ? '/dashboard?welcome' : '/dashboard';
     } catch (err) {
@@ -914,8 +961,8 @@ async function adminPeople(body) {
       .filter((u) => !q || u.username.toLowerCase().includes(q) || (u.email || '').includes(q));
     $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
       .map(
-        (u) => `<tr>
-          <td><b>${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">${u.linked.length} linked</span>` : ''}
+        (u) => `<tr data-user-id="${esc(u.id)}">
+          <td><b class="clickable-user" data-view-details="${esc(u.id)}">${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">${u.linked.length} linked</span>` : ''}
             <div class="small muted">${esc(u.email) || 'no email'} · joined ${new Date(u.createdAt).toLocaleDateString()}${u.lastLogin ? ` · last seen ${new Date(u.lastLogin).toLocaleDateString()}` : ''}</div></td>
           <td>${
             u.id !== me.id && canRoles && outranks(u)
@@ -924,20 +971,23 @@ async function adminPeople(body) {
           }</td>
           <td class="small">${u.activePlans.length ? esc(u.activePlans.join(', ')) : '<span class="muted">none</span>'}${u.servers ? ` · ${u.servers} server${u.servers > 1 ? 's' : ''}` : ''}</td>
           <td class="actions-cell">${(() => {
-            if (u.id === me.id) return '<span class="muted small">you</span>';
+            const isMe = u.id === me.id;
             const manage = canManage && outranks(u);
             const items = [
-              hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">${ic('ticket')} Give a free server code</button>` : '',
-              canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan now</button>` : '',
+              `<button class="btn sm" data-view-details="${esc(u.id)}">${ic('info')} View Details</button>`,
+              !isMe && hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">${ic('ticket')} Give a free server code</button>` : '',
+              !isMe && canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan now</button>` : '',
               manage
                 ? u.firebase
                   ? `<button class="btn sm" data-reset="${esc(u.email)}">Send password reset email</button>`
                   : `<button class="btn sm" data-temp="${esc(u.id)}">Temporary password</button>`
                 : '',
-              hasPerm('messages.send') ? `<button class="btn sm" data-msg="${esc(u.id)}">${ic('mail')} Send message</button>` : '',
-              outranks(u) && canTakeAction('account') ? `<button class="btn sm" data-take="${esc(u.id)}">${ic('shield')} Take action (warn, suspend, ban, delete)</button>` : '',
+              manage ? `<button class="btn sm" data-change-email="${esc(u.id)}">Change Email</button>` : '',
+              !isMe && hasPerm('messages.send') ? `<button class="btn sm" data-msg="${esc(u.id)}">${ic('mail')} Send message</button>` : '',
+              !isMe && outranks(u) && canTakeAction('account') ? `<button class="btn sm" data-take="${esc(u.id)}">${ic('shield')} Take action (warn, suspend, ban, delete)</button>` : '',
               u.restriction && !u.restriction.actionId && hasPerm('moderation.act') && outranks(u) ? `<button class="btn sm" data-legacy="${esc(u.id)}">Lift old suspension</button>` : '',
             ].join('');
+            if (isMe) return `<span class="muted small">you</span> ${items ? `<details class="menu"><summary class="btn sm">Manage</summary><div class="menu-body">${items}</div></details>` : ''}`;
             return items ? `<details class="menu"><summary class="btn sm">More</summary><div class="menu-body">${items}</div></details>` : '';
           })()}</td></tr>`,
       )
@@ -949,6 +999,9 @@ async function adminPeople(body) {
     draw();
   };
   const bindRows = () => {
+    $$('.clickable-user', body).forEach((b) =>
+      b.addEventListener('click', () => showUserDetails(b.dataset.viewDetails)),
+    );
     $$('[data-role]', body).forEach((sel) =>
       sel.addEventListener('change', () => {
         const r = rbac.roles.find((x) => x.id === sel.value);
@@ -979,6 +1032,12 @@ async function adminPeople(body) {
           prompt('Temporary password (send it privately, they should change it after signing in):', password);
         });
       }),
+    );
+    $$('[data-view-details]', body).forEach((b) =>
+      b.addEventListener('click', () => showUserDetails(b.dataset.viewDetails)),
+    );
+    $$('[data-change-email]', body).forEach((b) =>
+      b.addEventListener('click', () => showChangeEmailModal(b.dataset.changeEmail)),
     );
     $$('[data-take]', body).forEach((b) =>
       b.addEventListener('click', () => {
@@ -1022,11 +1081,10 @@ async function adminPeople(body) {
   if ($('#inv-create', body)) $('#inv-create', body).addEventListener('click', () =>
     attempt(async () => {
       const { link } = await api('POST', '/api/team/invites', { role: $('#inv-role', body).value });
-      const shareLink = (state.me.publicUrl || location.origin) + link.slice(link.indexOf('/dashboard?invite='));
       const box = $('#inv-link', body);
       box.classList.remove('hidden');
       box.innerHTML = `<div class="token-box"><div class="small">Invite link (one use, 7 days):</div>
-        <code class="copy" data-copy="${esc(shareLink)}" title="Click to copy">${esc(shareLink)}</code></div>`;
+        <code class="copy" data-copy="${esc(link)}" title="Click to copy">${esc(link)}</code></div>`;
       $('[data-copy]', box).addEventListener('click', (ev) => navigator.clipboard.writeText(ev.target.dataset.copy).then(() => toast('Invite link copied')));
     }),
   );
@@ -1481,11 +1539,138 @@ async function adminPlans(body) {
   );
 }
 
+// ---------- User Details Modal ----------
+
+async function showUserDetails(userId) {
+  try {
+    const details = await api('GET', `/api/admin/users/${userId}/details`);
+    const { root, close } = openModal(`
+      <h2>${ic('user')} ${esc(details.username)}</h2>
+      <div class="card stack">
+        <h3>Account Information</h3>
+        <table>
+          <tr><td class="muted">Username</td><td><b>${esc(details.username)}</b></td></tr>
+          <tr><td class="muted">Email</td><td>${esc(details.email || 'No email')}</td></tr>
+          <tr><td class="muted">Role</td><td><span class="badge ${ROLE_BADGE[details.role] || ''}">${esc(details.roleLabel || details.role)}</span></td></tr>
+          <tr><td class="muted">Joined</td><td>${new Date(details.createdAt).toLocaleString()}</td></tr>
+          <tr><td class="muted">Last Login</td><td>${details.lastLogin ? new Date(details.lastLogin).toLocaleString() : 'Never'}</td></tr>
+          <tr><td class="muted">Minecraft Name</td><td>${esc(details.mcName || 'Not set')}</td></tr>
+          ${details.firebaseUid ? `<tr><td class="muted">Firebase UID</td><td><code class="small">${esc(details.firebaseUid)}</code></td></tr>` : ''}
+          ${details.restriction ? `<tr><td class="muted">Status</td><td><span class="badge red">${esc(details.restriction.type)}: ${esc(details.restriction.actionId || 'system')}</span></td></tr>` : ''}
+          ${details.prioritySupport ? `<tr><td class="muted">Support</td><td><span class="badge yellow">Priority</span></td></tr>` : ''}
+          ${details.lifetime ? `<tr><td class="muted">Plan</td><td><span class="badge lifetime-badge">Lifetime</span></td></tr>` : ''}
+        </table>
+      </div>
+      <div class="card stack">
+        <h3>Servers (${details.servers.length})</h3>
+        ${details.servers.length ? `
+        <table>
+          ${details.servers.map(s => `
+            <tr>
+              <td><b>${esc(s.name)}</b></td>
+              <td class="small">${esc(s.type)} ${esc(s.version)}</td>
+              <td class="small">${esc(s.status)}</td>
+              <td class="small">${fmtMem(s.memoryMb)}</td>
+              <td class="small">${s.diskUsedMb ? fmtSize(s.diskUsedMb) : 'N/A'}</td>
+            </tr>
+          `).join('')}
+        </table>
+        ` : '<p class="muted" style="margin:0">No servers yet.</p>'}
+      </div>
+      <div class="card stack">
+        <h3>Subscriptions (${details.subscriptions.length})</h3>
+        ${details.subscriptions.length ? `
+        <table>
+          ${details.subscriptions.map(s => `
+            <tr>
+              <td><b>${esc(s.planName)}</b></td>
+              <td class="small">${esc(s.status)}</td>
+              <td class="small">${fmtMem(s.ramMb)}</td>
+              <td class="small">${s.startedAt ? new Date(s.startedAt).toLocaleDateString() : 'Not started'}</td>
+              <td class="small">${s.endsAt ? new Date(s.endsAt).toLocaleDateString() : 'Ongoing'}</td>
+            </tr>
+          `).join('')}
+        </table>
+        ` : '<p class="muted" style="margin:0">No subscriptions yet.</p>'}
+      </div>
+      <div class="card stack">
+        <h3>Recent Activity (Last 50)</h3>
+        ${details.activity.length ? `
+        <div class="stack" style="gap:6px">
+          ${details.activity.map(a => `
+            <div class="small muted" style="padding:4px;border-left:2px solid #ddd;margin-left:8px">
+              <span class="muted">${new Date(a.t).toLocaleString()}</span> · ${esc(a.kind)}: ${esc(a.text)}
+            </div>
+          `).join('')}
+        </div>
+        ` : '<p class="muted" style="margin:0">No recent activity.</p>'}
+      </div>
+      ${details.linked && details.linked.length ? `
+      <div class="card stack">
+        <h3>Linked Accounts (${details.linked.length})</h3>
+        <table>
+          ${details.linked.map(l => `
+            <tr>
+              <td><b>${esc(l.username)}</b></td>
+              <td><span class="badge ${ROLE_BADGE[l.role] || ''}">${esc(l.role)}</span></td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>
+      ` : ''}
+      <div class="modal-actions"><button class="btn primary" data-close>Close</button></div>
+    `);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function showChangeEmailModal(userId) {
+  const { root, close } = openModal(`
+    <h2>Change Email</h2>
+    <form id="change-email-form" class="stack">
+      <p class="hint" style="margin:0">A verification email will be sent to the new address. The user must click the link to confirm the change.</p>
+      <label class="field">New Email Address
+        <input type="email" name="newEmail" placeholder="user@example.com" required>
+      </label>
+      <div class="modal-actions">
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="btn primary">Send Verification Email</button>
+      </div>
+    </form>
+  `);
+
+  $('#change-email-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const newEmail = form.newEmail.value.trim();
+    
+    try {
+      const result = await api('POST', `/api/admin/users/${userId}/change-email`, { newEmail });
+      toast(result.message);
+      if (result.verifyLink) {
+        alert(`Verification link (for testing): ${result.verifyLink}`);
+      }
+      close();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  });
+}
+
 async function adminSettings(body) {
   body.innerHTML = `
     <div class="card stack">
       <h3>Sign-ups</h3>
       <label class="check"><input type="checkbox" id="allow-signup"> Anyone can create an account on the website</label>
+    </div>
+    <div class="card stack">
+      <h3>Base URL</h3>
+      <p class="hint" style="margin:0 0 10px">The base URL used for invite links and other generated URLs. Leave empty to use the current domain.</p>
+      <div class="row" style="gap:8px">
+        <input type="text" id="base-url" placeholder="https://yourdomain.com" style="flex:1">
+        <button class="btn" id="save-base-url">Save</button>
+      </div>
     </div>
     <div class="card stack" id="email-card">
       <h3>Emails</h3>
@@ -1505,6 +1690,14 @@ async function adminSettings(body) {
     attempt(async () => {
       await api('PUT', '/api/team/settings', { allowSignup: box.checked });
       toast(box.checked ? 'Sign-ups are open' : 'Sign-ups are closed');
+    }),
+  );
+  const baseUrlInput = $('#base-url', body);
+  baseUrlInput.value = st.baseUrl || '';
+  $('#save-base-url', body).addEventListener('click', () =>
+    attempt(async () => {
+      await api('PUT', '/api/team/settings', { baseUrl: baseUrlInput.value });
+      toast('Base URL saved');
     }),
   );
 }

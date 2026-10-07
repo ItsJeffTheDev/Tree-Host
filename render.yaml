@@ -1,0 +1,99 @@
+# Render.com deployment configuration for Tree Host
+# This deploys the web application component. Note: Render's free tier has limitations
+# that affect Minecraft server hosting (see README.md for details).
+
+services:
+  - type: web
+    name: tree-host-web
+    env: node
+    plan: free  # Upgrade to starter ($7/mo) for no spin-down
+    region: oregon  # Choose region closest to your users
+    branch: main
+    buildCommand: npm install
+    startCommand: node src/server.js
+    numInstances: 1
+    healthCheckPath: /
+
+    # Environment variables
+    envVars:
+      # Basic configuration
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: TREEHOST_HOST
+        value: 0.0.0.0
+      - key: TREEHOST_PORT
+        value: 8080
+      - key: TREEHOST_DATA
+        value: /tmp/treehost
+      - key: TREEHOST_ISOLATION
+        value: off  # Render free tier doesn't support Docker services
+      - key: TREEHOST_TRUST_PROXY
+        value: "1"
+      - key: TREEHOST_TEAM
+        value: "1"  # Enable team/accounts mode
+      - key: TREEHOST_PUBLIC_URL
+        value: https://tree-host.onrender.com
+      - key: TREEHOST_GAME_HOST
+        value: demo.treehost.online
+      - key: TREEHOST_ADMIN_EMAILS
+        value: daniel@treehost.online
+
+      # Firebase configuration (web/client)
+      - key: FIREBASE_API_KEY
+        value: REDACTED
+      - key: FIREBASE_APP_ID
+        value: 1:840029330018:web:96c8dbdde3990b3fdccf3b
+      - key: FIREBASE_AUTH_DOMAIN
+        value: tree-host.firebaseapp.com
+      - key: FIREBASE_DATABASE_URL
+        value: https://tree-host-default-rtdb.firebaseio.com
+      - key: FIREBASE_DB_ROOT
+        value: treehost
+      - key: FIREBASE_PROJECT_ID
+        value: tree-host
+
+      # Firebase admin/service account (set this in Render dashboard)
+      # Option 1: Use FIREBASE_SERVICE_ACCOUNT environment variable (JSON string)
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false  # Set: Paste entire service account JSON as single-line string
+      # Option 2: Or set individual fields (if not using JSON above)
+      - key: TREEHOST_FIREBASE_PROJECT_ID
+        value: tree-host
+      - key: TREEHOST_FIREBASE_CLIENT_EMAIL
+        sync: false  # Set: firebase-adminsdk-xxxxx@tree-host.iam.gserviceaccount.com
+      - key: TREEHOST_FIREBASE_PRIVATE_KEY
+        sync: false  # Set: multiline private key from Firebase Console
+      - key: TREEHOST_FIREBASE_DATABASE_URL
+        value: https://tree-host-default-rtdb.firebaseio.com
+
+      # Stripe for billing
+      - key: STRIPE_SECRET_KEY
+        value: REDACTED
+      - key: STRIPE_WEBHOOK_SECRET
+        value: REDACTED
+      - key: BILLING_CURRENCY
+        value: usd
+
+      # Optional configuration
+      - key: TREEHOST_DISCORD_INVITE
+        value: https://discord.gg/a37pbwajKd
+      - key: TREEHOST_MAX_BACKUPS
+        value: "5"
+
+      # Disable staging mode when ready for production
+      - key: TREEHOST_STAGING
+        value: "1"
+
+# Note: Render free tier limitations for Minecraft hosting:
+# 1. Services spin down after 15 minutes of inactivity (upgrade to Starter to prevent)
+# 2. Ephemeral storage only - Minecraft server data is lost on redeploy
+# 3. No Docker services on free tier - cannot run isolated MC servers
+# 4. 512MB RAM limit - insufficient for most MC servers
+# 5. No background workers - cannot run MC server processes
+#
+# For production Minecraft hosting, consider:
+# - Render Starter plan ($7/mo) with persistent disk
+# - Alternative: Railway, Fly.io, or a VPS (DigitalOcean, Linode)
+# - For MC servers specifically: use a dedicated MC hosting provider
