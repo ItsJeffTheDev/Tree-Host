@@ -278,6 +278,9 @@ input[type=password] {
 .ub-name { font-weight: 700; display: flex; gap: 6px; align-items: center; }
 .ub-warn { color: #e8c27a; font-size: 12px; margin-top: 4px; }
 .ub-link { color: var(--muted); margin-top: 4px; word-break: break-all; }
+.inv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.invite-perks { background: rgba(255,48,48,.07); border: 1px solid rgba(255,72,72,.35); border-radius: 8px; padding: 10px 12px; }
+.invite-perks ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
 .token-box { background: var(--console-bg); border: 1px solid var(--accent-dim); border-radius: 7px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 .token-box code { word-break: break-all; font-size: 12.5px; padding: 6px; border-bottom: none; }
 pre.code {

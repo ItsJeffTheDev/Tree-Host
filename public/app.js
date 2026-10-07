@@ -2633,7 +2633,16 @@ async function init() {
     sessionStorage.removeItem('th.toast');
     setTimeout(() => toast(pending), 300);
   }
-  if (state.me.teamMode && (!state.me.user || new URLSearchParams(location.search).has('invite') || new URLSearchParams(location.search).has('add-account'))) {
+  const inviteToken = new URLSearchParams(location.search).get('invite');
+  if (state.me.teamMode && inviteToken) {
+    state.inviteInfo = await api('GET', `/api/auth/invite?invite=${encodeURIComponent(inviteToken)}`).catch((e) => ({ error: e.message }));
+    // Already signed in: a YouTuber invite upgrades this account (a staff invite always makes a new one).
+    if (state.me.user && !state.inviteInfo.error && state.inviteInfo.customer) {
+      showInviteClaim(inviteToken);
+      return;
+    }
+  }
+  if (state.me.teamMode && (!state.me.user || inviteToken || new URLSearchParams(location.search).has('add-account'))) {
     showAuth();
     return;
   }

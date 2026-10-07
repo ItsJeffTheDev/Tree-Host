@@ -284,32 +284,78 @@ class Auth {
     return this.createSession(user);
   }
 
-  /** Invite links add staff (Support, Developer, Admin). Customers sign up on the website. Who may invite whom is checked by the caller (rbac). */
-  async createInvite(byUser, role) {
-    if (!['admin', 'developer', 'staff'].includes(role)) throw httpError(400, 'Invites are for Support, Developer or Admin.');
+  /**
+   * Invite links: staff (Support, Developer, Admin) or a YouTuber. One use each. A YouTuber invite may come with a free
+   * plan (given by the caller when it's used) and works for an existing account too (see claimInvite).
+   * Who may invite whom is checked by the caller (rbac).
+   */
+  async createInvite(byUser, role, { note = '', days = 7, plan = null } = {}) {
+    if (!['admin', 'developer', 'staff', 'youtuber'].includes(role)) throw httpError(400, 'Invites are for Support, Developer, Admin or YouTuber.');
     const token = randomToken(24);
+    const ttl = [1, 3, 7, 14, 30].includes(Number(days)) ? Number(days) * 86400000 : INVITE_TTL;
     this.invites.push({
+      id: randomToken(6),
       hash: sha256(token),
       role,
+      note: String(note || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 60),
+      plan: plan && plan.planId ? { planId: String(plan.planId), months: Math.max(1, Math.min(24, Math.round(Number(plan.months) || 1))) } : null,
       createdBy: byUser.username,
-      expires: Date.now() + INVITE_TTL,
+      createdAt: Date.now(),
+      expires: Date.now() + ttl,
     });
     await this.save();
     return token;
   }
 
+  findInvite(token) {
+    const hash = sha256(token || '');
+    return this.invites.find((i) => i.hash === hash && i.expires > Date.now()) || null;
+  }
+
+  /** Pending invites, for the Staff Console (never the links themselves: only their hashes are kept). */
+  listInvites() {
+    return this.invites
+      .filter((i) => i.expires > Date.now())
+      .map((i) => ({ id: i.id || i.hash.slice(0, 8), role: i.role, note: i.note || '', plan: i.plan || null, createdBy: i.createdBy, createdAt: i.createdAt || null, expires: i.expires }));
+  }
+
+  async revokeInvite(id) {
+    const before = this.invites.length;
+    this.invites = this.invites.filter((i) => (i.id || i.hash.slice(0, 8)) !== id);
+    if (this.invites.length === before) throw httpError(404, 'That invite was already used, revoked or has expired.');
+    await this.save();
+  }
+
   async acceptInvite(body, ip) {
     this.checkRate([`invite:${ip}`]);
-    const hash = sha256(body.invite || '');
-    const invite = this.invites.find((i) => i.hash === hash && i.expires > Date.now());
+    const invite = this.findInvite(body.invite);
     if (!invite) {
       this.recordFailure([`invite:${ip}`]);
       throw httpError(400, 'This invite link is invalid or has expired. Ask an admin for a new one.');
     }
+    // A YouTuber is a customer: the same terms and age check as signing up on the website.
+    let birthYear;
+    if (CUSTOMER_ROLES.includes(invite.role)) {
+      if (!body.acceptTerms) throw httpError(400, 'Please accept the Terms of Service and Privacy Policy.');
+      birthYear = this.checkAge(body);
+    }
     const user = await this.createUser(body, invite.role);
+    if (birthYear) user.birthYear = birthYear;
     this.invites = this.invites.filter((i) => i !== invite);
     await this.save();
-    return this.createSession(user);
+    return { token: await this.createSession(user), user, invite };
+  }
+
+  /** A signed-in customer uses a YouTuber invite: their account becomes a YouTuber account. */
+  async claimInvite(user, token) {
+    const invite = this.findInvite(token);
+    if (!invite) throw httpError(400, 'This invite link is invalid or has expired. Ask whoever sent it for a new one.');
+    if (!CUSTOMER_ROLES.includes(invite.role)) throw httpError(400, 'This is a staff invite: it makes a new account. Sign out first, then open the link again.');
+    if (!CUSTOMER_ROLES.includes(user.role)) throw httpError(400, "You're signed in with a staff account. Sign in with the account the invite is for.");
+    user.role = invite.role;
+    this.invites = this.invites.filter((i) => i !== invite);
+    await this.save();
+    return invite;
   }
 
   async updateUser(user, { mcName, email, password, currentPassword }) {
@@ -527,7 +573,7 @@ class Auth {
     this.users.push(user);
     if (invite) this.invites = this.invites.filter((i) => i !== invite);
     await this.save();
-    return { user, token: await this.createSession(user), created: true };
+    return { user, token: await this.createSession(user), created: true, invite };
   }
 
   // ----- sessions -----

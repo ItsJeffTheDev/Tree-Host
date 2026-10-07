@@ -698,7 +698,8 @@ route(
     const r = await auth.firebaseLogin(body, clientIp(req));
     if (!r.token) return r;
     if (r.created) {
-      activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${rbac.role(r.user.role).label}`);
+      activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${rbac.role(r.user.role).label}${r.invite ? ' with an invite link' : ''}`);
+      if (r.invite) await inviteUsed(r.user, r.invite);
       if (r.user.email && mail.enabled()) welcomeEmail(req, r.user).catch((e) => console.error(`[mail] welcome email failed: ${e.message}`));
     }
     sendJson(res, 200, { ok: true, created: !!r.created }, { 'Set-Cookie': await signInCookies(req, r.token) });
@@ -731,8 +732,9 @@ route(
     passwordAuthOnly();
     regionCheck(req);
     const body = await readJson(req);
-    const token = await auth.acceptInvite(body, clientIp(req));
-    activity.log('people', String(body.username || 'Someone'), 'joined the support staff with an invite link');
+    const { token, user, invite } = await auth.acceptInvite(body, clientIp(req));
+    activity.log('people', user.username, `joined as ${rbac.role(user.role).label} with an invite link`);
+    await inviteUsed(user, invite);
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': await signInCookies(req, token) });
     return HANDLED;
   },
@@ -980,17 +982,70 @@ route(
   'POST',
   '/api/team/invites',
   async (req) => {
-    const { role } = await readJson(req);
+    const { role, note, days, planId, months } = await readJson(req);
     rbac.checkRoleChange(req.user, null, role);
-    const invite = await auth.createInvite(req.user, role);
-    audit(req, `created a ${rbac.role(role).label} invite link`);
+    let plan = null;
+    if (planId) {
+      if (role !== 'youtuber') throw httpError(400, 'Only YouTuber invites can come with a free plan.');
+      if (!can(req.user, 'billing.manage')) throw httpError(403, 'Giving free plans needs the Manage billing permission.');
+      if (!billing.plan(planId)) throw httpError(400, 'Unknown plan.');
+      plan = { planId, months };
+    }
+    const invite = await auth.createInvite(req.user, role, { note, days, plan });
+    audit(req, `created a ${rbac.role(role).label} invite link${note ? ` (${String(note).slice(0, 60)})` : ''}${plan ? ' with a free plan' : ''}`);
     // The dashboard reads ?invite= (on a hosted site "/" is the website, which would drop it).
     // Use the configured base URL if set, otherwise fall back to the request's host.
     const baseUrl = auth.settings.baseUrl || publicOrigin(req);
-    return { link: `${baseUrl}/dashboard?invite=${invite}`, expiresInDays: 7 };
+    const made = auth.listInvites().slice(-1)[0];
+    return { link: `${baseUrl}/dashboard?invite=${invite}`, expires: made.expires, invite: made };
   },
   { perm: 'users.roles' },
 );
+route('GET', '/api/team/invites', () => auth.listInvites(), { perm: 'users.roles' });
+route('DELETE', '/api/team/invites/:id', async (req, res, p) => {
+  await auth.revokeInvite(p.id);
+  audit(req, 'revoked an invite link');
+  return { ok: true };
+}, { perm: 'users.roles' });
+
+/** What an invite link is for, so the sign-up page can say so (the link itself is the secret). */
+route('GET', '/api/auth/invite', (req, res, p, q) => {
+  const i = auth.findInvite(q.get('invite'));
+  if (!i) throw httpError(404, 'This invite link is invalid or has expired. Ask whoever sent it for a new one.');
+  const plan = i.plan && billing.plan(i.plan.planId);
+  return {
+    role: i.role,
+    roleLabel: rbac.role(i.role).label,
+    customer: rbac.isCustomer({ role: i.role }),
+    note: i.note || '',
+    invitedBy: i.createdBy,
+    expires: i.expires,
+    plan: plan ? { name: plan.name, months: i.plan.months } : null,
+  };
+}, { public: true });
+
+/** Someone who already has an account opens a YouTuber invite while signed in. */
+route('POST', '/api/auth/invite/claim', async (req) => {
+  const { invite: token } = await readJson(req);
+  const before = rbac.role(req.user.role).label;
+  const invite = await auth.claimInvite(req.user, token);
+  activity.log('people', req.user.username, `became a ${rbac.role(req.user.role).label} with an invite link (was ${before})`);
+  await inviteUsed(req.user, invite);
+  publicListCache = null;
+  syncStaffListsSoon();
+  return { ok: true, role: req.user.role, roleLabel: rbac.role(req.user.role).label };
+});
+
+/** After an invite is used: the free plan it came with, if any. */
+async function inviteUsed(user, invite) {
+  if (!invite || !invite.plan) return;
+  try {
+    const s = await billing.grant(user, invite.plan.planId, invite.createdBy, { months: invite.plan.months, note: `${rbac.role(invite.role).label} invite` });
+    activity.log('billing', invite.createdBy, `gave ${user.username} a free ${s.planName} plan with their invite (${invite.plan.months} month${invite.plan.months === 1 ? '' : 's'})`);
+  } catch (e) {
+    console.error(`[invite] free plan for ${user.username} failed: ${e.message}`);
+  }
+}
 route(
   'PUT',
   '/api/team/users/:uid/role',

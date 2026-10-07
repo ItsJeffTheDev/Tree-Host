@@ -169,10 +169,11 @@ function showFirebaseAuth(forceMode) {
   const params = new URLSearchParams(location.search);
   const invite = params.get('invite');
   const mode = forceMode || (invite ? 'invite' : params.has('signup') && state.me?.allowSignup ? 'signup' : 'login');
+  const inv = invite ? state.inviteInfo || {} : {};
   const titles = {
-    login: ['Sign in', 'Welcome back! Sign in to manage your servers.'],
+    login: ['Sign in', invite && inv.customer ? 'Sign in to the account you want to use. You can accept the invite right after.' : 'Welcome back! Sign in to manage your servers.'],
     signup: ['Create your account', 'Sign up, pick a plan and your Minecraft server is ready in about a minute.'],
-    invite: ['Join Tree Host support', 'You were invited to help run Tree Host. Create your account or sign in.'],
+    invite: inviteTitle(inv, 'Create your account or sign in.'),
     forgot: ['Forgot your password?', "Enter your account's email and we'll send you a link to choose a new password."],
     profile: ['Almost done', 'Pick a username for your Tree Host account.'],
   };
@@ -188,11 +189,12 @@ function showFirebaseAuth(forceMode) {
         ${addAccountBanner()}
         <h2>${esc(title)}</h2>
         <p class="muted" style="margin:0">${esc(sub)}</p>
+        ${invite ? invitePerksHtml(inv) : ''}
         ${newAccount ? `<label class="field">Username <input type="text" name="username" required minlength="3" maxlength="32" autocomplete="username" value="${esc(state.pendingProfile?.suggested || savedUsername)}"></label>` : ''}
         ${mode !== 'profile' ? '<label class="field">Email <input type="email" name="email" required autocomplete="email"></label>' : ''}
         ${!['forgot', 'profile'].includes(mode) ? `<label class="field">Password <input type="password" name="password" required minlength="${mode === 'login' ? 1 : 8}" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}"></label>` : ''}
         ${
-          ['signup', 'profile'].includes(mode) && !invite
+          (['signup', 'profile'].includes(mode) && (!invite || inv.customer)) || (mode === 'invite' && inv.customer)
             ? `${birthYearField(savedBirthYear)}<label class="check"><input type="checkbox" name="acceptTerms" required>
                  <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span></label>`
             : ''
@@ -218,7 +220,9 @@ function showFirebaseAuth(forceMode) {
               ? '<p class="small muted" style="margin:0;text-align:center">Already have an account? <a href="#" data-mode="login">Sign in</a></p>'
               : mode === 'profile'
                 ? '<p class="small muted" style="margin:0;text-align:center"><a href="#" id="auth-cancel">Use a different account</a></p>'
-                : ''
+                : mode === 'invite' && inv.customer
+                  ? '<p class="small muted" style="margin:0;text-align:center">Already have a Tree Host account? <a href="#" id="auth-invite-login">Sign in</a></p>'
+                  : ''
         }
       </form>
     </div>
@@ -266,7 +270,7 @@ function showFirebaseAuth(forceMode) {
       localStorage.removeItem('th_onboarding_username');
       localStorage.removeItem('th_onboarding_birth_year');
     } catch {}
-    location.href = r.created ? '/dashboard?welcome' : '/dashboard';
+    location.href = r.created ? '/dashboard?welcome' : invite ? `/dashboard?invite=${encodeURIComponent(invite)}` : '/dashboard';
   };
 
   $('#auth-form').addEventListener('submit', async (e) => {
@@ -327,6 +331,10 @@ function showFirebaseAuth(forceMode) {
       }
     });
   }
+  $('#auth-invite-login')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showFirebaseAuth('login'); // keeps ?invite=, so the invite can be accepted after signing in
+  });
   if ($('#auth-cancel'))
     $('#auth-cancel').addEventListener('click', async (e) => {
       e.preventDefault();
@@ -374,9 +382,10 @@ function showAuth(forceMode) {
   const mode =
     forceMode ||
     (reset ? 'reset' : invite ? 'invite' : params.has('signup') && state.me?.allowSignup ? 'signup' : 'login');
+  const inv = invite ? state.inviteInfo || {} : {};
   const titles = {
-    login: ['Sign in', 'Welcome back! Sign in to manage your servers.'],
-    invite: ['Join Tree Host support', 'You were invited to help run Tree Host. Create your account.'],
+    login: ['Sign in', invite && inv.customer ? 'Sign in to the account you want to use. You can accept the invite right after.' : 'Welcome back! Sign in to manage your servers.'],
+    invite: inviteTitle(inv, 'Create your account.'),
     signup: ['Create your account', 'Sign up, pick a plan and your Minecraft server is ready in about a minute.'],
     forgot: ['Forgot your password?', "Enter your account's email and we'll send you a link to choose a new password."],
     reset: ['Choose a new password', 'Enter a new password for your account.'],
@@ -393,6 +402,7 @@ function showAuth(forceMode) {
         ${addAccountBanner()}
         <h2>${esc(title)}</h2>
         <p class="muted" style="margin:0">${esc(sub)}</p>
+        ${invite ? invitePerksHtml(inv) : ''}
         ${
           mode === 'login'
             ? '<label class="field">Username or email <input type="text" name="username" required autocomplete="username"></label>'
@@ -411,7 +421,7 @@ function showAuth(forceMode) {
             : ''
         }
         ${
-          mode === 'signup'
+          mode === 'signup' || (mode === 'invite' && inv.customer)
             ? `${birthYearField(savedBirthYear)}<label class="check"><input type="checkbox" name="acceptTerms" required>
                  <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span></label>`
             : ''
@@ -427,7 +437,9 @@ function showAuth(forceMode) {
             ? '<p class="small muted" style="margin:0;text-align:center">No account yet? <a href="#" data-mode="signup">Sign up</a></p>'
             : ['signup', 'forgot', 'reset'].includes(mode)
               ? '<p class="small muted" style="margin:0;text-align:center">Already have an account? <a href="#" data-mode="login">Sign in</a></p>'
-              : ''
+              : mode === 'invite' && inv.customer
+                ? '<p class="small muted" style="margin:0;text-align:center">Already have a Tree Host account? <a href="#" id="auth-invite-login">Sign in</a></p>'
+                : ''
         }
       </form>
     </div>
@@ -446,7 +458,7 @@ function showAuth(forceMode) {
     if (f.password) body.password = f.password.value;
     if (f.acceptTerms) body.acceptTerms = f.acceptTerms.checked;
     if (f.birthYear) body.birthYear = Number(f.birthYear.value);
-    if (mode === 'signup' && ageBlocked()) return showError('Sorry, you need to be at least 13 to make a Tree Host account.');
+    if ((mode === 'signup' || (mode === 'invite' && inv.customer)) && ageBlocked()) return showError('Sorry, you need to be at least 13 to make a Tree Host account.');
     if (invite) body.invite = invite;
     if (reset) body.token = reset;
     const url = {
@@ -478,7 +490,7 @@ function showAuth(forceMode) {
           localStorage.removeItem('th_onboarding_birth_year');
         } catch {}
       }
-      location.href = mode === 'signup' ? '/dashboard?welcome' : '/dashboard';
+      location.href = mode === 'signup' || mode === 'invite' ? '/dashboard?welcome' : invite ? `/dashboard?invite=${encodeURIComponent(invite)}` : '/dashboard';
     } catch (err) {
       noteTooYoung(err);
       showError(err.message);
@@ -486,6 +498,10 @@ function showAuth(forceMode) {
   });
   const first = $('#auth-form input');
   if (first) first.focus();
+  $('#auth-invite-login')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    showAuth('login'); // keeps ?invite=, so the invite can be accepted after signing in
+  });
   $$('[data-mode]').forEach((a) =>
     a.addEventListener('click', (e) => {
       e.preventDefault();
@@ -493,6 +509,61 @@ function showAuth(forceMode) {
       showAuth(a.dataset.mode);
     }),
   );
+}
+
+// ---------- invite links ----------
+
+/** Title and subtitle of the sign-up screen for an invite link. */
+function inviteTitle(inv, staffSub) {
+  if (inv.error) return ['Invite link', inv.error];
+  if (inv.customer) return [`Join Tree Host as a ${inv.roleLabel}`, `${inv.invitedBy || 'The Tree Host team'} invited you${inv.note ? ` (${inv.note})` : ''}. Create your account, or sign in if you already have one.`];
+  return [`Join the Tree Host team as ${inv.roleLabel || 'staff'}`, `You were invited to help run Tree Host. ${staffSub}`];
+}
+
+/** What a YouTuber invite comes with. */
+function invitePerksHtml(inv) {
+  if (!inv.customer || inv.error) return '';
+  const items = [
+    '<b>▶ YOUTUBER</b> badge above your head, in chat and in the player list on every Tree Host server',
+    'Your listed servers are <b>featured</b> on the public server list',
+    'A YouTuber badge on your Tree Host profile',
+    ...(inv.plan ? [`A free <b>${esc(inv.plan.name)}</b> plan for ${inv.plan.months} month${inv.plan.months === 1 ? '' : 's'}`] : []),
+  ];
+  return `<div class="invite-perks"><div class="small muted">What you get</div><ul>${items.map((i) => `<li>${i}</li>`).join('')}</ul></div>`;
+}
+
+/** Signed in and opened a YouTuber invite: accept it on this account. */
+function showInviteClaim(token) {
+  const inv = state.inviteInfo;
+  const u = state.me.user;
+  const staffAccount = !CUSTOMER_ROLES.includes(u.role);
+  document.body.innerHTML = `
+    <div class="auth-screen">
+      <div class="auth-card stack">
+        <a href="/" class="brand" style="text-decoration:none;color:inherit"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Minecraft server hosting</div></div></a>
+        <h2>${esc(inviteTitle(inv)[0])}</h2>
+        <p class="muted" style="margin:0">${esc(inv.invitedBy || 'The Tree Host team')} invited you${inv.note ? ` (${esc(inv.note)})` : ''}.
+          You're signed in as <b>${esc(u.username)}</b>${u.role === inv.role ? `, which is already a ${esc(inv.roleLabel)} account` : ''}.</p>
+        ${invitePerksHtml(inv)}
+        ${staffAccount ? `<div class="warn-box">This is a staff account, so it can't become a ${esc(inv.roleLabel)}. Sign in with the account the invite is for.</div>` : ''}
+        <div id="auth-error" class="auth-error hidden"></div>
+        <button class="btn primary block" id="claim-go" ${staffAccount ? 'disabled' : ''}>Accept on ${esc(u.username)}</button>
+        <p class="small muted" style="margin:0;text-align:center"><a href="/dashboard?add-account&invite=${encodeURIComponent(token)}">Use a different account</a> · <a href="/dashboard">Not now</a></p>
+      </div>
+    </div>
+    <div id="toasts" class="toasts"></div>`;
+  $('#claim-go').addEventListener('click', async () => {
+    $('#claim-go').disabled = true;
+    try {
+      const r = await api('POST', '/api/auth/invite/claim', { invite: token });
+      sessionStorage.setItem('th.toast', `Welcome! You're now a Tree Host ${r.roleLabel}.${inv.plan ? ' Your free plan is in Billing.' : ''}`);
+      location.href = '/dashboard';
+    } catch (e) {
+      $('#auth-error').textContent = e.message;
+      $('#auth-error').classList.remove('hidden');
+      $('#claim-go').disabled = false;
+    }
+  });
 }
 
 // ---------- sidebar user box ----------
@@ -954,6 +1025,7 @@ async function adminPeople(body) {
   const outranks = (u) => iAmOwner || level(u.role) < level(me.role);
   const assignable = rbac.roles.filter((r) => iAmOwner || r.level < level(me.role)).map((r) => r.id).reverse();
   const canRoles = hasPerm('users.roles');
+  const invitable = assignable.filter((r) => ['youtuber', 'staff', 'developer', 'admin'].includes(r));
   const canManage = hasPerm('users.manage');
   const canGrant = hasPerm('billing.manage');
   let filter = 'all';
@@ -1067,28 +1139,69 @@ async function adminPeople(body) {
     </div>
     <div id="ppl-list"></div>
     ${
-      canRoles && assignable.some((r) => ['staff', 'developer', 'admin'].includes(r))
-        ? `<div class="card stack" style="margin-top:14px">
-      <h3>Invite staff</h3>
-      <p class="hint" style="margin:0">Creates a one-time sign-up link (valid for 7 days) that gives the new account this role. See <b>Roles</b> for what each role can do.</p>
-      <div class="row">
-        <select id="inv-role" style="max-width:200px">${ROLE_OPTIONS('staff', assignable.filter((r) => ['staff', 'developer', 'admin'].includes(r)))}</select>
-        <button class="btn primary" id="inv-create">Create invite link</button>
+      canRoles && invitable.length
+        ? `<div class="card stack" style="margin-top:14px" id="inv-card">
+      <h3>Invite people</h3>
+      <p class="hint" style="margin:0">A one-time link that gives the account this role. <b>YouTuber</b> links also work for people who already have an account:
+        they sign in and accept. See <b>Roles &amp; permissions</b> for what each role gets.</p>
+      <div class="inv-grid">
+        <label class="field">Role <select id="inv-role">${ROLE_OPTIONS(invitable.includes('youtuber') ? 'youtuber' : 'staff', invitable)}</select></label>
+        <label class="field">Who it's for <span class="muted small" style="font-weight:400">(optional, only you see it)</span><input type="text" id="inv-note" maxlength="60" placeholder="e.g. Steve's channel, @CraftyFox"></label>
+        <label class="field">Link works for <select id="inv-days"><option value="1">1 day</option><option value="3">3 days</option><option value="7" selected>7 days</option><option value="14">14 days</option><option value="30">30 days</option></select></label>
+        ${canGrant ? `<label class="field inv-yt">Free plan <span class="muted small" style="font-weight:400">(YouTubers)</span><select id="inv-plan"><option value="">None</option>${plans.plans.map((pl) => `<option value="${esc(pl.id)}">${esc(pl.name)}</option>`).join('')}</select></label>
+        <label class="field inv-yt">For <select id="inv-months">${[1, 2, 3, 6, 12].map((m) => `<option value="${m}" ${m === 3 ? 'selected' : ''}>${m} month${m === 1 ? '' : 's'}</option>`).join('')}</select></label>` : ''}
       </div>
+      <div class="row"><button class="btn primary" id="inv-create">Create invite link</button></div>
       <div id="inv-link" class="hidden"></div>
+      <div id="inv-pending"></div>
     </div>`
         : ''
     }`;
   $('#ppl-q', body).addEventListener('input', (e) => ((q = e.target.value.trim().toLowerCase()), draw()));
   $('#ppl-filter', body).addEventListener('change', (e) => ((filter = e.target.value), draw()));
+  const drawPending = async () => {
+    const el = $('#inv-pending', body);
+    if (!el) return;
+    const list = await api('GET', '/api/team/invites').catch(() => []);
+    const planName = (id) => (plans.plans.find((x) => x.id === id) || { name: id }).name;
+    el.innerHTML = list.length
+      ? `<h4 style="margin:6px 0">Waiting to be used (${list.length})</h4><table><tbody>${list
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+          .map((i) => `<tr><td><span class="badge ${ROLE_BADGE[i.role] || ''}">${esc(ROLE_LABEL[i.role] || i.role)}</span> ${i.note ? esc(i.note) : '<span class="muted">no note</span>'}
+              ${i.plan ? `<div class="small muted">with a free ${esc(planName(i.plan.planId))} plan for ${i.plan.months} month${i.plan.months === 1 ? '' : 's'}</div>` : ''}</td>
+            <td class="small muted">by ${esc(i.createdBy)} · expires ${new Date(i.expires).toLocaleDateString()}</td>
+            <td class="actions-cell"><button class="btn sm danger" data-revoke="${esc(i.id)}">Revoke</button></td></tr>`)
+          .join('')}</tbody></table>`
+      : '';
+    $$('[data-revoke]', el).forEach((b) => b.addEventListener('click', () => attempt(async () => {
+      await api('DELETE', `/api/team/invites/${encodeURIComponent(b.dataset.revoke)}`);
+      toast('Invite revoked: the link no longer works.');
+      drawPending();
+    })));
+  };
+  const syncInviteForm = () => $$('.inv-yt', body).forEach((el) => el.classList.toggle('hidden', $('#inv-role', body).value !== 'youtuber'));
+  if ($('#inv-role', body)) {
+    $('#inv-role', body).addEventListener('change', syncInviteForm);
+    syncInviteForm();
+    drawPending();
+  }
   if ($('#inv-create', body)) $('#inv-create', body).addEventListener('click', () =>
     attempt(async () => {
-      const { link } = await api('POST', '/api/team/invites', { role: $('#inv-role', body).value });
+      const role = $('#inv-role', body).value;
+      const planId = role === 'youtuber' && $('#inv-plan', body) ? $('#inv-plan', body).value : '';
+      const { link, expires } = await api('POST', '/api/team/invites', {
+        role,
+        note: $('#inv-note', body).value.trim(),
+        days: Number($('#inv-days', body).value),
+        ...(planId ? { planId, months: Number($('#inv-months', body).value) } : {}),
+      });
       const box = $('#inv-link', body);
       box.classList.remove('hidden');
-      box.innerHTML = `<div class="token-box"><div class="small">Invite link (one use, 7 days):</div>
+      box.innerHTML = `<div class="token-box"><div class="small">${esc(ROLE_LABEL[role] || role)} invite link (one use, until ${new Date(expires).toLocaleDateString()}). Click to copy:</div>
         <code class="copy" data-copy="${esc(link)}" title="Click to copy">${esc(link)}</code></div>`;
       $('[data-copy]', box).addEventListener('click', (ev) => navigator.clipboard.writeText(ev.target.dataset.copy).then(() => toast('Invite link copied')));
+      $('#inv-note', body).value = '';
+      drawPending();
     }),
   );
   draw();

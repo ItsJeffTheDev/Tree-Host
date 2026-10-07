@@ -15,7 +15,11 @@ your role has the permission it needs, and the server checks the same permission
 
 Staff can have their own servers too: give yourself a free plan in **Staff Console → People → More**.
 
-To make someone a YouTuber, pick **YouTuber** in their Role dropdown in **Staff Console → People** (Admins and Owners
+To make someone a YouTuber, send them an **invite link**: **Staff Console → People → Invite people**, pick
+**YouTuber**, add who it's for (e.g. their channel), how long the link works (1-30 days) and, if you can manage billing,
+a free plan that comes with it. The link works once. New people create their account with it; people who already
+have an account sign in and press **Accept**. Unused links are listed under the form, where you can revoke them.
+You can also pick **YouTuber** in someone's Role dropdown in **People** (Admins and Owners
 can). Pair it with a free plan or a creator promo code if you're sponsoring them. If you want them to have any extra
 powers, the Owner can tick permissions for the YouTuber role in **Roles & permissions**.
 
