@@ -3656,6 +3656,7 @@ const MIME = {
   '.webm': 'video/webm',
   '.jpg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
 };
 
 // Clean URLs: the website pages, and the dashboard (also at /app for older links).
@@ -3711,7 +3712,7 @@ async function serveStatic(req, res, pathname) {
     res.writeHead(200, {
       ...(noindex ? { 'X-Robots-Tag': 'noindex' } : {}),
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': file.endsWith('.woff2') ? 'public, max-age=604800' : 'no-cache', // fonts hardly ever change
       'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
