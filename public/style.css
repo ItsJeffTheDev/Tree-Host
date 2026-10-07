@@ -386,6 +386,53 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .perm-table input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
 .perm-table input[type=checkbox]:disabled { opacity: .55; }
 
+/* ---------- Staff Console: managed plugins (#staff-plugin) ---------- */
+.plugin-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--border); }
+.mp-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.mp-toolbar input[type=search] { width: min(320px, 100%); }
+.mp-toolbar .btn .ic, .mp-actions .btn .ic { width: 14px; height: 14px; vertical-align: -2px; }
+.mp-list { display: flex; flex-direction: column; gap: 10px; }
+.mp-card { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 14px; align-items: start; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; transition: border-color .15s; }
+.mp-card:hover { border-color: #3b424c; }
+.mp-card.paused { opacity: .7; }
+.mp-icon { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; background: rgba(70,195,123,.12); color: var(--accent); }
+.mp-icon.builtin { background: rgba(74,158,255,.12); color: var(--info); }
+.mp-icon .ic { width: 22px; height: 22px; }
+.mp-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mp-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 15px; }
+.mp-title .badge .ic { width: 11px; height: 11px; vertical-align: -1px; }
+.mp-ver { font-family: var(--mono); font-size: 12px; color: var(--muted); font-weight: 400; }
+.mp-desc { margin: 0; color: var(--muted); font-size: 13px; max-width: 760px; }
+.mp-meta code { font-size: 11.5px; }
+.mp-cov { display: flex; flex-direction: column; gap: 4px; max-width: 520px; margin-top: 2px; }
+.mp-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: rgba(255,255,255,.06); }
+.mp-bar > div { height: 100%; }
+.mp-bar .ok { background: var(--accent); }
+.mp-bar .warn { background: var(--warn); }
+.mp-bar .bad { background: var(--danger); }
+.mp-bar .off { background: #4a515b; }
+.mp-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.mp-actions .btn { text-align: left; white-space: nowrap; }
+.stat.mp-stat-warn .stat-num { color: #e8c27a; }
+.stat.mp-stat-bad .stat-num { color: #f08a84; }
+.mp-drop { border: 2px dashed var(--border); border-radius: var(--radius); padding: 20px; text-align: center; color: var(--muted); transition: border-color .15s, background .15s; }
+.mp-drop.over { border-color: var(--accent); background: rgba(70,195,123,.07); color: var(--text); }
+.mp-drop.has-file { border-style: solid; border-color: rgba(70,195,123,.5); color: var(--text); }
+.mp-drop label { color: var(--info); cursor: pointer; text-decoration: underline; }
+.mp-drop .ic { width: 16px; height: 16px; vertical-align: -3px; }
+.mp-field { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.mp-field .tag-pick { color: var(--text); font-weight: 500; }
+.mp-hash { cursor: pointer; word-break: break-all; }
+.modal h2 .ic { width: 20px; height: 20px; vertical-align: -3px; }
+.modal-actions .btn .ic { width: 14px; height: 14px; vertical-align: -2px; }
+.modal-actions a.btn { text-decoration: none; }
+@media (max-width: 760px) {
+  .mp-card { grid-template-columns: 36px minmax(0, 1fr); }
+  .mp-icon { width: 36px; height: 36px; }
+  .mp-actions { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+}
+
 /* ---------- proportional scaling on big screens ----------
    Everything is sized in px, so the whole interface is zoomed a step at a time on large monitors.
    .app divides its height by --z so it still fills exactly one screen. */

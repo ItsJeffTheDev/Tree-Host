@@ -826,11 +826,12 @@ async function loadPlugins() {
         ${list
           .map(
             (p) => `
-          <tr class="${p.enabled ? '' : 'disabled'}${p.locked ? ' staff-plugin-row' : ''}">
+          <tr class="${p.enabled ? '' : 'disabled'}${p.managed ? ' staff-plugin-row' : ''}">
             <td>
-              <div class="p-name${p.locked ? ' staff-plugin-name' : ''}" ${p.locked ? 'data-staff-plugin="true"' : ''}>
+              <div class="p-name${p.managed ? ' staff-plugin-name' : ''}" ${p.managed ? `data-managed="${esc(p.file)}" title="What is this?"` : ''}>
                 ${esc(p.name || p.file.replace(/\.jar(\.disabled)?$/i, ''))}
-                ${p.locked ? '<span class="badge lifetime-badge" title="Required by Tree Host on every server: lets official Tree Host staff help you">Required by Tree Host</span>' : ''}
+                ${p.managed && p.locked ? '<span class="badge lifetime-badge" title="Installed and required by Tree Host: click the name to see why">Required by Tree Host</span>' : ''}
+                ${p.managed && !p.locked ? '<span class="badge blue" title="Installed by Tree Host: you may remove it">Provided by Tree Host</span>' : ''}
                 ${p.watched ? '<span class="badge blue" title="Deployed automatically from your build folder">auto</span>' : ''}
                 ${p.format === 'paper-plugin.yml' ? '<span class="badge">paper-plugin</span>' : ''}
                 ${p.invalid ? '<span class="badge red">invalid jar</span>' : ''}
@@ -872,10 +873,11 @@ async function loadPlugins() {
       });
     }),
   );
-  // Click handler for TreeHostStaff plugin to show description popup
-  $$('.staff-plugin-name', el).forEach((el) => {
-    el.style.cursor = 'pointer';
-    el.addEventListener('click', () => showStaffPluginInfo());
+  // Plugins Tree Host installs: the name opens what it is and why it's there
+  $$('[data-managed]', el).forEach((n) => {
+    const p = list.find((x) => x.file === n.dataset.managed);
+    n.style.cursor = 'pointer';
+    n.addEventListener('click', () => (p.managed.builtIn ? showStaffPluginInfo() : showManagedPluginInfo(p)));
   });
 }
 
@@ -920,6 +922,22 @@ function showStaffPluginInfo() {
     </div>
     <div class="modal-actions"><button class="btn primary" data-close>Got it</button></div>
   `);
+}
+
+function showManagedPluginInfo(p) {
+  const m = p.managed;
+  openModal(`
+    <h2>${ic('puzzle')} ${esc(m.name || p.name || p.file)}</h2>
+    <div class="card stack">
+      ${m.description || p.description ? `<p style="margin:0">${esc(m.description || p.description)}</p>` : ''}
+      <p style="margin:0">Tree Host installs this plugin on servers like yours${p.version ? ` (you have version <b>${esc(p.version)}</b>)` : ''} and keeps it up to date.</p>
+      <p class="muted" style="margin:0">${
+        m.locked
+          ? "It's required, so it can't be removed, turned off or replaced from the dashboard. If it goes missing it's put back automatically."
+          : "It's optional: you can turn it off or delete it, and it won't come back until there's a new version."
+      }</p>
+    </div>
+    <div class="modal-actions"><button class="btn primary" data-close>Got it</button></div>`);
 }
 
 async function createDemoServer() {

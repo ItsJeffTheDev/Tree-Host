@@ -15,7 +15,7 @@ const CONSOLE_SECTIONS = [
   { id: 'audit', icon: 'receipt', label: 'Audit log', perm: 'audit.view', render: consoleAudit },
   { id: 'system', icon: 'gear', label: 'System', perm: 'system.view', render: consoleSystem },
   { id: 'settings', icon: 'sliders', label: 'Settings', perm: 'settings.manage', render: (b) => adminSettings(b) },
-  { id: 'staff-plugin', icon: 'puzzle', label: 'Staff Plugin', perm: 'system.view', render: consoleStaffPlugin },
+  { id: 'staff-plugin', icon: 'puzzle', label: 'Managed Plugins', perm: 'system.view', render: consoleStaffPlugin },
 ];
 
 // Helper functions
@@ -246,329 +246,413 @@ async function consoleSystem(body) {
       ${sys.servers.length ? `<table><thead><tr><th>Server</th><th>Memory</th></tr></thead><tbody>${sys.servers.map((s) => `<tr><td>${esc(s.name)}</td><td class="small">${s.usedMb ? fmtMem(s.usedMb) : '?'} / ${s.maxMb ? fmtMem(s.maxMb) : '?'}</td></tr>`).join('')}</tbody></table>` : '<p class="muted" style="margin:0">None running.</p>'}</div>`;
 }
 
-// ---------- staff plugin management ----------
+// ---------- managed plugins (#staff-plugin) ----------
+// Every plugin Tree Host puts on servers by itself: the built-in Tree Host Staff plugin and any staff add here.
+// Server side: src/managed-plugins.js. Viewing needs system.view; changes need system.manage.
+
+const MP_STATES = {
+  current: { label: 'Up to date', badge: 'green' },
+  outdated: { label: 'Different version', badge: 'yellow' },
+  missing: { label: 'Missing', badge: 'red' },
+  disabled: { label: 'Turned off by owner', badge: '' },
+  removed: { label: 'Removed by owner', badge: '' },
+};
+
 async function consoleStaffPlugin(body) {
-  const canView = hasPerm('system.view');
   const canManage = hasPerm('system.manage');
-  body.innerHTML = `
-    <div class="card stack">
-      <h3>Tree Host Staff Plugin</h3>
-      <p class="hint" style="margin:0">This plugin is automatically installed on all Paper, Spigot, Purpur, Folia, and CraftBukkit servers. It enables official Tree Host staff to help customers.</p>
-    </div>
-    <div class="card stack" id="staff-plugin-info">
-      <h3>Current Version</h3>
-      <div class="muted">Loading...</div>
-    </div>
-    ${canManage ? `
-    <div class="card stack">
-      <h3>Update Plugin</h3>
-      <p class="hint" style="margin:0">Upload a new TreeHostStaff.jar file to update the plugin across all servers. This requires Owner, Admin, or Developer role.</p>
-      <form id="staff-plugin-upload" class="stack" style="margin-top:12px">
-        <label class="field">New JAR file
-          <input type="file" name="jarFile" accept=".jar" required>
-        </label>
-        <label class="field">Version
-          <input type="text" name="version" placeholder="e.g., 1.0.0" required>
-        </label>
-        <label class="field">Release notes (optional)
-          <textarea name="notes" rows="3" placeholder="Describe what's new in this version..."></textarea>
-        </label>
-        <button type="submit" class="btn primary">Update Plugin</button>
-      </form>
-    </div>
-    <div class="card stack">
-      <h3>Required Plugins</h3>
-      <p class="hint" style="margin:0">Additional plugins that are automatically installed on servers. You can add, update, and distribute them to all matching servers.</p>
-      <div class="row" style="margin-top:12px">
-        <button class="btn primary" id="btn-add-required-plugin">+ Add Required Plugin</button>
+  let data = await api('GET', '/api/admin/managed-plugins');
+  let q = '';
+  const typeLabel = (id) => (data.types.find((t) => t.id === id) || { label: id }).label;
+
+  const reload = async () => {
+    data = await api('GET', '/api/admin/managed-plugins');
+    draw();
+  };
+
+  const coverageBar = (c) => {
+    if (!c.total) return '<div class="mp-cov"><div class="mp-bar empty"></div><div class="small muted">No servers it applies to yet.</div></div>';
+    const seg = (n, cls) => (n ? `<div class="${cls}" style="flex:${n}"></div>` : '');
+    const off = c.disabled + c.removed;
+    const issues = [c.outdated && `${c.outdated} different version`, c.missing && `${c.missing} missing`, off && `${off} turned off or removed by the owner`].filter(Boolean);
+    return `<div class="mp-cov">
+      <div class="mp-bar">${seg(c.current, 'ok')}${seg(c.outdated, 'warn')}${seg(c.missing, 'bad')}${seg(off, 'off')}</div>
+      <div class="small"><b>${c.current}</b> <span class="muted">of ${c.total} server${c.total === 1 ? '' : 's'} up to date${issues.length ? ` · ${issues.join(' · ')}` : ''}</span></div>
+    </div>`;
+  };
+
+  const card = (p) => {
+    const badges = [
+      p.builtIn ? '<span class="badge blue">Built in</span>' : '',
+      p.locked ? `<span class="badge yellow" title="Customers can't remove, turn off or replace it; it's put back if it goes missing">${ic('lock')} Locked</span>` : '<span class="badge" title="Owners may remove or turn it off">Optional</span>',
+      p.paused ? '<span class="badge red" title="Not installed anywhere new and not enforced">Paused</span>' : '',
+      !p.builtIn && !p.autoInstall && !p.paused ? '<span class="badge" title="Only installed when you push it">Manual</span>' : '',
+      p.builtIn && p.source === 'uploaded' ? '<span class="badge green" title="A build uploaded here, not the one bundled with Tree Host">Uploaded build</span>' : '',
+      p.builtIn && p.source === 'missing' ? '<span class="badge red">Jar missing</span>' : '',
+    ].join('');
+    const types = p.serverTypes.length ? p.serverTypes.map((t) => `<span class="tag">${esc(typeLabel(t))}</span>`).join('') : '<span class="tag">All Bukkit-family servers</span>';
+    return `<div class="mp-card${p.paused ? ' paused' : ''}" data-id="${esc(p.id)}">
+      <div class="mp-icon${p.builtIn ? ' builtin' : ''}">${ic(p.builtIn ? 'shield' : 'puzzle')}</div>
+      <div class="mp-main">
+        <div class="mp-title"><b>${esc(p.name)}</b>${p.version ? `<span class="mp-ver">v${esc(p.version)}</span>` : ''}${badges}</div>
+        ${p.description ? `<p class="mp-desc">${esc(p.description)}</p>` : ''}
+        <div class="mp-meta small muted"><code>${esc(p.filename)}</code> · ${fmtSize(p.size)}${p.uploadedAt ? ` · updated ${esc(timeAgo(p.uploadedAt))}${p.uploadedBy ? ` by ${esc(p.uploadedBy)}` : ''}` : ''}</div>
+        <div class="plugin-tags">${types}</div>
+        ${coverageBar(p.coverage)}
       </div>
-      <div id="required-plugins-list" style="margin-top:12px"></div>
-    </div>` : canView ? `
-    <div class="card stack">
-      <h3>Required Plugins</h3>
-      <p class="hint" style="margin:0">Additional plugins that are automatically installed on servers. You need the system.manage permission to add, edit, or distribute plugins.</p>
-      <div id="required-plugins-list" style="margin-top:12px"></div>
-    </div>` : ''}
-  `;
+      <div class="mp-actions">
+        <button class="btn sm" data-mp="details">${ic('eye')} Details</button>
+        ${canManage ? `<button class="btn sm" data-mp="version">${ic('upload')} New version</button>` : ''}
+        ${canManage && !p.builtIn ? `<button class="btn sm" data-mp="edit">${ic('sliders')} Settings</button>` : ''}
+        ${canManage && !p.paused ? `<button class="btn sm" data-mp="push" title="Install it on every server it belongs on now${p.locked ? '' : ', including where an owner removed it'}">${ic('refresh')} Push now</button>` : ''}
+        ${canManage && !p.builtIn ? `<button class="btn sm danger" data-mp="remove">${ic('trash')} Remove</button>` : ''}
+      </div>
+    </div>`;
+  };
 
-  try {
-    const info = await api('GET', '/api/admin/staff-plugin');
-    if ($('#staff-plugin-info')) {
-      $('#staff-plugin-info').innerHTML = `
-        <h3>Current Version</h3>
-        <table>
-          <tr><td class="muted">Version</td><td><b>${esc(info.version || 'Unknown')}</b></td></tr>
-          <tr><td class="muted">File</td><td><code>TreeHostStaff.jar</code></td></tr>
-          <tr><td class="muted">Size</td><td>${fmtSize(info.size || 0)}</td></tr>
-          <tr><td class="muted">SHA256</td><td><code class="small">${esc(info.hash || 'Unknown')}</code></td></tr>
-          ${info.uploadedAt ? `<tr><td class="muted">Uploaded</td><td>${new Date(info.uploadedAt).toLocaleString()}</td></tr>` : ''}
-          ${info.uploadedBy ? `<tr><td class="muted">Uploaded by</td><td>${esc(info.uploadedBy)}</td></tr>` : ''}
-          ${info.notes ? `<tr><td class="muted">Release notes</td><td>${esc(info.notes)}</td></tr>` : ''}
-        </table>
-      `;
-    }
-  } catch (e) {
-    if ($('#staff-plugin-info')) {
-      $('#staff-plugin-info').innerHTML = `<div class="warn-box">Could not load plugin info: ${esc(e.message)}</div>`;
-    }
-  }
+  function draw() {
+    const all = data.plugins;
+    const list = all.filter((p) => !q || [p.name, p.filename, p.description, p.version].some((v) => String(v || '').toLowerCase().includes(q)));
+    const sum = all.reduce((a, p) => ((a.total += p.coverage.total), (a.current += p.coverage.current), (a.bad += p.coverage.outdated + p.coverage.missing), a), { total: 0, current: 0, bad: 0 });
+    const pct = sum.total ? Math.round((sum.current / sum.total) * 100) : 100;
+    const stat = (num, label, cls = '') => `<div class="stat ${cls}"><div class="stat-num">${num}</div><div class="stat-label">${label}</div></div>`;
+    body.innerHTML = `
+      <p class="muted" style="margin-top:0;max-width:760px">Plugins Tree Host installs on customer, demo and team servers by itself. Every server is checked when it starts and every 30 seconds.
+        <b>Locked</b> plugins are put back if they go missing and can't be removed by owners; <b>optional</b> ones are installed once per version.</p>
+      <div class="stat-row">
+        ${stat(all.length, `managed plugin${all.length === 1 ? '' : 's'}`)}
+        ${stat(all.filter((p) => p.locked && !p.paused).length, 'locked on servers')}
+        ${stat(`${pct}%`, 'installs up to date', pct < 100 ? 'mp-stat-warn' : '')}
+        ${stat(sum.bad, 'installs needing attention', sum.bad ? 'mp-stat-bad' : '')}
+      </div>
+      <div class="mp-toolbar">
+        <input type="search" id="mp-q" placeholder="Search plugins..." value="${esc(q)}">
+        <span style="flex:1"></span>
+        ${canManage ? `<button class="btn" id="mp-sync" title="Check every server for every managed plugin now">${ic('refresh')} Check all servers</button>
+        <button class="btn primary" id="mp-add">${ic('plus')} Add plugin</button>` : ''}
+      </div>
+      <div class="mp-list">${list.length ? list.map(card).join('') : `<div class="card muted">No plugins match "${esc(q)}".</div>`}</div>
+      ${!canManage ? '<p class="hint small">You can look, but adding or changing managed plugins needs the "Manage required plugins" permission.</p>' : ''}`;
 
-  if ($('#staff-plugin-upload')) {
-    $('#staff-plugin-upload').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const form = e.target;
-      const file = form.jarFile.files[0];
-      if (!file) return toast('Please select a JAR file', 'error');
-      if (!file.name.toLowerCase().endsWith('.jar')) return toast('File must be a .jar file', 'error');
-
-      const formData = new FormData();
-      formData.append('jarFile', file);
-      formData.append('version', form.version.value.trim());
-      formData.append('notes', form.notes.value.trim());
-
-      try {
-        await api('POST', '/api/admin/staff-plugin', formData);
-        toast('Staff plugin updated successfully!');
-        form.reset();
-        // Reload the info
-        const info = await api('GET', '/api/admin/staff-plugin');
-        if ($('#staff-plugin-info')) {
-          $('#staff-plugin-info').innerHTML = `
-            <h3>Current Version</h3>
-            <table>
-              <tr><td class="muted">Version</td><td><b>${esc(info.version || 'Unknown')}</b></td></tr>
-              <tr><td class="muted">File</td><td><code>TreeHostStaff.jar</code></td></tr>
-              <tr><td class="muted">Size</td><td>${fmtSize(info.size || 0)}</td></tr>
-              <tr><td class="muted">SHA256</td><td><code class="small">${esc(info.hash || 'Unknown')}</code></td></tr>
-              ${info.uploadedAt ? `<tr><td class="muted">Uploaded</td><td>${new Date(info.uploadedAt).toLocaleString()}</td></tr>` : ''}
-              ${info.uploadedBy ? `<tr><td class="muted">Uploaded by</td><td>${esc(info.uploadedBy)}</td></tr>` : ''}
-              ${info.notes ? `<tr><td class="muted">Release notes</td><td>${esc(info.notes)}</td></tr>` : ''}
-            </table>
-          `;
-        }
-      } catch (err) {
-        toast(err.message, 'error');
-      }
+    const search = $('#mp-q', body);
+    search.addEventListener('input', () => {
+      q = search.value.trim().toLowerCase();
+      const pos = search.selectionStart;
+      draw();
+      $('#mp-q', body).focus();
+      $('#mp-q', body).setSelectionRange(pos, pos);
+    });
+    $('#mp-add', body)?.addEventListener('click', () => mpAddModal(data.types, reload));
+    $('#mp-sync', body)?.addEventListener('click', (e) =>
+      mpBusy(e.currentTarget, async () => {
+        const r = await api('POST', '/api/admin/managed-plugins-sync');
+        toast(`Checked ${r.servers} server${r.servers === 1 ? '' : 's'}: ${r.installed} installed, ${r.restored} put back${r.failed ? `, ${r.failed} failed` : ''}.`);
+        await reload();
+      }),
+    );
+    $$('.mp-card', body).forEach((el) => {
+      const p = data.plugins.find((x) => x.id === el.dataset.id);
+      $$('[data-mp]', el).forEach((b) =>
+        b.addEventListener('click', () => {
+          const act = b.dataset.mp;
+          if (act === 'details') mpDetailsModal(p.id, { typeLabel, canManage, reload });
+          if (act === 'version') mpVersionModal(p, reload);
+          if (act === 'edit') mpSettingsModal(p, data.types, reload);
+          if (act === 'remove') mpRemoveModal(p, reload);
+          if (act === 'push')
+            mpBusy(b, async () => {
+              const r = await api('POST', `/api/admin/managed-plugins/${encodeURIComponent(p.id)}/push`);
+              toast(`${p.name}: ${r.installed + r.restored} server${r.installed + r.restored === 1 ? '' : 's'} updated, ${r.servers} checked${r.failed ? `, ${r.failed} failed` : ''}.`);
+              await reload();
+            });
+        }),
+      );
     });
   }
+  draw();
+}
 
-  // Load required plugins if has permission
-  if (canView) {
-    loadRequiredPlugins(canManage);
-    if (canManage) {
-      $('#btn-add-required-plugin')?.addEventListener('click', () => showAddPluginModal());
-    }
+/** Disables a button while its action runs (and shows errors as toasts). */
+async function mpBusy(btn, fn) {
+  btn.disabled = true;
+  try {
+    await fn();
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
   }
 }
 
-async function loadRequiredPlugins(canManage = false) {
+/**
+ * plugin.yml from a .jar picked in the browser, so the form can fill itself in. Reads the zip's central directory
+ * and inflates just that one entry. Returns { name, version, description } or null (old browser, odd jar...).
+ */
+async function mpReadPluginYml(file) {
   try {
-    const plugins = await api('GET', '/api/admin/required-plugins');
-    const listEl = $('#required-plugins-list');
-    if (!listEl) return;
-
-    if (plugins.length === 0) {
-      listEl.innerHTML = '<p class="muted" style="margin:12px 0 0">No required plugins yet.</p>';
-      return;
+    const tail = new DataView(await file.slice(Math.max(0, file.size - 65557)).arrayBuffer());
+    let eocd = -1;
+    for (let i = tail.byteLength - 22; i >= 0; i--) if (tail.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) return null;
+    const count = tail.getUint16(eocd + 10, true);
+    const cdSize = tail.getUint32(eocd + 12, true);
+    const cdOff = tail.getUint32(eocd + 16, true);
+    const cd = new DataView(await file.slice(cdOff, cdOff + cdSize).arrayBuffer());
+    const dec = new TextDecoder();
+    let hit = null;
+    for (let i = 0, p = 0; i < count && p + 46 <= cd.byteLength; i++) {
+      const nameLen = cd.getUint16(p + 28, true);
+      const name = dec.decode(new Uint8Array(cd.buffer, p + 46, nameLen));
+      if (name === 'plugin.yml' || (name === 'paper-plugin.yml' && !hit)) hit = { method: cd.getUint16(p + 10, true), size: cd.getUint32(p + 20, true), local: cd.getUint32(p + 42, true) };
+      p += 46 + nameLen + cd.getUint16(p + 30, true) + cd.getUint16(p + 32, true);
     }
-
-    listEl.innerHTML = plugins.map(p => `
-      <div class="card" style="margin-top:8px;padding:12px">
-        <div class="row" style="justify-content:space-between;align-items:center">
-          <div>
-            <b>${esc(p.title)}</b>
-            ${p.locked ? '<span class="badge" style="margin-left:8px">Locked</span>' : ''}
-            <div class="small muted">${esc(p.filename)} · ${fmtSize(p.size)} · ${p.targetTypes.join(', ')}</div>
-          </div>
-          <div class="row">
-            <button class="btn sm" data-view-plugin="${esc(p.id)}">View</button>
-            ${canManage ? `
-            <button class="btn sm" data-edit-plugin="${esc(p.id)}">Edit</button>
-            <button class="btn sm" data-distribute-plugin="${esc(p.id)}">Distribute</button>
-            <button class="btn sm danger" data-delete-plugin="${esc(p.id)}">Delete</button>
-            ` : ''}
-          </div>
-        </div>
-      </div>
-    `).join('');
-
-    // Add event listeners
-    $$('[data-view-plugin]').forEach(btn => {
-      btn.addEventListener('click', () => showPluginInfo(btn.dataset.viewPlugin));
-    });
-    if (canManage) {
-      $$('[data-edit-plugin]').forEach(btn => {
-        btn.addEventListener('click', () => showEditPluginModal(btn.dataset.editPlugin));
-      });
-      $$('[data-distribute-plugin]').forEach(btn => {
-        btn.addEventListener('click', () => distributePlugin(btn.dataset.distributePlugin));
-      });
-      $$('[data-delete-plugin]').forEach(btn => {
-        btn.addEventListener('click', () => deletePlugin(btn.dataset.deletePlugin));
-      });
-    }
-  } catch (e) {
-    console.error('Failed to load required plugins:', e);
+    if (!hit || hit.size > 1 << 20) return null;
+    const lh = new DataView(await file.slice(hit.local, hit.local + 30).arrayBuffer());
+    const start = hit.local + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
+    let blob = file.slice(start, start + hit.size);
+    if (hit.method === 8) {
+      if (typeof DecompressionStream === 'undefined') return null;
+      blob = await new Response(blob.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
+    } else if (hit.method !== 0) return null;
+    const text = await blob.text();
+    const field = (k) => {
+      const m = new RegExp(`^${k}\\s*:\\s*(.*)$`, 'm').exec(text);
+      return m ? m[1].replace(/\s+#.*$/, '').trim().replace(/^['"]|['"]$/g, '') : '';
+    };
+    return { name: field('name'), version: field('version'), description: field('description') };
+  } catch {
+    return null;
   }
 }
 
-function showAddPluginModal() {
-  const { root, close } = openModal(`
-    <h2>Add Required Plugin</h2>
-    <form id="add-plugin-form" class="stack">
-      <label class="field">Title
-        <input type="text" name="title" placeholder="e.g., EssentialsX" required>
-      </label>
-      <label class="field">Description
-        <textarea name="description" rows="3" placeholder="Describe what this plugin does..."></textarea>
-      </label>
-      <label class="field">JAR file
-        <input type="file" name="jarFile" accept=".jar" required>
-      </label>
-      <label class="check"><input type="checkbox" name="locked" checked> Lock plugin (cannot be removed/disabled by customers)</label>
-      <label class="field">Target server types
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <label class="check"><input type="checkbox" name="targetType" value="paper" checked> Paper</label>
-          <label class="check"><input type="checkbox" name="targetType" value="spigot" checked> Spigot</label>
-          <label class="check"><input type="checkbox" name="targetType" value="purpur" checked> Purpur</label>
-          <label class="check"><input type="checkbox" name="targetType" value="folia"> Folia</label>
-          <label class="check"><input type="checkbox" name="targetType" value="craftbukkit" checked> CraftBukkit</label>
-        </div>
-      </label>
-      <div class="modal-actions">
-        <button type="button" data-close>Cancel</button>
-        <button type="submit" class="btn primary">Add Plugin</button>
-      </div>
-    </form>
-  `);
-
-  $('#add-plugin-form').addEventListener('submit', async (e) => {
+/** A drop area for one .jar; onFile(file, pluginYml) runs when one is picked. */
+function mpJarPicker(root, onFile) {
+  const dz = $('.mp-drop', root);
+  const input = $('input[type=file]', dz);
+  const pick = async (f) => {
+    if (!f) return;
+    if (!/\.jar$/i.test(f.name)) return toast('Pick a .jar file.', 'error');
+    if (f.size > 50 * 1024 * 1024) return toast('Plugins can be up to 50 MB.', 'error');
+    const yml = await mpReadPluginYml(f);
+    dz.classList.add('has-file');
+    $('.mp-drop-text', dz).innerHTML = `${ic('check')} <b>${esc(f.name)}</b> <span class="muted">· ${fmtSize(f.size)}${yml && yml.name ? ` · plugin.yml: ${esc(yml.name)} ${esc(yml.version)}` : ''}</span>`;
+    onFile(f, yml);
+  };
+  dz.addEventListener('dragover', (e) => (e.preventDefault(), dz.classList.add('over')));
+  dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+  dz.addEventListener('drop', (e) => {
     e.preventDefault();
-    const form = e.target;
-    const file = form.jarFile.files[0];
-    if (!file) return toast('Please select a JAR file', 'error');
+    dz.classList.remove('over');
+    pick(e.dataTransfer.files[0]);
+  });
+  input.addEventListener('change', () => pick(input.files[0]));
+}
+const MP_DROP = `<div class="mp-drop"><input type="file" accept=".jar" hidden id="mp-file">
+  <div class="mp-drop-text">${ic('upload')} Drop a <b>.jar</b> here or <label for="mp-file">choose a file</label> <span class="muted">(up to 50 MB)</span></div></div>`;
 
-    const formData = new FormData();
-    formData.append('jarFile', file);
-    formData.append('title', form.title.value.trim());
-    formData.append('description', form.description.value.trim());
-    formData.append('locked', form.locked.checked);
-    formData.append('targetTypes', JSON.stringify(
-      $$('[name="targetType"]:checked').map(cb => cb.value)
-    ));
+const mpTypePicks = (types, picked) =>
+  `<div class="row" style="flex-wrap:wrap;gap:6px">${types.map((t) => `<label class="tag-pick"><input type="checkbox" name="type" value="${esc(t.id)}" ${picked.includes(t.id) ? 'checked' : ''}> ${esc(t.label)}</label>`).join('')}</div>
+   <div class="hint small" style="margin:4px 0 0">None picked = every Bukkit-family server.</div>`;
 
-    try {
-      await api('POST', '/api/admin/required-plugins', formData);
-      toast('Plugin added successfully!');
-      close();
-      loadRequiredPlugins();
-    } catch (e) {
-      toast(e.message, 'error');
+function mpAddModal(types, reload) {
+  const { root, close } = openModal(`
+    <h2>${ic('plus')} Add a managed plugin</h2>
+    <form id="mp-add-form" class="stack">
+      ${MP_DROP}
+      <div class="grid2">
+        <label class="field">Name <input type="text" name="name" maxlength="60" placeholder="Read from plugin.yml" required></label>
+        <label class="field">Version <input type="text" name="version" maxlength="40" placeholder="Read from plugin.yml"></label>
+      </div>
+      <label class="field">Description <textarea name="description" rows="2" maxlength="500" placeholder="What it does (owners see this on their Plugins tab)"></textarea></label>
+      <div class="mp-field"><span>Server types</span>${mpTypePicks(types, [])}</div>
+      <label class="check"><input type="checkbox" name="locked" checked> <span><b>Locked</b><br><span class="muted small">Owners can't remove, turn off or replace it, and it's put back if it goes missing.</span></span></label>
+      <label class="check"><input type="checkbox" name="autoInstall" checked> <span><b>Install automatically</b><br><span class="muted small">On every matching server now and on new ones. Off: only when you press Push now.</span></span></label>
+      <label class="field">Notes for staff (optional) <textarea name="notes" rows="2" maxlength="1000" placeholder="Why we run it, config tips, ..."></textarea></label>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" disabled>Add plugin</button></div>
+    </form>`);
+  const form = $('#mp-add-form', root);
+  let file = null;
+  mpJarPicker(root, (f, yml) => {
+    file = f;
+    if (yml) {
+      if (yml.name && !form.name.value) form.name.value = yml.name;
+      if (yml.version) form.version.value = yml.version;
+      if (yml.description && !form.description.value) form.description.value = yml.description;
     }
+    if (!form.name.value) form.name.value = f.name.replace(/\.jar$/i, '');
+    $('[type=submit]', form).disabled = false;
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!file) return toast('Pick the plugin .jar first.', 'error');
+    mpBusy($('[type=submit]', form), async () => {
+      const qs = new URLSearchParams({
+        filename: file.name,
+        name: form.name.value.trim(),
+        version: form.version.value.trim(),
+        description: form.description.value.trim(),
+        notes: form.notes.value.trim(),
+        locked: form.locked.checked ? '1' : '0',
+        autoInstall: form.autoInstall.checked ? '1' : '0',
+        types: $$('[name=type]:checked', form).map((c) => c.value).join(','),
+      });
+      const p = await api('POST', `/api/admin/managed-plugins?${qs}`, file);
+      toast(`${p.name} added${p.autoInstall ? ': servers get it within a minute' : ''}.`);
+      close();
+      await reload();
+    });
   });
 }
 
-async function showPluginInfo(id) {
-  try {
-    const plugins = await api('GET', '/api/admin/required-plugins');
-    const plugin = plugins.find(p => p.id === id);
-    if (!plugin) return toast('Plugin not found', 'error');
-
-    const { close } = openModal(`
-      <h2>${esc(plugin.title)}</h2>
-      <div class="card stack">
-        <table>
-          <tr><td class="muted">File</td><td><code>${esc(plugin.filename)}</code></td></tr>
-          <tr><td class="muted">Size</td><td>${fmtSize(plugin.size)}</td></tr>
-          <tr><td class="muted">SHA256</td><td><code class="small">${esc(plugin.hash)}</code></td></tr>
-          <tr><td class="muted">Target types</td><td>${plugin.targetTypes.join(', ')}</td></tr>
-          <tr><td class="muted">Locked</td><td>${plugin.locked ? 'Yes' : 'No'}</td></tr>
-          <tr><td class="muted">Uploaded</td><td>${new Date(plugin.uploadedAt).toLocaleString()}</td></tr>
-          <tr><td class="muted">Uploaded by</td><td>${esc(plugin.uploadedBy)}</td></tr>
-        </table>
-        ${plugin.description ? `<div style="margin-top:12px"><p class="muted" style="margin:0">Description</p><p>${esc(plugin.description)}</p></div>` : ''}
-      </div>
-      <div class="modal-actions"><button class="btn primary" data-close>Close</button></div>
-    `);
-  } catch (e) {
-    toast(e.message, 'error');
-  }
-}
-
-async function showEditPluginModal(id) {
-  try {
-    const plugins = await api('GET', '/api/admin/required-plugins');
-    const plugin = plugins.find(p => p.id === id);
-    if (!plugin) return toast('Plugin not found', 'error');
-
-    const { root, close } = openModal(`
-      <h2>Edit Required Plugin</h2>
-      <form id="edit-plugin-form" class="stack">
-        <label class="field">Title
-          <input type="text" name="title" value="${esc(plugin.title)}" required>
-        </label>
-        <label class="field">Description
-          <textarea name="description" rows="3">${esc(plugin.description)}</textarea>
-        </label>
-        <label class="check"><input type="checkbox" name="locked" ${plugin.locked ? 'checked' : ''}> Lock plugin (cannot be removed/disabled by customers)</label>
-        <label class="field">Target server types
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-            <label class="check"><input type="checkbox" name="targetType" value="paper" ${plugin.targetTypes.includes('paper') ? 'checked' : ''}> Paper</label>
-            <label class="check"><input type="checkbox" name="targetType" value="spigot" ${plugin.targetTypes.includes('spigot') ? 'checked' : ''}> Spigot</label>
-            <label class="check"><input type="checkbox" name="targetType" value="purpur" ${plugin.targetTypes.includes('purpur') ? 'checked' : ''}> Purpur</label>
-            <label class="check"><input type="checkbox" name="targetType" value="folia" ${plugin.targetTypes.includes('folia') ? 'checked' : ''}> Folia</label>
-            <label class="check"><input type="checkbox" name="targetType" value="craftbukkit" ${plugin.targetTypes.includes('craftbukkit') ? 'checked' : ''}> CraftBukkit</label>
-          </div>
-        </label>
-        <div class="modal-actions">
-          <button type="button" data-close>Cancel</button>
-          <button type="submit" class="btn primary">Save Changes</button>
-        </div>
-      </form>
-    `);
-
-    $('#edit-plugin-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const form = e.target;
-
-      try {
-        await api('PUT', `/api/admin/required-plugins/${id}`, {
-          title: form.title.value.trim(),
-          description: form.description.value.trim(),
-          locked: form.locked.checked,
-          targetTypes: $$('[name="targetType"]:checked').map(cb => cb.value),
-        });
-        toast('Plugin updated successfully!');
-        close();
-        loadRequiredPlugins();
-      } catch (e) {
-        toast(e.message, 'error');
-      }
+function mpVersionModal(p, reload) {
+  const { root, close } = openModal(`
+    <h2>${ic('upload')} New version of ${esc(p.name)}</h2>
+    <p class="muted" style="margin-top:0">Servers have <b>${p.version ? `v${esc(p.version)}` : 'the current build'}</b> (<code>${esc(p.filename)}</code>).
+      The new build replaces it on every server within a minute${p.locked ? '' : ' (and on servers where the owner removed the old one)'}.
+      ${p.builtIn ? 'It must be the Tree Host staff plugin (<code>name: TreeHostStaff</code> in plugin.yml).' : ''}</p>
+    <form id="mp-ver-form" class="stack">
+      ${MP_DROP}
+      <label class="field">Version <input type="text" name="version" maxlength="40" placeholder="Read from plugin.yml"></label>
+      ${p.builtIn ? '' : '<label class="check hidden" id="mp-rename"><input type="checkbox" name="rename" checked> <span>Use the new file name <code id="mp-newname"></code> on servers (the old file is removed)</span></label>'}
+      <label class="field">What changed (optional) <textarea name="notes" rows="3" maxlength="1000" placeholder="Release notes for staff"></textarea></label>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary" disabled>Upload and roll out</button></div>
+    </form>`);
+  const form = $('#mp-ver-form', root);
+  let file = null;
+  mpJarPicker(root, (f, yml) => {
+    file = f;
+    if (yml && yml.version) form.version.value = yml.version;
+    if (yml && yml.name && p.builtIn && yml.name !== 'TreeHostStaff') toast(`That jar is "${yml.name}", not TreeHostStaff.`, 'error');
+    const rn = $('#mp-rename', root);
+    if (rn) {
+      rn.classList.toggle('hidden', f.name === p.filename);
+      $('#mp-newname', root).textContent = f.name;
+    }
+    $('[type=submit]', form).disabled = false;
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!file) return toast('Pick the new .jar first.', 'error');
+    mpBusy($('[type=submit]', form), async () => {
+      const qs = new URLSearchParams({ version: form.version.value.trim(), notes: form.notes.value.trim() });
+      if (form.rename && form.rename.checked && file.name !== p.filename) qs.set('filename', file.name);
+      const r = await api('POST', `/api/admin/managed-plugins/${encodeURIComponent(p.id)}/jar?${qs}`, file);
+      toast(`${r.name} ${r.version ? `v${r.version} ` : ''}is rolling out to servers.`);
+      close();
+      await reload();
     });
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+  });
 }
 
-async function distributePlugin(id) {
-  if (!confirm('Distribute this plugin to all matching servers? This may take a moment.')) return;
-
-  try {
-    const result = await api('POST', `/api/admin/required-plugins/${id}/distribute`);
-    toast(`Distributed to ${result.distributed} servers${result.failed > 0 ? ` (${result.failed} failed)` : ''}`);
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+function mpSettingsModal(p, types, reload) {
+  const { root, close } = openModal(`
+    <h2>${ic('sliders')} ${esc(p.name)} settings</h2>
+    <form id="mp-set-form" class="stack">
+      <div class="grid2">
+        <label class="field">Name <input type="text" name="name" maxlength="60" value="${esc(p.name)}" required></label>
+        <label class="field">Version label <input type="text" name="version" maxlength="40" value="${esc(p.version)}"></label>
+      </div>
+      <label class="field">Description <textarea name="description" rows="2" maxlength="500">${esc(p.description)}</textarea></label>
+      <div class="mp-field"><span>Server types</span>${mpTypePicks(types, p.serverTypes)}</div>
+      <label class="check"><input type="checkbox" name="locked" ${p.locked ? 'checked' : ''}> <span><b>Locked</b><br><span class="muted small">Owners can't remove, turn off or replace it, and it's put back if it goes missing.</span></span></label>
+      <label class="check"><input type="checkbox" name="autoInstall" ${p.autoInstall ? 'checked' : ''}> <span><b>Install automatically</b><br><span class="muted small">Off: only installed when you press Push now.</span></span></label>
+      <label class="check"><input type="checkbox" name="paused" ${p.paused ? 'checked' : ''}> <span><b>Paused</b><br><span class="muted small">Not installed or enforced anywhere. Copies already on servers stay, and owners can remove them.</span></span></label>
+      <label class="field">Notes for staff <textarea name="notes" rows="3" maxlength="1000">${esc(p.notes || '')}</textarea></label>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn primary">Save</button></div>
+    </form>`);
+  const form = $('#mp-set-form', root);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    mpBusy($('[type=submit]', form), async () => {
+      await api('PUT', `/api/admin/managed-plugins/${encodeURIComponent(p.id)}`, {
+        name: form.name.value.trim(),
+        version: form.version.value.trim(),
+        description: form.description.value.trim(),
+        notes: form.notes.value.trim(),
+        locked: form.locked.checked,
+        autoInstall: form.autoInstall.checked,
+        paused: form.paused.checked,
+        serverTypes: $$('[name=type]:checked', form).map((c) => c.value),
+      });
+      toast('Saved.');
+      close();
+      await reload();
+    });
+  });
 }
 
-async function deletePlugin(id) {
-  if (!confirm('Delete this required plugin? This will remove the JAR file but will not remove it from existing servers.')) return;
+function mpRemoveModal(p, reload) {
+  const { root, close } = openModal(`
+    <h2>${ic('trash')} Stop managing ${esc(p.name)}?</h2>
+    <p class="muted" style="margin-top:0">Tree Host stops installing and enforcing it. What should happen to the copies on ${p.coverage.total} server${p.coverage.total === 1 ? '' : 's'}?</p>
+    <form id="mp-rm-form" class="stack">
+      <label class="check"><input type="radio" name="purge" value="0" checked> <span><b>Leave them</b><br><span class="muted small">They become the owners' own plugin: they can keep or delete it.</span></span></label>
+      <label class="check"><input type="radio" name="purge" value="1"> <span><b>Delete them from every server too</b><br><span class="muted small">Running servers keep it loaded until their next restart.</span></span></label>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button type="submit" class="btn danger">Remove</button></div>
+    </form>`);
+  const form = $('#mp-rm-form', root);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    mpBusy($('[type=submit]', form), async () => {
+      const purge = $('[name=purge]:checked', form).value === '1';
+      const r = await api('DELETE', `/api/admin/managed-plugins/${encodeURIComponent(p.id)}${purge ? '?purge=1' : ''}`);
+      toast(`${p.name} is no longer managed${purge ? ` (deleted ${r.removedFrom} file${r.removedFrom === 1 ? '' : 's'} from servers)` : ''}.`);
+      close();
+      await reload();
+    });
+  });
+}
 
-  try {
-    await api('DELETE', `/api/admin/required-plugins/${id}`);
-    toast('Plugin deleted successfully!');
-    loadRequiredPlugins();
-  } catch (e) {
-    toast(e.message, 'error');
-  }
+async function mpDetailsModal(id, { typeLabel, canManage, reload }) {
+  const p = await api('GET', `/api/admin/managed-plugins/${encodeURIComponent(id)}`).catch((e) => toast(e.message, 'error'));
+  if (!p) return;
+  let filter = 'all';
+  const row = (k, v) => `<tr><td class="muted" style="width:150px">${k}</td><td>${v}</td></tr>`;
+  const { root, close } = openModal(`
+    <h2>${ic(p.builtIn ? 'shield' : 'puzzle')} ${esc(p.name)} ${p.version ? `<span class="mp-ver">v${esc(p.version)}</span>` : ''}</h2>
+    ${p.description ? `<p style="margin-top:0">${esc(p.description)}</p>` : ''}
+    <div class="card"><table>
+      ${row('File on servers', `<code>${esc(p.filename)}</code> · ${fmtSize(p.size)}`)}
+      ${row('SHA-256', `<code class="mp-hash" title="Click to copy">${esc(p.hash || 'unknown')}</code>`)}
+      ${row('Rules', `${p.locked ? `${ic('lock')} Locked: owners can't remove it` : 'Optional: owners may remove or turn it off'}${p.paused ? ' · <b>paused</b>' : ''}${!p.builtIn && !p.autoInstall ? ' · installed only when pushed' : ''}`)}
+      ${row('Server types', p.serverTypes.length ? p.serverTypes.map((t) => esc(typeLabel(t))).join(', ') : 'Every Bukkit-family server')}
+      ${p.builtIn ? row('Source', p.source === 'uploaded' ? 'Uploaded in the Staff Console' : p.source === 'bundled' ? 'Bundled with Tree Host (<code>minecraft-plugin/TreeHostStaff.jar</code>)' : '<span class="badge red">missing</span>') : ''}
+      ${p.uploadedAt ? row('Uploaded', `${esc(new Date(p.uploadedAt).toLocaleString())}${p.uploadedBy ? ` by <b>${esc(p.uploadedBy)}</b>` : ''}`) : ''}
+      ${p.notes ? row('Notes', `<div style="white-space:pre-wrap">${esc(p.notes)}</div>`) : ''}
+    </table></div>
+    ${p.history && p.history.length ? `<div class="card" style="margin-top:12px"><h3 style="margin-bottom:8px">Earlier versions</h3><table>
+      ${p.history.map((h) => `<tr><td>${h.version ? `v${esc(h.version)}` : '<span class="muted">unnamed</span>'}</td><td class="small muted">${h.uploadedAt ? esc(new Date(h.uploadedAt).toLocaleDateString()) : 'bundled'}${h.uploadedBy ? ` · ${esc(h.uploadedBy)}` : ''}</td><td class="small"><code title="${esc(h.hash || '')}">${esc((h.hash || '').slice(0, 12))}</code></td></tr>`).join('')}
+    </table></div>` : ''}
+    <div class="card" style="margin-top:12px">
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap;margin-bottom:8px"><h3 style="margin:0">Servers (${p.servers.length})</h3>
+        <div class="row" id="mp-filter" style="flex-wrap:wrap;gap:6px"></div></div>
+      <div id="mp-servers"></div>
+    </div>
+    <div class="modal-actions">
+      <a class="btn" href="/api/admin/managed-plugins/${encodeURIComponent(p.id)}/jar">${ic('download')} Download jar</a>
+      ${canManage && p.builtIn && p.canRevert ? `<button class="btn danger" id="mp-revert">Go back to the bundled build</button>` : ''}
+      <span style="flex:1"></span>
+      <button class="btn primary" data-close>Close</button>
+    </div>`);
+  const drawServers = () => {
+    const counts = p.servers.reduce((a, s) => ((a[s.state] = (a[s.state] || 0) + 1), a), {});
+    $('#mp-filter', root).innerHTML = ['all', ...Object.keys(MP_STATES).filter((k) => counts[k])]
+      .map((k) => `<button type="button" class="chip${filter === k ? ' on' : ''}" data-f="${k}">${k === 'all' ? `All ${p.servers.length}` : `${MP_STATES[k].label} ${counts[k]}`}</button>`).join('');
+    $$('[data-f]', root).forEach((b) => b.addEventListener('click', () => ((filter = b.dataset.f), drawServers())));
+    const rows = p.servers.filter((s) => filter === 'all' || s.state === filter);
+    $('#mp-servers', root).innerHTML = rows.length
+      ? `<table><thead><tr><th>Server</th><th>Type</th><th>Status</th></tr></thead><tbody>${rows
+          .map((s) => `<tr><td><b>${esc(s.name)}</b> <span class="small muted">${esc(s.space)}${s.running ? ' · running' : ''}</span></td><td class="small">${esc(typeLabel(s.type))}</td><td><span class="badge ${MP_STATES[s.state].badge}">${MP_STATES[s.state].label}</span></td></tr>`)
+          .join('')}</tbody></table>`
+      : '<p class="muted" style="margin:0">No servers here.</p>';
+  };
+  drawServers();
+  $('.mp-hash', root).addEventListener('click', () => navigator.clipboard && navigator.clipboard.writeText(p.hash).then(() => toast('Hash copied.')));
+  $('#mp-revert', root)?.addEventListener('click', (e) =>
+    mpBusy(e.currentTarget, async () => {
+      await api('DELETE', `/api/admin/managed-plugins/${encodeURIComponent(p.id)}/jar`);
+      toast('Servers are going back to the bundled staff plugin.');
+      close();
+      await reload();
+    }),
+  );
 }
