@@ -300,7 +300,7 @@ function demoBannerHtml() {
 
 function bindDemoBanner(s, root) {
   if (!s.isDemo) return;
-  $('[data-demo-cmd]', root).forEach((b) =>
+  $$('[data-demo-cmd]', root).forEach((b) =>
     b.addEventListener('click', () =>
       attempt(async () => {
         if (current()?.status !== 'running') throw new Error('Start the demo server first, then try a command.');
