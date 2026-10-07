@@ -9,6 +9,7 @@ const { URL } = require('url');
 const crypto = require('crypto');
 const { PUBLIC, DATA } = require('./paths');
 const { Manager, readPluginMeta } = require('./instances');
+const { SupportChat } = require('./support-chat');
 const { ManagedPlugins, STAFF_ID, BUKKIT_TYPES, MAX_JAR } = require('./managed-plugins');
 const { Auth } = require('./auth');
 const { Rbac, PERMISSIONS, CREATOR_PERKS } = require('./rbac');
@@ -1194,6 +1195,7 @@ async function enforceAccountAction(a, user, byName, { email = true } = {}) {
     for (const s of [...manager.instances.values()]) if (s.cfg.owner === user.id && s.isCustomer) await manager.remove(s.cfg.id);
     await auth.removeUser(user.id);
     await moderation.dropInbox(user.id);
+    await supportChat.removeUser(user.id);
     for (const s2 of manager.instances.values()) if (s2.cfg.members) s2.cfg.members = s2.cfg.members.filter((m) => m.userId !== user.id);
     manager.save();
     if (user.firebaseUid) await firebase.deleteAuthUser(user.firebaseUid).catch(() => {});
@@ -2446,8 +2448,6 @@ setInterval(async () => {
     await managedPlugins.syncInstance(inst).catch(() => {});
   }
 }, 30 * 1000);
-// Demo servers made by an older version get their folder tidied (and every start puts the files back if needed).
-for (const inst of manager.instances.values()) if (inst.cfg.isDemo) setUpDemoServer(inst).catch((e) => console.error(`[demo server] ${e.message}`));
 
 /** True if Minecraft version a is older than b (1.20.4 < 1.21.1 < 26.2). Snapshots and unknown formats: false. */
 function olderMinecraft(a, b) {
@@ -3783,6 +3783,158 @@ function banner(lines) {
   console.log('  ' + '='.repeat(width));
 }
 
+// ---------- live support chat (src/support-chat.js) ----------
+// Customers chat from the bubble in the dashboard; staff with support.chat answer in Staff Console → Support chat.
+// Every change goes out instantly over /api/events as a "chat" event to the customer and to every agent online.
+
+const supportChat = new SupportChat();
+const canAnswer = (u) => TEAM && rbac.can(u, 'support.chat');
+const chatEmailed = new Map(); // chat id -> when we last emailed the customer about a reply
+
+/** Sends one live event to the people it concerns (signed-in users whose id matches, or who can answer chats). */
+function chatEvent(c, data, { toCustomer = true, toAgents = true } = {}) {
+  const msg = `event: chat\ndata: ${JSON.stringify({ chatId: c.id, userId: c.userId, ...data })}\n\n`;
+  for (const [res, user] of clients) {
+    if (!user) continue;
+    if ((toCustomer && user.id === c.userId) || (toAgents && canAnswer(user))) res.write(msg);
+  }
+}
+const agentsOnline = () => {
+  const ids = new Set();
+  for (const user of clients.values()) if (user && canAnswer(user)) ids.add(user.id);
+  return ids.size;
+};
+const customerOnline = (userId) => [...clients.values()].some((u) => u && u.id === userId);
+
+/** A conversation the signed-in person may see: their own, or any if they answer chats. */
+function chatFor(req, chatId) {
+  const c = supportChat.get(chatId);
+  if (c.userId !== req.user.id && !canAnswer(req.user)) throw httpError(404, 'That conversation no longer exists.');
+  return c;
+}
+const sideOf = (req, c) => (c.userId === req.user.id ? 'customer' : 'staff');
+
+/** Staff replied while the customer is away: one email (at most every 15 minutes per chat) so they come back. */
+async function emailReply(req, c, m) {
+  const u = auth.userById(c.userId);
+  if (!u || !u.email || !mail.enabled() || customerOnline(u.id)) return;
+  if (Date.now() - (chatEmailed.get(c.id) || 0) < 15 * 60000) return;
+  chatEmailed.set(c.id, Date.now());
+  const base = auth.settings.baseUrl || publicOrigin(req);
+  await mail.send(u.email, 'Tree Host support replied to your chat', [
+    `Hi ${u.username},`,
+    `${m.name} from Tree Host support replied to "${c.subject}":`,
+    `"${m.text.length > 400 ? `${m.text.slice(0, 400)}…` : m.text}"`,
+  ], { text: 'Open the chat', url: `${base}/dashboard?chat=${c.id}` }).catch((e) => console.error(`[chat] reply email failed: ${e.message}`));
+}
+
+// Customers (and anyone with an account) ---------------------------------------------------------
+
+route('GET', '/api/support/chats', (req) => {
+  if (!TEAM) throw httpError(400, 'Support chat needs accounts.');
+  return { agentsOnline: agentsOnline(), chats: supportChat.forUser(req.user.id).map((c) => supportChat.summary(c, 'customer')) };
+});
+
+route('POST', '/api/support/chats', async (req) => {
+  if (!TEAM) throw httpError(400, 'Support chat needs accounts.');
+  const b = await readJson(req);
+  const serverId = b.serverId && manager.instances.get(b.serverId) && canView(req.user, manager.instances.get(b.serverId)) ? b.serverId : null;
+  const c = await supportChat.create(req.user, { text: b.text, subject: b.subject, serverId });
+  chatEvent(c, { type: 'new', chat: supportChat.summary(c, 'staff') }, { toCustomer: false });
+  activity.log('people', req.user.username, `started a support chat: "${c.subject}"`);
+  return supportChat.full(c, 'customer');
+});
+
+route('GET', '/api/support/chats/:id', (req, res, p) => {
+  const c = chatFor(req, p.id);
+  return { ...supportChat.full(c, sideOf(req, c)), agentsOnline: agentsOnline() };
+});
+
+route('POST', '/api/support/chats/:id/messages', async (req, res, p) => {
+  const c = chatFor(req, p.id);
+  const side = sideOf(req, c);
+  if (c.status === 'closed' && side === 'customer') throw httpError(400, 'This chat is closed. Start a new one if you need more help.');
+  const staff = side === 'staff' ? { roleLabel: rbac.role(req.user.role).label } : null;
+  const wasUnassigned = !c.assignedTo;
+  const m = await supportChat.post(c, req.user, (await readJson(req)).text, staff);
+  chatEvent(c, { type: 'message', message: m, chat: supportChat.summary(c, 'staff') });
+  if (staff) {
+    if (wasUnassigned) audit(req, `answered the support chat of ${c.username}`);
+    emailReply(req, c, m);
+  }
+  return m;
+});
+
+route('POST', '/api/support/chats/:id/read', async (req, res, p) => {
+  const c = chatFor(req, p.id);
+  const side = sideOf(req, c);
+  await supportChat.read(c, side);
+  chatEvent(c, { type: 'read', side, at: Date.now() });
+  return { ok: true };
+});
+
+/** "is typing…" (not stored). */
+route('POST', '/api/support/chats/:id/typing', (req, res, p) => {
+  const c = chatFor(req, p.id);
+  const side = sideOf(req, c);
+  chatEvent(c, { type: 'typing', side, name: req.user.username }, { toCustomer: side === 'staff', toAgents: true });
+  return { ok: true };
+});
+
+route('POST', '/api/support/chats/:id/close', async (req, res, p) => {
+  const c = chatFor(req, p.id);
+  const m = await supportChat.close(c, sideOf(req, c) === 'staff' ? `${req.user.username} (Tree Host support)` : req.user.username);
+  if (m) chatEvent(c, { type: 'message', message: m, chat: supportChat.summary(c, 'staff') });
+  return supportChat.full(c, sideOf(req, c));
+});
+
+// Staff ------------------------------------------------------------------------------------------
+
+route('GET', '/api/admin/support/chats', (req, res, p, q) => {
+  const status = q.get('status') || 'active';
+  const list = supportChat.chats
+    .filter((c) => (status === 'all' ? true : status === 'closed' ? c.status === 'closed' : c.status !== 'closed'))
+    .sort((a, b) => (b.status === 'open') - (a.status === 'open') || b.updatedAt - a.updatedAt) // waiting for an answer first
+    .slice(0, 200)
+    .map((c) => supportChat.summary(c, 'staff'));
+  return { agentsOnline: agentsOnline(), chats: list };
+}, { perm: 'support.chat' });
+
+/** Who the customer is, next to the conversation: plans, servers, email. */
+route('GET', '/api/admin/support/chats/:id/customer', (req, res, p) => {
+  const c = supportChat.get(p.id);
+  const u = auth.userById(c.userId);
+  if (!u) return { deleted: true, username: c.username };
+  const servers = [...manager.instances.values()].filter((i) => i.cfg.owner === u.id).map((i) => ({ id: i.cfg.id, name: i.cfg.name, type: i.provider.label, version: i.cfg.version, running: !!i.proc || !!(i.demo && i.demo.alive) }));
+  return {
+    id: u.id,
+    username: u.username,
+    email: can(req.user, 'users.view') ? u.email || '' : '',
+    role: u.role,
+    roleLabel: rbac.role(u.role).label,
+    mcName: u.mcName || '',
+    createdAt: u.createdAt || null,
+    restriction: u.restriction ? u.restriction.type : null,
+    plans: billing.forUser(u.id).filter((s) => billing.usable(s)).map((s) => s.planName),
+    servers,
+    otherChats: supportChat.forUser(u.id).filter((x) => x.id !== c.id).length,
+  };
+}, { perm: 'support.chat' });
+
+route('POST', '/api/admin/support/chats/:id/claim', async (req, res, p) => {
+  const c = supportChat.get(p.id);
+  const m = await supportChat.claim(c, req.user);
+  if (m) chatEvent(c, { type: 'message', message: m, chat: supportChat.summary(c, 'staff') });
+  return supportChat.full(c, 'staff');
+}, { perm: 'support.chat' });
+
+route('POST', '/api/admin/support/chats/:id/reopen', async (req, res, p) => {
+  const c = supportChat.get(p.id);
+  const m = await supportChat.reopen(c, `${req.user.username} (Tree Host support)`);
+  if (m) chatEvent(c, { type: 'message', message: m, chat: supportChat.summary(c, 'staff') });
+  return supportChat.full(c, 'staff');
+}, { perm: 'support.chat' });
+
 async function main() {
   console.log('  Starting Tree Host...');
   if (TEAM) {
@@ -3793,6 +3945,7 @@ async function main() {
     auth.allowFirstAdmin = !auth.adminEmails.size && (!HOSTED || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/'));
     await billing.init();
     await moderation.init();
+    await supportChat.load();
     setInterval(() => expireActions().catch((e) => console.error(`Moderation check failed: ${e.message}`)), 60 * 1000);
     setInterval(() => billing.tick().catch((e) => console.error(`Billing check failed: ${e.message}`)), 5 * 60 * 1000);
     manager.defaultOwner = () => (auth.firstAdmin() || {}).id || null;
@@ -3800,6 +3953,8 @@ async function main() {
   await activity.init();
   await manager.init();
   for (const inst of manager.instances.values()) if (inst.cfg.sleeping && !inst.proc) startWaker(inst).catch(() => {});
+  // The demo server is set up again on every start (fresh settings, and demos made by older versions get tidied).
+  for (const inst of manager.instances.values()) if (inst.cfg.isDemo) setUpDemoServer(inst).catch((e) => console.error(`[demo server] ${e.message}`));
   const url = `http://localhost:${PORT}`;
   server.on('error', (e) => {
     if (e.code === 'EADDRINUSE') {

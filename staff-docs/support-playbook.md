@@ -17,11 +17,25 @@ Console, outside the team.
 | **billing@treehost.online** | Payments, failed charges, refunds, plan changes | Admins (Support can read and pass on) |
 | **promotion@treehost.online** | Creators, partnerships, sponsorships | Owner / Admins |
 | **daniel@treehost.online** | The Owner's own inbox. Not for customers. | Owner |
+| **Live chat** (bubble in the dashboard) | Signed-in customers, in real time | Anyone with **Answer support chats** (Support and up) |
 | **Discord tickets** (#get-help) | Same as support@ | Support and up |
 
 Reply from the inbox the request came to, so the customer's thread stays in one place.
 
 ---
+
+### Live chat
+
+Customers press the green chat bubble in the bottom-right of their dashboard. Answer in **Staff Console → Support chat**:
+
+- New chats show up instantly (with a count in the menu and a pop-up), **waiting** ones first. You see the customer's
+  plans and servers next to the chat, and which server it's about if they picked one.
+- **Claim** a chat so the team knows it's yours (replying claims it too). **Take over** moves someone else's to you.
+- Enter sends, Shift+Enter starts a new line. The customer sees when you're typing.
+- **Close** it when you're done; they can start a new one any time, and you can **Reopen** it.
+- If the customer has left the dashboard when you reply, they get an email with your message and a link back.
+- The bubble says we're online whenever someone who can answer chats has Tree Host open (dashboard or Staff Console), so keep it open on
+  your shift and close it when you're off.
 
 ## 1. Check who you're talking to
 

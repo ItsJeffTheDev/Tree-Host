@@ -2577,6 +2577,7 @@ function connectEvents() {
   es.addEventListener('status', (e) => applyStatus(JSON.parse(e.data)));
   es.addEventListener('removed', (e) => applyRemoved(JSON.parse(e.data).id));
   es.addEventListener('activity', (e) => onActivity(JSON.parse(e.data)));
+  es.addEventListener('chat', (e) => onSupportChatEvent(JSON.parse(e.data)));
   es.addEventListener('log', (e) => {
     const { id, lines } = JSON.parse(e.data);
     if (id === state.selected && state.log.id === id) appendLines(lines);
@@ -2691,6 +2692,7 @@ async function init() {
   }
   await refreshSystem();
   connectEvents();
+  initSupportChat();
   // Back from Stripe Checkout, from a billing email, or right after signing up.
   if (params.has('billing') || params.has('welcome')) history.replaceState(null, '', location.pathname);
   if (params.get('billing') === 'success') {

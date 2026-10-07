@@ -24,6 +24,7 @@ const PERMISSIONS = [
   { id: 'moderation.ban', group: 'Moderation', label: 'Ban', description: 'Ban accounts and servers, and lift bans.' },
   { id: 'moderation.appeals', group: 'Moderation', label: 'Decide appeals', description: 'Accept or deny appeals from customers.' },
   { id: 'messages.send', group: 'Moderation', label: 'Message customers', description: "Send a message to someone's Tree Host inbox (and email)." },
+  { id: 'support.chat', group: 'Support', label: 'Answer support chats', description: 'Staff Console → Support chat: see and answer live chats from customers, claim and close them.' },
   { id: 'promos.manage', group: 'Billing', label: 'Manage promo codes', description: 'Create and disable codes for free plans (creators, partners, giveaways).' },
   { id: 'activity.viewAll', group: 'Platform', label: 'See all activity', description: 'Including sign-ups and payments, not just server events.' },
   { id: 'audit.view', group: 'Platform', label: 'See the audit log', description: 'Every staff action: who did what, when.' },
@@ -67,7 +68,7 @@ const DEFAULT_ROLES = [
   },
   {
     id: 'staff', label: 'Support', level: 40, description: "Helps customers: sees any server and its console, starts and stops it, sees accounts and plans. Can't open customers' files or settings, or delete anything.",
-    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'users.view', 'billing.view', 'moderation.view', 'moderation.act', 'messages.send'],
+    permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'users.view', 'billing.view', 'moderation.view', 'moderation.act', 'messages.send', 'support.chat'],
   },
   {
     id: 'youtuber', label: 'YouTuber', level: 10, customer: true,

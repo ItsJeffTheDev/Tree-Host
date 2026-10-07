@@ -6,6 +6,7 @@
 const CONSOLE_SECTIONS = [
   { id: 'overview', icon: 'chart', label: 'Overview', perm: 'console.access', render: consoleOverview },
   { id: 'servers', icon: 'server', label: 'Servers', perm: 'servers.viewAll', render: consoleServers },
+  { id: 'chat', icon: 'chat', label: 'Support chat', perm: 'support.chat', render: (b, sub) => consoleSupportChat(b, sub) },
   { id: 'people', icon: 'users', label: 'People', perm: 'users.view', render: (b) => adminPeople(b) },
   { id: 'billing', icon: 'card', label: 'Billing', perm: 'billing.view', render: (b) => adminBilling(b) },
   { id: 'plans', icon: 'box', label: 'Plans', perm: 'billing.manage', render: (b) => adminPlans(b) },
@@ -64,6 +65,7 @@ function initConsole() {
     <a class="help-link" href="help.html" target="_blank">${ic('book')} Customer help &amp; guides</a>
     <div id="user-box" class="user-box"></div>`;
   renderUserBox();
+  startAgentChatEvents(); // the Support chat count in the menu stays live on every page
   const show = () => {
     $('#modal-root').innerHTML = ''; // a dialog from the previous section must not stay open over this one
     const [id, sub] = location.hash.slice(1).split('/'); // e.g. #actions/TH-000012
