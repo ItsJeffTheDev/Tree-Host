@@ -88,6 +88,7 @@ async function consoleOverview(body) {
   ];
   if (d.people) {
     cards.push(stat(d.people.customer || 0, 'customers'));
+    if (d.people.youtuber) cards.push(stat(d.people.youtuber, 'YouTubers'));
     const staff = ['owner', 'admin', 'developer', 'staff'].reduce((n, r) => n + (d.people[r] || 0), 0);
     cards.push(stat(staff, 'staff'));
   }

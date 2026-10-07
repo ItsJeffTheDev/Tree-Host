@@ -10,9 +10,14 @@ your role has the permission it needs, and the server checks the same permission
 | **Admin** | People who run the business with you | People, billing, plans, promo codes, settings, every server (files and settings too). No machine-level settings, no role editing. |
 | **Developer** | People who build and fix Tree Host | Sees every server and its console, starts and stops them, system info, audit log. Can't open customers' files or settings, delete servers, or manage money or people. |
 | **Support** | Helpers | Sees any server and its console, starts and stops it, sees accounts and plans, warns and suspends. Can't open customers' files or settings, delete anything or change billing. |
+| **YouTuber** | Content creators you work with | A customer account with a red **YouTuber** badge on their profile and on their servers in the public server list. No staff powers by default. |
 | **Customer** | Everyone who signs up | Buys plans and fully manages **their own** servers. Can't see anyone else's. |
 
 Staff can have their own servers too: give yourself a free plan in **Staff Console → People → More**.
+
+To make someone a YouTuber, pick **YouTuber** in their Role dropdown in **Staff Console → People** (Admins and Owners
+can). Pair it with a free plan or a creator promo code if you're sponsoring them. If you want them to have any extra
+powers, the Owner can tick permissions for the YouTuber role in **Roles & permissions**.
 
 ---
 

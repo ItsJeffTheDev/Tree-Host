@@ -113,7 +113,7 @@ function openTakeAction(opts) {
         <textarea name="notes" rows="3" placeholder="e.g. Reported in ticket #42. CPU at 100% for 6 hours, found xmrig in /plugins."></textarea></label>
       ${EVIDENCE_FIELD}
       ${(() => {
-        const linked = target === 'account' ? (opts.user.linked || []).filter((l) => l.role === 'customer') : [];
+        const linked = target === 'account' ? (opts.user.linked || []).filter((l) => CUSTOMER_ROLES.includes(l.role)) : [];
         return linked.length ? `<div class="linked-box">
         <label class="check"><input type="checkbox" name="includeLinked" checked>
           <span><b>Also apply to ${linked.length} linked account${linked.length === 1 ? '' : 's'}</b> (used on the same device):

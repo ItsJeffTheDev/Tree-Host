@@ -21,10 +21,11 @@ const randomToken = (bytes = 32) => crypto.randomBytes(bytes).toString('base64ur
 const httpError = (status, message, code) => Object.assign(new Error(message), { status, code });
 
 // Roles (what each may do is in rbac.js): owner runs Tree Host, admin runs the business, developer builds it,
-// staff is Support, customer is everyone who signs up.
-const ROLES = ['owner', 'admin', 'developer', 'staff', 'customer'];
+// staff is Support, customer is everyone who signs up, and a YouTuber is a customer with a creator badge.
+const ROLES = ['owner', 'admin', 'developer', 'staff', 'youtuber', 'customer'];
+const CUSTOMER_ROLES = ['youtuber', 'customer'];
 const cleanRole = (r) => (ROLES.includes(r) ? r : 'customer');
-const isStaff = (u) => !!u && u.role !== 'customer';
+const isStaff = (u) => !!u && !CUSTOMER_ROLES.includes(u.role);
 // Roles that are allowed to manage everything; the last one of the highest kind can't be removed.
 const isOwner = (u) => !!u && u.role === 'owner';
 
@@ -319,7 +320,7 @@ class Auth {
     }
     if (email !== undefined) {
       email = cleanEmail(email);
-      if (!email && user.role === 'customer') throw httpError(400, 'Enter your email address');
+      if (!email && CUSTOMER_ROLES.includes(user.role)) throw httpError(400, 'Enter your email address');
       if (email && this.users.some((u) => u !== user && u.email === email)) throw httpError(400, 'Another account already uses that email.');
       user.email = email;
     }
@@ -500,8 +501,8 @@ class Auth {
     }
     const suggested = (id.name || id.email.split('@')[0] || '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 32);
     if (!body.username) return { needsProfile: true, email: id.email, suggested };
-    if (role === 'customer' && !body.acceptTerms) throw httpError(400, 'Please accept the Terms of Service and Privacy Policy.');
-    const birthYear = role === 'customer' ? this.checkAge(body) : undefined;
+    if (CUSTOMER_ROLES.includes(role) && !body.acceptTerms) throw httpError(400, 'Please accept the Terms of Service and Privacy Policy.');
+    const birthYear = CUSTOMER_ROLES.includes(role) ? this.checkAge(body) : undefined;
     validateUsername(body.username);
     if (this.users.some((u) => u.username.toLowerCase() === String(body.username).toLowerCase())) throw httpError(400, 'That username is taken');
     if (id.email && this.users.some((u) => u.email === id.email)) {

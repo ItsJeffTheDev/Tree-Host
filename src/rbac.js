@@ -60,8 +60,15 @@ const DEFAULT_ROLES = [
     id: 'staff', label: 'Support', level: 40, description: "Helps customers: sees any server and its console, starts and stops it, sees accounts and plans. Can't open customers' files or settings, or delete anything.",
     permissions: ['console.access', 'servers.viewAll', 'servers.operate', 'users.view', 'billing.view', 'moderation.view', 'moderation.act', 'messages.send'],
   },
-  { id: 'customer', label: 'Customer', level: 0, locked: true, description: 'Everyone who signs up. Manages only their own servers.' },
+  {
+    id: 'youtuber', label: 'YouTuber', level: 10, customer: true,
+    description: 'Content creators. A customer account with a YouTuber badge on their profile and on their servers in the public list. No staff powers unless you add some here.',
+    permissions: [],
+  },
+  { id: 'customer', label: 'Customer', level: 0, locked: true, customer: true, description: 'Everyone who signs up. Manages only their own servers.' },
 ];
+/** Roles that are customers (their own servers and plans) rather than staff, whatever badge they wear. */
+const CUSTOMER_ROLES = DEFAULT_ROLES.filter((r) => r.customer).map((r) => r.id);
 
 class Rbac {
   constructor() {
@@ -126,6 +133,11 @@ class Rbac {
     return this.role(user.role).permissions.includes(permission);
   }
 
+  /** A customer account (Customer or YouTuber), not staff. */
+  isCustomer(user) {
+    return !!user && CUSTOMER_ROLES.includes(user.role);
+  }
+
   /** Staff = anyone who can open the Staff Console. */
   isStaff(user) {
     return this.can(user, 'console.access');
@@ -162,11 +174,11 @@ class Rbac {
     return {
       permissions: PERMISSIONS,
       roles: this.roles.map((r) => ({
-        id: r.id, label: r.label, level: r.level, locked: !!r.locked, description: r.description,
+        id: r.id, label: r.label, level: r.level, locked: !!r.locked, customer: !!r.customer, description: r.description,
         permissions: r.id === 'owner' ? [...PERMISSION_IDS] : r.permissions,
       })),
     };
   }
 }
 
-module.exports = { Rbac, PERMISSIONS, DEFAULT_ROLES };
+module.exports = { Rbac, PERMISSIONS, DEFAULT_ROLES, CUSTOMER_ROLES };

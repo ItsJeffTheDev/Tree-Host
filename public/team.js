@@ -11,13 +11,16 @@ function hasPerm(permission) {
   return !isTeam() || (state.me.user?.permissions || []).includes(permission);
 }
 
+/** Customer accounts: Customer, or YouTuber (a customer with a creator badge). */
+const CUSTOMER_ROLES = ['customer', 'youtuber'];
+
 function isCustomer() {
-  return isTeam() && state.me.user?.role === 'customer';
+  return isTeam() && CUSTOMER_ROLES.includes(state.me.user?.role);
 }
 
-const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', developer: 'Developer', staff: 'Support', customer: 'Customer' };
-const ROLE_BADGE = { owner: 'yellow', admin: 'green', developer: 'blue', staff: 'blue', customer: '' };
-const ROLE_OPTIONS = (selected, roles = ['customer', 'staff', 'developer', 'admin']) =>
+const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', developer: 'Developer', staff: 'Support', youtuber: 'YouTuber', customer: 'Customer' };
+const ROLE_BADGE = { owner: 'yellow', admin: 'green', developer: 'blue', staff: 'blue', youtuber: 'youtuber', customer: '' };
+const ROLE_OPTIONS = (selected, roles = ['customer', 'youtuber', 'staff', 'developer', 'admin']) =>
   roles.map((r) => `<option value="${r}" ${r === selected ? 'selected' : ''}>${ROLE_LABEL[r] || r}</option>`).join('');
 
 /**
@@ -957,7 +960,7 @@ async function adminPeople(body) {
   let q = '';
   const draw = () => {
     const list = all
-      .filter((u) => (filter === 'all' ? true : filter === 'staff' ? u.role !== 'customer' : u.role === 'customer'))
+      .filter((u) => (filter === 'all' ? true : filter === 'staff' ? !CUSTOMER_ROLES.includes(u.role) : filter === 'youtubers' ? u.role === 'youtuber' : CUSTOMER_ROLES.includes(u.role)))
       .filter((u) => !q || u.username.toLowerCase().includes(q) || (u.email || '').includes(q));
     $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
       .map(
@@ -1059,7 +1062,7 @@ async function adminPeople(body) {
   body.innerHTML = `
     <div class="row" style="margin-bottom:10px">
       <input type="search" id="ppl-q" placeholder="Search name or email" style="max-width:260px">
-      <select id="ppl-filter" style="max-width:180px"><option value="all">Everyone</option><option value="customers">Customers</option><option value="staff">Support & admins</option></select>
+      <select id="ppl-filter" style="max-width:180px"><option value="all">Everyone</option><option value="customers">Customers</option><option value="youtubers">YouTubers</option><option value="staff">Support & admins</option></select>
       <span class="muted small">${all.length} account${all.length === 1 ? '' : 's'}</span>
     </div>
     <div id="ppl-list"></div>

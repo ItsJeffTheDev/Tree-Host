@@ -517,6 +517,7 @@ details.menu > summary::-webkit-details-marker { display: none; }
 /* ---------- lifetime plan ---------- */
 .plan-card.lifetime { border: 1px solid rgba(232,194,122,.6); background: linear-gradient(160deg, rgba(232,194,122,.10), var(--panel) 55%); position: relative; }
 .plan-ribbon { font-size: 11px; font-weight: 800; letter-spacing: .4px; color: #e8c27a; text-transform: uppercase; margin-bottom: 4px; }
+.badge.youtuber { background: rgba(255,48,48,.13); border-color: rgba(255,72,72,.5); color: #ff8a8a; }
 .badge.lifetime-badge { background: rgba(232,194,122,.14); border-color: rgba(232,194,122,.55); color: #f0cf8c; }
 .lifetime-card { border: 1px solid rgba(232,194,122,.55); background: linear-gradient(135deg, rgba(232,194,122,.12), var(--panel) 60%); }
 .lifetime-kicker { font-size: 11px; font-weight: 800; letter-spacing: .6px; color: #e8c27a; }

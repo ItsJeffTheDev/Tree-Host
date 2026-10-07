@@ -477,7 +477,7 @@ async function signInCookies(req, token) {
 /** Records the browser on the account; a new link to a suspended or banned account passes the action on. */
 async function linkDevice(user, device) {
   if (!(await auth.recordDevice(user, device))) return;
-  if (user.role !== 'customer' || user.restriction) return;
+  if (!rbac.isCustomer(user) || user.restriction) return;
   // Only accounts used in this same browser pass their action on (not everything linked some other way).
   const restricted = auth.accountsOnDevice(device).filter((u) => u !== user && u.restriction && u.restriction.actionId);
   const from = restricted.find((u) => u.restriction.type === 'banned') || restricted[0];
@@ -511,7 +511,7 @@ function canView(user, inst) {
   if (!TEAM) return true;
   if (!user || !inst) return false;
   // Customers can also see the shared demo server
-  if (inst.cfg.isSharedDemo && user.role === 'customer') return true;
+  if (inst.cfg.isSharedDemo && rbac.isCustomer(user)) return true;
   return inst.cfg.owner === user.id || !!memberOf(inst, user) || can(user, 'servers.viewAll');
 }
 
@@ -698,7 +698,7 @@ route(
     const r = await auth.firebaseLogin(body, clientIp(req));
     if (!r.token) return r;
     if (r.created) {
-      activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${r.user.role}`);
+      activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${rbac.role(r.user.role).label}`);
       if (r.user.email && mail.enabled()) welcomeEmail(req, r.user).catch((e) => console.error(`[mail] welcome email failed: ${e.message}`));
     }
     sendJson(res, 200, { ok: true, created: !!r.created }, { 'Set-Cookie': await signInCookies(req, r.token) });
@@ -1002,6 +1002,7 @@ route(
     rbac.checkRoleChange(req.user, target, role);
     const before = rbac.role(target.role).label;
     const u = await auth.setRole(p.uid, role);
+    publicListCache = null; // the YouTuber badge on their listed servers
     audit(req, `changed ${u.username}'s role from ${before} to ${rbac.role(u.role).label}`);
     return auth.publicUser(u);
   },
@@ -1261,7 +1262,7 @@ route('POST', '/api/admin/actions', async (req) => {
   const evidence = Array.isArray(b.evidence) ? b.evidence.slice(0, 20) : [];
   // Accounts used in the same browser get the same action (each with its own number). Staff at or above your level are skipped.
   const linked = target === 'account' && b.includeLinked !== false && user ? auth.linkedAccounts(user) : [];
-  const linkedOk = linked.filter((u) => u.id !== req.user.id && u.role === 'customer'); // staff accounts are never included
+  const linkedOk = linked.filter((u) => u.id !== req.user.id && rbac.isCustomer(u)); // staff accounts are never included
 
   const a = await moderation.create({
     type: b.type, target, reason: b.reason, message: b.message, notes: b.notes, appealable: b.appealable !== false,
@@ -1514,7 +1515,7 @@ const billingView = (req) => ({
 route('POST', '/api/billing/checkout', async (req) => {
   if (!TEAM) throw httpError(400, 'Billing only exists on a hosted Tree Host.');
   stagingBlock();
-  if (req.user.role === 'customer' && !req.user.email) throw httpError(400, 'Add your email address in Account first.');
+  if (rbac.isCustomer(req.user) && !req.user.email) throw httpError(400, 'Add your email address in Account first.');
   regionCheck(req, true);
   const body = await readJson(req);
   const consent = { ...(body.consent || {}), ip: clientIp(req), userAgent: req.headers['user-agent'] };
@@ -3333,6 +3334,7 @@ route('GET', '/api/public/servers', () => {
         players: online ? (j.players || []).length : 0,
         maxPlayers: maxPlayers(i),
         listedSince: i.cfg.listing.since || null,
+        creator: TEAM && (auth.userById(i.cfg.owner) || {}).role === 'youtuber',
       };
     }),
   };
