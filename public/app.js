@@ -247,14 +247,14 @@ function renderMain() {
     if ($('#btn-create-demo')) $('#btn-create-demo').addEventListener('click', createDemoServer);
     return;
   }
-  if ((state.tab === 'files' && !can('files', s)) || (state.tab === 'settings' && !can('settings', s))) state.tab = 'console';
+  if ((state.tab === 'files' && !can('files', s)) || (state.tab === 'settings' && !can('settings', s) && !s.isDemo)) state.tab = 'console';
   main.innerHTML = `
     <header class="srv-header">
       ${s.isDemo ? demoBannerHtml() : ''}
       <div id="srv-head"></div>
       <div class="tabs">
         ${['console', 'stats', 'plugins', 'backups', 'files', 'settings']
-          .filter((t) => (t === 'files' ? can('files', s) : t === 'settings' ? can('settings', s) : true))
+          .filter((t) => (t === 'files' ? can('files', s) : t === 'settings' ? can('settings', s) || s.isDemo : true))
           .map(
             (t) =>
               `<button class="tab ${state.tab === t ? 'active' : ''}" data-tab="${t}">${
@@ -506,7 +506,25 @@ function renderTab() {
   else if (state.tab === 'files') renderFiles(body);
   else if (state.tab === 'backups') renderBackups(body);
   else if (state.tab === 'stats') renderStats(body);
-  else renderSettings(body);
+  else {
+    renderSettings(body);
+    if (current()?.isDemo && !can('settings', current())) lockDemoSettings(body);
+  }
+}
+
+/** Visitors see the demo's settings, fully set up, but can't change them. */
+function lockDemoSettings(body) {
+  for (const el of [...body.children]) {
+    el.inert = true;
+    el.classList.add('demo-locked');
+  }
+  body.insertAdjacentHTML('afterbegin', `<div class="demo-banner demo-settings-note">
+    <div class="demo-banner-icon">${ic('lock')}</div>
+    <div class="demo-banner-text"><b>A look at a fully set-up server</b>
+      <span>This is how the demo is configured: an icon, an animated MOTD, a public listing, scheduled tasks and game settings. On your own server you can change all of it.</span></div>
+    ${isCustomer() || !isTeam() ? '<button class="btn primary sm" id="demo-own-2">Get your own server</button>' : ''}
+  </div>`);
+  $('#demo-own-2', body)?.addEventListener('click', openNewServer);
 }
 
 // ---------- console ----------

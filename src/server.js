@@ -1877,6 +1877,49 @@ const DEMO_PLUGINS = [
   ['Vault', '1.7.3', 'Lets economy, chat and permission plugins work together.'],
 ];
 
+const DEMO_MOTD = [
+  '&#46c37b&lTree Host &7Demo Server\n&fStart it, stop it and try commands',
+  '&#46c37b&lTree Host &7Demo Server\n&eYour own server is ready in a minute',
+];
+const DEMO_DESCRIPTION = 'The official Tree Host demo. Start it, stop it and try commands right from the dashboard before you make your own server.';
+
+/** The demo's 64×64 server icon: a pixel-art tree on a hill (drawn at 16×16, scaled up 4×). */
+function demoIcon() {
+  const zlib = require('zlib');
+  const { crc32 } = require('./zip');
+  const hex = (h) => [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  const art = (x, y) => {
+    const leaf = Math.hypot(x + 0.5 - 8, y + 0.5 - 6);
+    if (y >= 14) return (x + y) % 3 ? '8d6e4a' : '7a5c3c'; // dirt
+    if (y === 13) return x % 3 ? '4caf50' : '43a047'; // grass
+    if (leaf <= 5.2) return x + y < 11 && (x * 7 + y * 3) % 4 === 0 ? '6fe0a5' : x + y > 15 ? '217a3c' : (x + y) % 5 === 0 ? '46c37b' : '2e9d4f';
+    if ((x === 7 || x === 8) && y >= 9) return x === 8 ? '5a3d24' : '6d4c2f'; // trunk
+    const t = y / 13; // sky, lighter towards the hill
+    return [0, 1, 2].map((i) => Math.round(hex('3d8fd6')[i] * (1 - t) + hex('a8d8f0')[i] * t).toString(16).padStart(2, '0')).join('');
+  };
+  const raw = Buffer.alloc(64 * (64 * 4 + 1));
+  for (let y = 0; y < 64; y++) {
+    raw[y * 257] = 0; // filter: none
+    for (let x = 0; x < 64; x++) {
+      const [r, g, b] = hex(art(x >> 2, y >> 2));
+      raw.set([r, g, b, 255], y * 257 + 1 + x * 4);
+    }
+  }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([len, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(64, 0);
+  ihdr.writeUInt32BE(64, 4);
+  ihdr.set([8, 6, 0, 0, 0], 8); // 8-bit RGBA
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
 /** The demo's folder: the usual Paper config files and a few plugins. Also tidies demos made by older versions. */
 async function setUpDemoServer(inst) {
   const dir = inst.dir;
@@ -1889,7 +1932,7 @@ async function setUpDemoServer(inst) {
   const files = {
     'eula.txt': 'eula=true\n',
     'server.properties': [
-      'motd=\\u00a7aTree Host \\u00a77Demo Server',
+      `motd=${MOTD.propertiesValue(MOTD.toSection(DEMO_MOTD[0]))}`,
       'max-players=20',
       'gamemode=survival',
       'difficulty=easy',
@@ -1914,8 +1957,26 @@ async function setUpDemoServer(inst) {
   for (const [name, version, description] of DEMO_PLUGINS) {
     await fsp.writeFile(path.join(plugins, `${name}-${version}.jar`), demoPluginJar(name, version, description));
   }
-  inst.cfg.installed = { type: inst.cfg.type, version: inst.cfg.version, build: inst.cfg.build, resolvedBuild: '130' };
-  inst.cfg.notes = '';
+  await fsp.writeFile(path.join(dir, 'server-icon.png'), demoIcon());
+  // Set up like a server someone cares about, so every Settings card has something to show. Put back on every
+  // Tree Host start, so the demo is always clean.
+  const c = inst.cfg;
+  c.installed = { type: c.type, version: c.version, build: c.build, resolvedBuild: '130' };
+  c.iconAt = Date.now();
+  c.motd = MOTD.normalize({ frames: DEMO_MOTD, interval: 4 });
+  c.listing = { public: true, description: DEMO_DESCRIPTION, tags: ['Survival', 'SMP', 'Economy'], discord: '', website: '', since: (c.listing && c.listing.since) || Date.now() };
+  c.schedules = [
+    { id: 'demorestart', action: 'restart', when: { type: 'daily', time: '05:00', days: [] }, text: '', warn: true, enabled: true, lastRun: null, lastKey: null },
+    { id: 'demohello', action: 'broadcast', when: { type: 'every', hours: 1 }, text: 'Enjoying the demo? Your own server is ready in about a minute.', warn: false, enabled: true, lastRun: null, lastKey: null },
+    { id: 'demosave', action: 'command', when: { type: 'every', hours: 2 }, text: 'save-all', warn: false, enabled: true, lastRun: null, lastKey: null },
+  ];
+  c.timeZone = 'UTC';
+  c.autoStart = true;
+  c.autoRestart = true;
+  c.notes = '';
+  c.members = [];
+  c.sleep = null;
+  publicListCache = null;
   manager.save();
   await syncStaffPlugin(inst).catch(() => {});
   await managedPlugins.syncInstance(inst).catch(() => {});
@@ -2686,7 +2747,11 @@ function cleanTask(t) {
   return { id: t.id && /^[a-z0-9]{6,16}$/.test(t.id) ? t.id : crypto.randomBytes(5).toString('hex'), action, when, text: text.replace(/^\//, ''), warn: t.warn !== false, enabled: t.enabled !== false, lastRun: t.lastRun || null, lastKey: t.lastKey || null };
 }
 
+/** A server process is running (or the demo's simulated one: src/demo-sim.js). */
+const alive = (inst) => !!inst.proc || !!(inst.demo && inst.demo.alive);
+
 const say = (inst, text) => {
+  if (inst.demo) return inst.demo.alive && inst.demo.log(`[Server] ${text}`);
   if (inst.provider.kind === 'proxy' || !inst.proc) return;
   try {
     if (versionAtLeast(inst.cfg.version, [1, 13])) inst.write(`tellraw @a ${component(inst, [{ text: '[Server] ', color: 'gold', bold: true }, { text, color: 'yellow' }])}`);
@@ -2697,16 +2762,16 @@ const say = (inst, text) => {
 /** Restarts/stops warn players first: 60, 30, 10 and 5..1 seconds before. */
 async function countdown(inst, verb) {
   for (const [left, wait] of [[60, 30], [30, 20], [10, 5], [5, 1], [4, 1], [3, 1], [2, 1], [1, 1]]) {
-    if (!inst.proc) return false;
+    if (!alive(inst)) return false;
     say(inst, `The server ${verb} in ${left} second${left === 1 ? '' : 's'}.`);
     await new Promise((r) => setTimeout(r, wait * 1000));
   }
-  return !!inst.proc;
+  return alive(inst);
 }
 
 async function runTask(inst, task) {
   const label = TASK_ACTIONS[task.action];
-  const running = inst.proc && inst.status === 'running';
+  const running = alive(inst) && inst.status === 'running';
   switch (task.action) {
     case 'restart':
       if (!running) return inst.sysLog('Scheduled restart skipped: the server is not running.');
@@ -2722,7 +2787,7 @@ async function runTask(inst, task) {
       inst.stop();
       break;
     case 'start':
-      if (inst.proc || inst.cfg.sleeping) return;
+      if (alive(inst) || inst.cfg.sleeping) return;
       if (manager.startBlock(inst)) return inst.sysLog(`Scheduled start skipped: ${manager.startBlock(inst)}`);
       inst.sysLog('Scheduled start.');
       inst.start();
@@ -3250,7 +3315,7 @@ route('GET', '/api/public/servers', () => {
     tags: LISTING_TAGS,
     servers: listedServers().map((i) => {
       const j = i.toJSON();
-      const online = !!i.proc && i.status === 'running';
+      const online = alive(i) && i.status === 'running';
       return {
         id: j.id,
         name: j.name,
@@ -3262,7 +3327,8 @@ route('GET', '/api/public/servers', () => {
         software: j.typeLabel,
         version: j.version,
         kind: j.kind,
-        address: j.publicAddress || null,
+        address: i.cfg.isDemo ? null : j.publicAddress || null,
+        demo: !!i.cfg.isDemo,
         online,
         players: online ? (j.players || []).length : 0,
         maxPlayers: maxPlayers(i),
@@ -3381,7 +3447,10 @@ route(
   { perm: 'servers.host' },
 );
 
-route('GET', '/api/servers/:id/properties', (req, res, p) => getFor(req, p.id, 'settings').getProperties());
+route('GET', '/api/servers/:id/properties', (req, res, p) => {
+  const demo = manager.instances.get(p.id)?.cfg.isSharedDemo; // visitors may look at the demo's settings
+  return getFor(req, p.id, demo ? 'view' : 'settings').getProperties();
+});
 route('PUT', '/api/servers/:id/properties', async (req, res, p) => {
   const inst = getFor(req, p.id, 'settings');
   await inst.setProperties(await readJson(req));

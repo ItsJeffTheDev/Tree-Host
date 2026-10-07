@@ -445,6 +445,8 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .demo-cmd { font: 12px var(--mono); color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
 .demo-cmd:hover { border-color: var(--info); color: #8cc2ff; }
 .demo-banner > .btn { flex: none; }
+.tab-body .demo-locked { opacity: .85; }
+.tab-body .demo-locked input, .tab-body .demo-locked select, .tab-body .demo-locked textarea, .tab-body .demo-locked button { cursor: not-allowed; }
 @media (max-width: 760px) {
   .demo-banner { flex-wrap: wrap; }
   .demo-banner > .btn { width: 100%; }
