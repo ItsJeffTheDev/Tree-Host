@@ -8,7 +8,8 @@ const { spawn } = require('child_process');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { PUBLIC, DATA } = require('./paths');
-const { Manager } = require('./instances');
+const { Manager, readPluginMeta } = require('./instances');
+const { ManagedPlugins, STAFF_ID, BUKKIT_TYPES, MAX_JAR } = require('./managed-plugins');
 const { Auth } = require('./auth');
 const { Rbac, PERMISSIONS } = require('./rbac');
 const { Billing, durationText } = require('./billing');
@@ -1867,8 +1868,9 @@ route('POST', '/api/servers/demo', async (req) => {
       extra: { isDemo: true, isSharedDemo: true },
     });
 
-    // Auto-upload TreeHostStaff plugin
+    // The Tree Host staff plugin and the other managed plugins
     await syncStaffPlugin(demoServer).catch((e) => console.error(`[staff plugin] ${demoServer.cfg.id}: ${e.message}`));
+    await managedPlugins.syncInstance(demoServer).catch((e) => console.error(`[managed plugins] ${demoServer.cfg.id}: ${e.message}`));
 
     // Create fake world files and data for exploration
     await createDemoServerFiles(demoServer).catch((e) => console.error(`[demo server] Failed to create demo files: ${e.message}`));
@@ -2185,6 +2187,7 @@ route('POST', '/api/servers', async (req) => {
   if (sub) billing.attachServer(sub.id, sub.userId, inst.cfg.id);
   console.log(`[server create] ${inst.cfg.id}: space=${inst.cfg.space}, type=${inst.cfg.type}, family=${inst.provider.family}, isCustomer=${inst.isCustomer}`);
   await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
+  await managedPlugins.syncInstance(inst).catch((e) => console.error(`[managed plugins] ${inst.cfg.id}: ${e.message}`));
   if (pack) {
     inst.cfg.modpack = { title: pack.title, slug: pack.slug, version: pack.versionNumber, versionId: pack.versionId, icon: pack.icon };
     manager.save();
@@ -2312,341 +2315,106 @@ route('PUT', '/api/admin/donations/:id', async (req, res, p) => {
   return d;
 }, { perm: 'billing.manage' });
 
-// ---------- Tree Host Staff Plugin Management ----------
+// ---------- managed plugins (Staff Console #staff-plugin) ----------
+// Every plugin Tree Host puts on servers by itself: the built-in staff plugin and any staff add. See src/managed-plugins.js.
 
-const STAFF_PLUGIN_INFO_FILE = path.join(DATA, 'staff-plugin-info.json');
-const REQUIRED_PLUGINS_FILE = path.join(DATA, 'required-plugins.json');
-const REQUIRED_PLUGINS_DIR = path.join(__dirname, '..', 'required-plugins');
+/** Upload options come in the query string; the body is the jar itself. */
+const pluginOpts = (q) => ({
+  filename: q.get('filename'),
+  name: q.get('name'),
+  version: q.get('version'),
+  description: q.get('description'),
+  notes: q.get('notes'),
+  locked: q.get('locked') !== '0',
+  autoInstall: q.get('autoInstall') !== '0',
+  serverTypes: q.get('types') || '',
+});
 
-/** Load staff plugin info from local file. */
-async function loadStaffPluginInfo() {
-  try {
-    return JSON.parse(await fsp.readFile(STAFF_PLUGIN_INFO_FILE, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-/** Save staff plugin info to local file. */
-async function saveStaffPluginInfo(info) {
-  await fsp.mkdir(DATA, { recursive: true });
-  await fsp.writeFile(STAFF_PLUGIN_INFO_FILE, JSON.stringify(info, null, 2), { mode: 0o600 });
-}
-
-/** Load required plugins list. */
-async function loadRequiredPlugins() {
-  try {
-    return JSON.parse(await fsp.readFile(REQUIRED_PLUGINS_FILE, 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
-/** Save required plugins list. */
-async function saveRequiredPlugins(plugins) {
-  await fsp.mkdir(DATA, { recursive: true });
-  await fsp.writeFile(REQUIRED_PLUGINS_FILE, JSON.stringify(plugins, null, 2), { mode: 0o600 });
-}
-
-/** Get current staff plugin info. */
-route('GET', '/api/admin/staff-plugin', async (req) => {
-  const info = await loadStaffPluginInfo();
-  if (!info) {
-    // Return default info if file doesn't exist
-    return {
-      version: '1.0.0',
-      size: staffPluginJar ? staffPluginJar.length : 0,
-      hash: staffPluginHash || 'Unknown',
-      uploadedAt: null,
-      uploadedBy: null,
-      notes: 'Default plugin from minecraft-plugin/TreeHostStaff.jar',
-    };
-  }
-  return info;
-}, { perm: 'system.view' });
-
-/** Get all required plugins. */
-route('GET', '/api/admin/required-plugins', async (req) => {
-  const plugins = await loadRequiredPlugins();
-  return plugins.map(p => ({
-    ...p,
-    size: p.size || 0,
-    fileExists: fs.existsSync(path.join(REQUIRED_PLUGINS_DIR, p.filename)),
-  }));
-}, { perm: 'system.view' });
-
-/** Update staff plugin JAR file. */
-route('POST', '/api/admin/staff-plugin', async (req) => {
-  // Simple multipart parsing for file upload
-  const contentType = req.headers['content-type'] || '';
-  const boundaryMatch = contentType.match(/boundary=([^;]+)/);
-  if (!boundaryMatch) throw httpError(400, 'Invalid multipart request');
-
-  const boundary = boundaryMatch[1];
-  const chunks = [];
-  let totalSize = 0;
-  const maxSize = 50 * 1024 * 1024; // 50MB
-
-  for await (const chunk of req) {
-    totalSize += chunk.length;
-    if (totalSize > maxSize) throw httpError(413, 'File too large (max 50MB)');
-    chunks.push(chunk);
-  }
-
-  const buffer = Buffer.concat(chunks);
-  const parts = buffer.toString('binary').split(`--${boundary}`).filter(Boolean);
-
-  let jarFile = null;
-  let version = null;
-  let notes = '';
-
-  for (const part of parts) {
-    if (part.includes('--')) continue; // Skip final boundary
-
-    const [header, ...bodyParts] = part.split('\r\n\r\n');
-    const body = bodyParts.join('\r\n\r\n').replace(/\r\n--$/, ''); // Remove trailing boundary
-
-    const headers = header.split('\r\n').reduce((acc, h) => {
-      const [k, v] = h.split(': ');
-      if (k && v) acc[k.toLowerCase()] = v;
-      return acc;
-    }, {});
-
-    if (headers['content-disposition']) {
-      const nameMatch = headers['content-disposition'].match(/name="([^"]+)"/);
-      if (nameMatch) {
-        const name = nameMatch[1];
-        if (name === 'jarFile') {
-          jarFile = Buffer.from(body, 'binary');
-        } else if (name === 'version') {
-          version = body.trim();
-        } else if (name === 'notes') {
-          notes = body.trim();
-        }
-      }
-    }
-  }
-
-  if (!jarFile) throw httpError(400, 'No JAR file provided');
-  if (!version) throw httpError(400, 'Version is required');
-  if (!jarFile.length || jarFile.length > 50 * 1024 * 1024) throw httpError(400, 'JAR file must be between 1 byte and 50MB');
-
-  // Validate it's a JAR file (ZIP archive)
-  if (!jarFile.slice(0, 4).toString('hex').startsWith('504b0304')) {
-    throw httpError(400, 'File is not a valid JAR file (not a ZIP archive)');
-  }
-
-  // Save the new JAR file
-  const pluginDir = path.join(__dirname, '..', 'minecraft-plugin');
-  await fsp.mkdir(pluginDir, { recursive: true });
-  const jarPath = path.join(pluginDir, 'TreeHostStaff.jar');
-  await fsp.writeFile(jarPath, jarFile);
-
-  // Update in-memory cache
-  staffPluginJar = jarFile;
-  const newHash = sha(jarFile);
-
-  // Save metadata
-  const info = {
-    version,
-    size: jarFile.length,
-    hash: newHash,
-    uploadedAt: Date.now(),
-    uploadedBy: req.user.username,
-    notes,
-  };
-  await saveStaffPluginInfo(info);
-
-  // Log the update
-  activity.log('system', req.user.username, `updated the Tree Host staff plugin to version ${version}`);
-
-  return info;
-}, { perm: 'system.manage' });
-
-/** Add a new required plugin. */
-route('POST', '/api/admin/required-plugins', async (req) => {
-  const contentType = req.headers['content-type'] || '';
-  const boundaryMatch = contentType.match(/boundary=([^;]+)/);
-  if (!boundaryMatch) throw httpError(400, 'Invalid multipart request');
-
-  const boundary = boundaryMatch[1];
-  const chunks = [];
-  let totalSize = 0;
-  const maxSize = 50 * 1024 * 1024; // 50MB
-
-  for await (const chunk of req) {
-    totalSize += chunk.length;
-    if (totalSize > maxSize) throw httpError(413, 'File too large (max 50MB)');
-    chunks.push(chunk);
-  }
-
-  const buffer = Buffer.concat(chunks);
-  const parts = buffer.toString('binary').split(`--${boundary}`).filter(Boolean);
-
-  let jarFile = null;
-  let filename = null;
-  let title = null;
-  let description = '';
-  let locked = true;
-  let targetTypes = ['paper', 'spigot', 'purpur', 'folia', 'craftbukkit'];
-
-  for (const part of parts) {
-    if (part.includes('--')) continue;
-
-    const [header, ...bodyParts] = part.split('\r\n\r\n');
-    const body = bodyParts.join('\r\n\r\n').replace(/\r\n--$/, '');
-
-    const headers = header.split('\r\n').reduce((acc, h) => {
-      const [k, v] = h.split(': ');
-      if (k && v) acc[k.toLowerCase()] = v;
-      return acc;
-    }, {});
-
-    if (headers['content-disposition']) {
-      const nameMatch = headers['content-disposition'].match(/name="([^"]+)"/);
-      if (nameMatch) {
-        const name = nameMatch[1];
-        if (name === 'jarFile') {
-          jarFile = Buffer.from(body, 'binary');
-          const filenameMatch = headers['content-disposition'].match(/filename="([^"]+)"/);
-          if (filenameMatch) filename = filenameMatch[1];
-        } else if (name === 'title') {
-          title = body.trim();
-        } else if (name === 'description') {
-          description = body.trim();
-        } else if (name === 'locked') {
-          locked = body.trim() === 'true';
-        } else if (name === 'targetTypes') {
-          try {
-            targetTypes = JSON.parse(body.trim());
-          } catch {}
-        }
-      }
-    }
-  }
-
-  if (!jarFile) throw httpError(400, 'No JAR file provided');
-  if (!title) throw httpError(400, 'Title is required');
-  if (!filename) filename = title.replace(/[^a-zA-Z0-9_-]/g, '') + '.jar';
-  if (!jarFile.length || jarFile.length > 50 * 1024 * 1024) throw httpError(400, 'JAR file must be between 1 byte and 50MB');
-
-  // Validate it's a JAR file
-  if (!jarFile.slice(0, 4).toString('hex').startsWith('504b0304')) {
-    throw httpError(400, 'File is not a valid JAR file (not a ZIP archive)');
-  }
-
-  // Save the JAR file
-  await fsp.mkdir(REQUIRED_PLUGINS_DIR, { recursive: true });
-  const jarPath = path.join(REQUIRED_PLUGINS_DIR, filename);
-  await fsp.writeFile(jarPath, jarFile);
-
-  // Load existing plugins
-  const plugins = await loadRequiredPlugins();
-
-  // Add new plugin
-  const plugin = {
-    id: crypto.randomBytes(8).toString('hex'),
-    filename,
-    title,
-    description,
-    locked,
-    targetTypes,
-    size: jarFile.length,
-    hash: sha(jarFile),
-    uploadedAt: Date.now(),
-    uploadedBy: req.user.username,
-  };
-  plugins.push(plugin);
-  await saveRequiredPlugins(plugins);
-
-  // Log the addition
-  activity.log('system', req.user.username, `added required plugin "${title}" (${filename})`);
-
-  return plugin;
-}, { perm: 'system.manage' });
-
-/** Update a required plugin. */
-route('PUT', '/api/admin/required-plugins/:id', async (req) => {
-  const plugins = await loadRequiredPlugins();
-  const pluginIndex = plugins.findIndex(p => p.id === req.params.id);
-  if (pluginIndex === -1) throw httpError(404, 'Plugin not found');
-
-  const body = await readJson(req);
-  const plugin = plugins[pluginIndex];
-
-  // Update fields
-  if (body.title !== undefined) plugin.title = body.title;
-  if (body.description !== undefined) plugin.description = body.description;
-  if (body.locked !== undefined) plugin.locked = body.locked;
-  if (body.targetTypes !== undefined) plugin.targetTypes = body.targetTypes;
-
-  plugin.updatedAt = Date.now();
-  plugin.updatedBy = req.user.username;
-
-  plugins[pluginIndex] = plugin;
-  await saveRequiredPlugins(plugins);
-
-  activity.log('system', req.user.username, `updated required plugin "${plugin.title}"`);
-
-  return plugin;
-}, { perm: 'system.manage' });
-
-/** Delete a required plugin. */
-route('DELETE', '/api/admin/required-plugins/:id', async (req) => {
-  const plugins = await loadRequiredPlugins();
-  const pluginIndex = plugins.findIndex(p => p.id === req.params.id);
-  if (pluginIndex === -1) throw httpError(404, 'Plugin not found');
-
-  const plugin = plugins[pluginIndex];
-
-  // Delete the JAR file
-  const jarPath = path.join(REQUIRED_PLUGINS_DIR, plugin.filename);
-  await fsp.rm(jarPath, { force: true }).catch(() => {});
-
-  // Remove from list
-  plugins.splice(pluginIndex, 1);
-  await saveRequiredPlugins(plugins);
-
-  activity.log('system', req.user.username, `deleted required plugin "${plugin.title}"`);
-
-  return { ok: true };
-}, { perm: 'system.manage' });
-
-/** Distribute a required plugin to all servers. */
-route('POST', '/api/admin/required-plugins/:id/distribute', async (req) => {
-  const plugins = await loadRequiredPlugins();
-  const plugin = plugins.find(p => p.id === req.params.id);
-  if (!plugin) throw httpError(404, 'Plugin not found');
-
-  // Load the JAR file
-  const jarPath = path.join(REQUIRED_PLUGINS_DIR, plugin.filename);
-  const jarFile = await fsp.readFile(jarPath);
-
-  let distributed = 0;
-  let failed = 0;
-
+/** Puts the staff plugin on every server that needs it now. */
+async function pushStaffPlugin() {
+  const r = { servers: 0, installed: 0, restored: 0, failed: 0 };
   for (const inst of manager.instances.values()) {
-    // Check if server type matches target types
-    if (!plugin.targetTypes.includes(inst.cfg.type)) continue;
-
-    // Check if server is bukkit family
-    if (inst.provider.family !== 'bukkit') continue;
-
+    if (!manager.protectedPlugin(inst)) continue;
+    r.servers++;
     try {
-      const dir = path.join(inst.dir, inst.pluginDirName);
-      const targetJar = path.join(dir, plugin.filename);
-      await fsp.mkdir(dir, { recursive: true });
-      await fsp.writeFile(targetJar, jarFile);
-      distributed++;
-    } catch (e) {
-      console.error(`[required plugin] Failed to distribute to ${inst.cfg.id}: ${e.message}`);
-      failed++;
+      if (await syncStaffPlugin(inst)) r.restored++;
+    } catch {
+      r.failed++;
     }
   }
+  return r;
+}
 
-  activity.log('system', req.user.username, `distributed required plugin "${plugin.title}" to ${distributed} servers (${failed} failed)`);
+route('GET', '/api/admin/managed-plugins', async () => ({
+  types: BUKKIT_TYPES,
+  plugins: await managedPlugins.list(),
+}), { perm: 'system.view' });
 
-  return { distributed, failed };
+route('GET', '/api/admin/managed-plugins/:id', (req, res, p) => managedPlugins.view(p.id, { servers: true }), { perm: 'system.view' });
+
+route('GET', '/api/admin/managed-plugins/:id/jar', async (req, res, p) => {
+  const { buf, filename } = await managedPlugins.jar(p.id);
+  res.writeHead(200, {
+    'Content-Type': 'application/java-archive',
+    'Content-Disposition': `attachment; filename="${filename.replace(/"/g, '')}"`,
+    'Content-Length': buf.length,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(buf);
+  return HANDLED;
+}, { perm: 'system.view' });
+
+route('POST', '/api/admin/managed-plugins', async (req, res, p, q) => {
+  const plugin = await managedPlugins.add(await readBytes(req, MAX_JAR), pluginOpts(q), req.user.username);
+  audit(req, `added the managed plugin ${plugin.name} ${plugin.version} (${plugin.filename}${plugin.locked ? ', locked' : ''})`);
+  return plugin;
+}, { perm: 'system.manage' });
+
+route('POST', '/api/admin/managed-plugins/:id/jar', async (req, res, p, q) => {
+  const plugin = await managedPlugins.replace(p.id, await readBytes(req, MAX_JAR), pluginOpts(q), req.user.username);
+  audit(req, `uploaded ${plugin.name} ${plugin.version} (managed plugin)`);
+  return plugin;
+}, { perm: 'system.manage' });
+
+route('DELETE', '/api/admin/managed-plugins/:id/jar', async (req, res, p) => {
+  if (p.id !== STAFF_ID) throw httpError(400, 'Only the staff plugin can go back to a bundled version.');
+  const plugin = await managedPlugins.revertStaff();
+  audit(req, 'put the Tree Host staff plugin back to the version bundled with Tree Host');
+  return plugin;
+}, { perm: 'system.manage' });
+
+route('PUT', '/api/admin/managed-plugins/:id', async (req, res, p) => {
+  if (p.id === STAFF_ID) throw httpError(400, "The staff plugin's settings can't be changed: it's required on every server.");
+  const plugin = await managedPlugins.update(p.id, await readJson(req));
+  audit(req, `changed the settings of the managed plugin ${plugin.name}`);
+  return plugin;
+}, { perm: 'system.manage' });
+
+route('DELETE', '/api/admin/managed-plugins/:id', async (req, res, p, q) => {
+  if (p.id === STAFF_ID) throw httpError(400, 'The staff plugin is built in and is required on every server.');
+  const { name } = managedPlugins.get(p.id);
+  const purge = q.get('purge') === '1';
+  const r = await managedPlugins.remove(p.id, { purge });
+  audit(req, `stopped managing the plugin ${name}${purge ? ` and removed it from servers (${r.removedFrom} file(s))` : ' (left on servers)'}`);
+  return r;
+}, { perm: 'system.manage' });
+
+/** Installs one plugin everywhere it applies right now, including where an owner removed an unlocked one. */
+route('POST', '/api/admin/managed-plugins/:id/push', async (req, res, p) => {
+  const staff = p.id === STAFF_ID;
+  const name = staff ? 'Tree Host Staff' : managedPlugins.get(p.id).name;
+  const r = staff ? await pushStaffPlugin() : await managedPlugins.syncAll({ force: true, only: p.id });
+  audit(req, `pushed the managed plugin ${name} to every server it belongs on`);
+  return r;
+}, { perm: 'system.manage' });
+
+/** Checks every server for every managed plugin now (instead of waiting for the 30-second check). */
+route('POST', '/api/admin/managed-plugins-sync', async (req) => {
+  const staff = await pushStaffPlugin();
+  const r = await managedPlugins.syncAll();
+  audit(req, 'checked every server for its managed plugins');
+  return { ...r, restored: r.restored + staff.restored, failed: r.failed + staff.failed };
 }, { perm: 'system.manage' });
 
 // ---------- the team page ----------
@@ -2678,21 +2446,28 @@ route('PUT', '/api/account/team-profile', async (req) => {
 });
 
 // ---------- the Tree Host staff plugin (Paper, Spigot, Purpur, Folia, CraftBukkit) ----------
-// minecraft-plugin/TreeHostStaff.jar goes on every customer server of these types when it's created, is checked
-// before every start and every 30 seconds, and is put back if it was removed or changed. It can't be deleted,
-// turned off or replaced from the dashboard. Tree Host keeps plugins/TreeHostStaff/staff.txt (who is staff) current.
+// TreeHostStaff.jar goes on every customer server of these types when it's created, is checked before every start
+// and every 30 seconds, and is put back if it was removed or changed. It can't be deleted, turned off or replaced
+// from the dashboard. Tree Host keeps plugins/TreeHostStaff/staff.txt (who is staff) current.
+// The jar is minecraft-plugin/TreeHostStaff.jar, unless staff uploaded a newer one in the Staff Console. Other
+// plugins staff add there (src/managed-plugins.js) are synced right after it.
 
-const STAFF_PLUGIN = path.join(__dirname, '..', 'minecraft-plugin', 'TreeHostStaff.jar');
-let staffPluginJar = null;
-try {
-  staffPluginJar = fs.readFileSync(STAFF_PLUGIN);
-} catch {
-  console.error('  The Tree Host staff plugin (minecraft-plugin/TreeHostStaff.jar) is missing: run node minecraft-plugin/build.js');
-}
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
-const staffPluginHash = staffPluginJar ? sha(staffPluginJar) : null;
+const managedEligible = (inst) => TEAM && (inst.isCustomer || inst.cfg.isDemo || inst.cfg.space === 'team') && inst.provider.family === 'bukkit';
+const managedPlugins = new ManagedPlugins({
+  manager,
+  eligible: managedEligible,
+  readMeta: readPluginMeta,
+  log: (inst, text, p) => {
+    inst.sysLog(text);
+    activity.log('moderation', 'Tree Host', `put the managed plugin ${p.name} back on "${inst.cfg.name}" of ${manager.ownerName(inst.cfg.owner) || 'a customer'} (it had been removed or changed)`);
+  },
+}).load();
+if (!managedPlugins.staffJar) console.error('  The Tree Host staff plugin (minecraft-plugin/TreeHostStaff.jar) is missing: run node minecraft-plugin/build.js');
 
-manager.protectedPlugin = (inst) => TEAM && (inst.isCustomer || inst.cfg.isDemo || inst.cfg.space === 'team') && inst.provider.family === 'bukkit' && !!staffPluginJar;
+manager.protectedPlugin = (inst) => managedEligible(inst) && !!managedPlugins.staffJar;
+manager.lockedPluginFiles = (inst) => managedPlugins.lockedFiles(inst);
+manager.managedPluginInfo = (inst, file) => managedPlugins.infoFor(inst, file);
 
 function staffListText() {
   const lines = auth.users
@@ -2705,21 +2480,21 @@ const staffFileFor = (inst) => `${staffListText()}${manager.networkFor && manage
 
 /** Puts the plugin and the staff list in place (if missing or changed). Returns true if the plugin had to be restored. */
 async function syncStaffPlugin(inst) {
-  if (!manager.protectedPlugin(inst)) {
-    console.log(`[staff plugin] ${inst.cfg.id}: not protected (isCustomer=${inst.isCustomer}, space=${inst.cfg.space}, family=${inst.provider.family}, hasJar=${!!staffPluginJar})`);
-    return false;
-  }
+  if (!manager.protectedPlugin(inst)) return false;
   const dir = path.join(inst.dir, inst.pluginDirName);
   const jar = path.join(dir, 'TreeHostStaff.jar');
   await fsp.mkdir(path.join(dir, 'TreeHostStaff'), { recursive: true });
   let restored = false;
   await fsp.rm(`${jar}.disabled`, { force: true }).then(() => {}, () => {});
-  const current = await fsp.readFile(jar).catch(() => null);
-  if (!current || sha(current) !== staffPluginHash) {
+  const want = managedPlugins.staffHash;
+  let current = (await managedPlugins.fileHash(jar)) === want;
+  if (!current) {
     try {
-      await fsp.writeFile(jar, staffPluginJar);
+      await fsp.writeFile(jar, managedPlugins.staffJar);
       console.log(`[staff plugin] ${inst.cfg.id}: installed TreeHostStaff.jar`);
-      restored = !!inst.cfg.staffPluginInstalled;
+      // Put back, not just updated to a newer build staff uploaded: the server had this exact version before.
+      restored = !!inst.cfg.staffPluginInstalled && (!inst.cfg.staffPluginHash || inst.cfg.staffPluginHash === want);
+      current = true;
     } catch (e) {
       // In use by the running server (Windows): it's loaded already, and gets replaced before the next start.
       if (!['EBUSY', 'EPERM'].includes(e.code)) throw e;
@@ -2733,8 +2508,9 @@ async function syncStaffPlugin(inst) {
   const list = path.join(dir, 'TreeHostStaff', 'staff.txt');
   const text = staffFileFor(inst);
   if ((await fsp.readFile(list, 'utf8').catch(() => null)) !== text) await fsp.writeFile(list, text);
-  if (!inst.cfg.staffPluginInstalled) {
+  if (current && (!inst.cfg.staffPluginInstalled || inst.cfg.staffPluginHash !== want)) {
     inst.cfg.staffPluginInstalled = true;
+    inst.cfg.staffPluginHash = want;
     manager.save();
   }
   if (restored) {
@@ -2751,9 +2527,13 @@ manager.beforeStart = async (inst) => {
     await closeWaker(inst);
   }
   await syncStaffPlugin(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id}: ${e.message}`));
+  await managedPlugins.syncInstance(inst).catch((e) => console.error(`[managed plugins] ${inst.cfg.id}: ${e.message}`));
 };
-setInterval(() => {
-  for (const inst of manager.instances.values()) syncStaffPlugin(inst).catch(() => {});
+setInterval(async () => {
+  for (const inst of manager.instances.values()) {
+    await syncStaffPlugin(inst).catch(() => {});
+    await managedPlugins.syncInstance(inst).catch(() => {});
+  }
 }, 30 * 1000);
 
 /** True if Minecraft version a is older than b (1.20.4 < 1.21.1 < 26.2). Snapshots and unknown formats: false. */

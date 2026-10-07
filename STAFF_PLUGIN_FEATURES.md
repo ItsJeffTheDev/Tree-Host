@@ -1,3 +1,5 @@
+> **Superseded:** the Staff Plugin page and its API are now part of Managed Plugins. See [REQUIRED_PLUGINS_FEATURE.md](REQUIRED_PLUGINS_FEATURE.md).
+
 # TreeHostStaff Plugin Features - Implementation Summary
 
 ## What Was Added

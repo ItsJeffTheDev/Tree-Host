@@ -1367,6 +1367,7 @@ class Instance extends EventEmitter {
         mtime: st.mtimeMs,
         watched: this.cfg.watches.some((w) => w.lastCopied === file),
         locked: this.isProtectedPath(full),
+        managed: (this.manager.managedPluginInfo && this.manager.managedPluginInfo(this, file)) || null,
         ...(await readPluginMeta(full)),
       });
     }
@@ -1475,19 +1476,34 @@ class Instance extends EventEmitter {
     });
   }
 
-  // ----- the Tree Host staff plugin can't be removed, turned off or changed -----
+  // ----- the Tree Host staff plugin (and locked managed plugins) can't be removed, turned off or changed -----
 
   /** True for plugins/TreeHostStaff.jar (and its folder, or the plugins folder itself) on servers that must have it. */
-  isProtectedPath(full) {
+  isStaffPluginPath(full) {
     if (!this.manager.protectedPlugin || !this.manager.protectedPlugin(this)) return false;
     const rel = path.relative(this.dir, full).replace(/\\/g, '/').toLowerCase();
     const dir = this.pluginDirName.toLowerCase();
     return rel === dir || rel === `${dir}/treehoststaff.jar` || rel === `${dir}/treehoststaff.jar.disabled` || rel === `${dir}/treehoststaff` || rel.startsWith(`${dir}/treehoststaff/`);
   }
 
+  /** True for a plugin staff locked onto this server in the Staff Console (see src/managed-plugins.js). */
+  isLockedManagedPath(full) {
+    if (!this.manager.lockedPluginFiles) return false;
+    const rel = path.relative(this.dir, full).replace(/\\/g, '/').toLowerCase();
+    const dir = this.pluginDirName.toLowerCase();
+    return this.manager.lockedPluginFiles(this).some((f) => rel === `${dir}/${f}` || rel === `${dir}/${f}.disabled`);
+  }
+
+  isProtectedPath(full) {
+    return this.isStaffPluginPath(full) || this.isLockedManagedPath(full);
+  }
+
   assertNotProtected(full) {
-    if (this.isProtectedPath(full)) {
+    if (this.isStaffPluginPath(full)) {
       throw Object.assign(new Error("That's the Tree Host staff plugin. Every server needs it, so it can't be removed, turned off or changed."), { status: 403 });
+    }
+    if (this.isLockedManagedPath(full)) {
+      throw Object.assign(new Error("That plugin is managed by Tree Host and required on this server, so it can't be removed, turned off or changed."), { status: 403 });
     }
   }
 
@@ -2144,4 +2160,4 @@ class Manager extends EventEmitter {
   }
 }
 
-module.exports = { Manager, _safety: { assertNoLinks, removeSymlinks, readInside } };
+module.exports = { Manager, readPluginMeta, _safety: { assertNoLinks, removeSymlinks, readInside } };
