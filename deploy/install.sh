@@ -11,6 +11,13 @@ DATA=/var/lib/tree-host
 echo "==> Installing packages (Docker, Node.js 22, Caddy, firewall)..."
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg git ufw rsync unattended-upgrades debian-keyring debian-archive-keyring apt-transport-https
+# Security updates install themselves every day (Ubuntu's unattended-upgrades; no automatic reboots).
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'APT'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+APT
+systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
 if ! command -v docker >/dev/null; then curl -fsSL https://get.docker.com | sh; fi
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 20 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -

@@ -92,6 +92,15 @@ systemctl is-active --quiet tree-host-backup.timer && pass "nightly backups on" 
 grep -qE '^\s*PasswordAuthentication\s+no' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null \
   && pass "SSH password login is off" || note "SSH password login may be on: use SSH keys and set PasswordAuthentication no"
 
+echo "Security"
+if [ -n "$(setting TREEHOST_BACKUP_RSYNC)" ]; then pass "Backups are copied off this machine (TREEHOST_BACKUP_RSYNC)"
+else note "Backups only stay on this machine. Set TREEHOST_BACKUP_RSYNC in $ENV_FILE to copy them to another one (e.g. a Hetzner Storage Box)"; fi
+if grep -qs 'Unattended-Upgrade "1"' /etc/apt/apt.conf.d/20auto-upgrades; then pass "Security updates install automatically"
+else note "Automatic security updates are off: run  sudo dpkg-reconfigure -plow unattended-upgrades"; fi
+if grep -qsE '^\s*-Server' /etc/caddy/Caddyfile; then pass "The web server doesn't announce its name"
+else note "Caddy announces itself in every response: add  header -Server  (see deploy/Caddyfile)"; fi
+
 echo ""
 echo "$ok OK, $warn warnings, $bad problems."
 [ "$bad" -eq 0 ]
+

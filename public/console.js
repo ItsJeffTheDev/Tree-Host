@@ -48,6 +48,18 @@ if (typeof $$ === 'undefined') {
 function initConsole() {
   document.title = 'Staff Console · Tree Host';
   const side = $('.sidebar');
+  if (isTeam() && state.me.user && state.me.user.needs2fa) {
+    // Staff must turn on two-factor sign-in before the Staff Console opens (src/server.js: STAFF_2FA).
+    $('#main').innerHTML = `<div class="card stack" style="max-width:620px;margin:60px auto">
+      <h2>${ic('lock')} Turn on two-factor sign-in</h2>
+      <p class="muted" style="margin:0">Staff accounts can see customers' details and act on their servers, so the Staff Console needs
+      two-factor sign-in: a 6-digit code from an authenticator app each time you sign in. It takes a minute.</p>
+      <div class="card stack" id="acc-2fa"></div>
+      <a class="help-link" href="/dashboard">← Back to dashboard</a></div>`;
+    side.classList.add('hidden');
+    renderTwoFactorCard($('#acc-2fa'));
+    return;
+  }
   if (!isTeam() || !hasPerm('console.access')) {
     $('#main').innerHTML = `<div class="card stack" style="max-width:520px;margin:60px auto">
       <h2>Staff Console</h2>

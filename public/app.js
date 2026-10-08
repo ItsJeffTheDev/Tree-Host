@@ -242,9 +242,10 @@ function renderMain() {
           <button class="btn" id="btn-create-demo">Open the demo</button>
         </div>
         ` : ''}
-        <button class="btn primary" onclick="openNewServer()">+ Create your first server</button>
+        <button class="btn primary" id="btn-first-server">+ Create your first server</button>
       </div>`;
     if ($('#btn-create-demo')) $('#btn-create-demo').addEventListener('click', createDemoServer);
+    $('#btn-first-server').addEventListener('click', () => openNewServer());
     return;
   }
   if ((state.tab === 'files' && !can('files', s)) || (state.tab === 'settings' && !can('settings', s) && !s.isDemo)) state.tab = 'console';

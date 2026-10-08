@@ -35,6 +35,8 @@ const HOSTED = !!PUBLIC_URL;
 // Staging (TREEHOST_STAGING=1): the whole site and dashboard work (sign-up, sign-in, account, staff console), but
 // nobody can create servers or buy plans until launch. Every page shows a staging banner.
 const STAGING = env('STAGING', '') === '1';
+// Staff must use two-factor sign-in on the real site (an https address). TREEHOST_STAFF_2FA=1 or 0 overrides.
+const STAFF_2FA = env('STAFF_2FA', '') ? env('STAFF_2FA', '') === '1' : /^https:\/\//.test(PUBLIC_URL);
 const STAGING_MSG = "This is Tree Host's staging site: servers and plans open at launch. Everything else works, so look around!";
 const stagingBlock = () => {
   if (STAGING) throw httpError(403, STAGING_MSG, 'STAGING');
@@ -500,9 +502,14 @@ function authenticate(req) {
 // ---------- role-based access control (see rbac.js) ----------
 
 /** True if this user has the permission. Personal mode (no accounts) can do everything. */
-const can = (user, permission) => !TEAM || rbac.can(user, permission);
+/** A staff member who still has to turn on two-factor sign-in keeps only what customers can do until they do. */
+const needs2fa = (user) => STAFF_2FA && TEAM && !!user && !user.local && rbac.can(user, 'console.access') && !(user.mfa && user.mfa.on);
+const can = (user, permission) => !TEAM || (rbac.can(user, permission) && (!needs2fa(user) || rbac.role('customer').permissions.includes(permission)));
 
 function requirePerm(req, permission) {
+  if (needs2fa(req.user) && rbac.can(req.user, permission) && !can(req.user, permission)) {
+    throw httpError(403, 'Turn on two-factor sign-in (Account → Two-factor sign-in) to use staff tools.', 'MFA_SETUP');
+  }
   if (!can(req.user, permission)) {
     const p = PERMISSIONS.find((x) => x.id === permission);
     throw httpError(403, `You don't have access to that${p ? ` (needs: ${p.label})` : ''}.`, 'FORBIDDEN');
@@ -685,7 +692,7 @@ route(
     }
     return {
       teamMode: TEAM,
-      user: user ? { ...(user.local ? user : auth.publicUser(user)), ...(user.local ? {} : lifetimeOf(user)), roleLabel: rbac.role(user.role).label, ...(TEAM && !user.local && onTeamPage(user) ? { teamProfile: { show: true, title: '', bio: '', ...(user.teamProfile || {}) } } : {}), permissions: TEAM ? rbac.permissionsOf(user) : PERMISSIONS.map((x) => x.id) } : null,
+      user: user ? { ...(user.local ? user : auth.publicUser(user)), ...(user.local ? {} : lifetimeOf(user)), roleLabel: rbac.role(user.role).label, ...(TEAM && !user.local && onTeamPage(user) ? { teamProfile: { show: true, title: '', bio: '', ...(user.teamProfile || {}) } } : {}), permissions: TEAM ? rbac.permissionsOf(user).filter((x) => can(user, x)) : PERMISSIONS.map((x) => x.id), ...(needs2fa(user) ? { needs2fa: true } : {}) } : null,
       publicUrl: publicUrl(),
       hosted: HOSTED,
       allowSignup: TEAM && auth.settings.allowSignup,
@@ -1839,6 +1846,20 @@ const STAFF_DOCS = [
 ];
 const staffDocsFor = (user) => STAFF_DOCS.filter((d) => can(user, d.perm)).map(({ perm, ...d }) => d);
 route('GET', '/api/staff/docs', (req) => ({ docs: staffDocsFor(req.user) }), { perm: 'console.access' });
+
+// Two-factor sign-in (authenticator app codes): set up, turn on (shows recovery codes once), turn off.
+route('POST', '/api/auth/2fa/setup', async (req) => auth.startTwoFactor(req.user));
+route('POST', '/api/auth/2fa/enable', async (req) => {
+  const r = await auth.enableTwoFactor(req.user, (await readJson(req)).code);
+  activity.log('audit', req.user.username, 'turned on two-factor sign-in');
+  return r;
+});
+route('POST', '/api/auth/2fa/disable', async (req) => {
+  if (STAFF_2FA && rbac.can(req.user, 'console.access')) throw httpError(400, 'Staff accounts must keep two-factor sign-in on.');
+  await auth.disableTwoFactor(req.user, (await readJson(req)).code);
+  activity.log('audit', req.user.username, 'turned off two-factor sign-in');
+  return { ok: true };
+});
 
 // Staff notifications: the bell and the counts in the Staff Console menu.
 route('GET', '/api/staff/notices', (req) => staffNotices.forUser(req.user, can), { perm: 'console.access' });
@@ -3731,6 +3752,7 @@ async function serveStatic(req, res, pathname) {
     const seoPage = HOSTED && file.endsWith('.html') ? seo.pageFor(pathname === '' ? '/' : pathname) : null;
     if (seoPage) data = Buffer.from(seo.injectSeo(data.toString('utf8'), { base: PUBLIC_URL, path: seoPage.path, site: seoSite(), plans: billing.publicPlans() }));
     const noindex = file.endsWith('dashboard.html') || file.endsWith('404.html');
+    const csp = file.endsWith('.html') ? { 'Content-Security-Policy': pageCsp(data, req) } : {};
     res.writeHead(200, {
       ...(noindex ? { 'X-Robots-Tag': 'noindex' } : {}),
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
@@ -3738,7 +3760,8 @@ async function serveStatic(req, res, pathname) {
       'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
-      ...(isHttps(req) ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
+      ...csp,
+      ...(isHttps(req) ? { 'Strict-Transport-Security': 'max-age=31536000; includeSubDomains' } : {}),
     });
     res.end(data);
   } catch {
@@ -3748,6 +3771,44 @@ async function serveStatic(req, res, pathname) {
     if (body) res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' }).end(body);
     else res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
   }
+}
+
+/**
+ * Content Security Policy for a page: scripts only from Tree Host itself (plus Google's Firebase sign-in SDK when
+ * sign-in uses Firebase), and the page's own inline scripts by their exact hash, so an injected script can't run.
+ * Images may come from any https site (Modrinth plugin icons, Minecraft heads); nothing may frame the page.
+ */
+const cspCache = new Map(); // page body hash -> header
+function pageCsp(body, req) {
+  const html = body.toString('utf8');
+  const fb = TEAM ? firebase.publicConfig() : null;
+  const key = `${crypto.createHash('sha1').update(html).digest('hex')}|${fb ? fb.authDomain : ''}|${isHttps(req)}`;
+  if (cspCache.has(key)) return cspCache.get(key);
+  const hashes = [];
+  for (const m of html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
+    const attrs = m[1] || '';
+    if (/\ssrc\s*=/i.test(attrs) || /type\s*=\s*["']?application\/ld\+json/i.test(attrs)) continue; // files and data blocks
+    hashes.push(`'sha256-${crypto.createHash('sha256').update(m[2], 'utf8').digest('base64')}'`);
+  }
+  const google = fb ? ['https://www.gstatic.com'] : [];
+  const header = [
+    "default-src 'self'",
+    `script-src 'self' ${[...google, ...hashes].join(' ')}`.trim(),
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "font-src 'self'",
+    "media-src 'self'",
+    `connect-src 'self'${fb ? ' https://*.googleapis.com https://www.gstatic.com' : ''}`,
+    `frame-src ${fb ? `https://${fb.authDomain} https://accounts.google.com` : "'none'"}`,
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    ...(isHttps(req) ? ['upgrade-insecure-requests'] : []),
+  ].join('; ');
+  if (cspCache.size > 200) cspCache.clear();
+  cspCache.set(key, header);
+  return header;
 }
 
 // ---------- HTTP server ----------

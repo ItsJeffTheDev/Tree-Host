@@ -1,7 +1,12 @@
 # Caddy gets and renews the HTTPS certificate for treehost.online automatically.
 treehost.online {
 	encode gzip
-	header Strict-Transport-Security "max-age=31536000"
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Don't tell visitors (or scanners) which web server runs the site
+		-Server
+		-Via
+	}
 	reverse_proxy 127.0.0.1:8766 {
 		# live console and status updates (server-sent events) must not be buffered
 		flush_interval -1

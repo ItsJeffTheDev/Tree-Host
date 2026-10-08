@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { DATA } = require('./paths');
 const store = require('./store');
 const firebase = require('./firebase');
+const totp = require('./totp');
 
 const SESSIONS_FILE = path.join(DATA, 'team-sessions.json');
 const SESSION_TTL = 30 * 86400000;
@@ -14,6 +15,7 @@ const INVITE_TTL = 7 * 86400000;
 const RESET_TTL = 60 * 60000;
 const RATE_WINDOW = 15 * 60000;
 const RATE_MAX = 10;
+const LOGIN_MAX = 5; // wrong passwords (or 2FA codes) per address and per account before a 15-minute lockout
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -49,8 +51,18 @@ function verifyPassword(password, stored) {
   });
 }
 
+// Names that look official ("admin", "TreeHost_Support") are reserved, so nobody can pose as the team.
+const RESERVED_EXACT = new Set(['root', 'sysadmin', 'superuser', 'support', 'staff', 'mod', 'mods', 'owner', 'system', 'security', 'billing',
+  'help', 'info', 'abuse', 'postmaster', 'webmaster', 'hostmaster', 'noreply', 'api', 'server', 'console', 'null', 'undefined', 'team']);
+const RESERVED_START = ['admin', 'administrator', 'treehost', 'moderator', 'official', 'staffteam', 'supportteam'];
+function isReservedUsername(u) {
+  const n = String(u || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/\d+$/, '');
+  return RESERVED_EXACT.has(n) || RESERVED_START.some((r) => n.startsWith(r)) || n.endsWith('admin');
+}
+
 function validateUsername(u) {
   if (!/^[A-Za-z0-9_.-]{3,32}$/.test(String(u || ''))) throw httpError(400, 'Username must be 3-32 letters, numbers, dots, dashes or _');
+  if (isReservedUsername(u)) throw httpError(400, "That username is reserved, so nobody can pretend to be the Tree Host team. Please pick another.");
 }
 
 function validatePassword(p) {
@@ -152,6 +164,7 @@ class Auth {
       restriction: u.restriction || null,
       lastLogin: u.lastLogin || null,
       emailVerified: u.firebaseUid ? !!u.emailVerified : true,
+      twoFactor: !!(u.mfa && u.mfa.on),
       // An Owner email that isn't verified yet: it becomes Owner as soon as the email is verified.
       ownerPending: !!u.email && this.adminEmails.has(u.email) && u.role !== 'owner',
     };
@@ -223,13 +236,73 @@ class Auth {
 
   // ----- rate limiting -----
 
-  checkRate(keys) {
+  checkRate(keys, max = RATE_MAX) {
     const now = Date.now();
     for (const key of keys) {
       const recent = (this.attempts.get(key) || []).filter((t) => now - t < RATE_WINDOW);
       this.attempts.set(key, recent);
-      if (recent.length >= RATE_MAX) throw httpError(429, 'Too many attempts. Try again in 15 minutes.');
+      if (recent.length >= max) throw httpError(429, 'Too many attempts. Try again in 15 minutes.');
     }
+  }
+
+  // ----- two-factor sign-in (authenticator app codes, src/totp.js) -----
+
+  /** Asks for (and checks) the 2FA code when the account has 2FA on. A wrong code counts like a wrong password. */
+  checkSecondFactor(user, code, keys) {
+    if (!user.mfa || !user.mfa.on) return;
+    if (!code) throw httpError(401, 'Enter the 6-digit code from your authenticator app.', 'MFA_REQUIRED');
+    if (!this.useSecondFactor(user, code)) {
+      this.recordFailure(keys);
+      throw httpError(401, "That code didn't work. Use the newest code in your authenticator app, or one of your recovery codes.", 'MFA_INVALID');
+    }
+  }
+
+  /** A current authenticator code (each one works once) or an unused recovery code. */
+  useSecondFactor(user, code) {
+    const c = String(code || '').trim();
+    const step = totp.verify(user.mfa.secret, c);
+    if (step !== null && step > (user.mfa.lastStep || 0)) {
+      user.mfa.lastStep = step;
+      this.save().catch(() => {});
+      return true;
+    }
+    const h = sha256(c.toUpperCase().replace(/[^A-Z0-9]/g, ''));
+    const i = (user.mfa.recovery || []).indexOf(h);
+    if (i >= 0) {
+      user.mfa.recovery.splice(i, 1);
+      this.save().catch(() => {});
+      return true;
+    }
+    return false;
+  }
+
+  /** Step 1: a new secret to add to the authenticator app (not on until a code from it is entered). */
+  async startTwoFactor(user) {
+    if (user.mfa && user.mfa.on) throw httpError(400, 'Two-factor authentication is already on.');
+    const secret = totp.newSecret();
+    user.mfaPending = { secret, at: Date.now() };
+    await this.save();
+    return { secret, uri: totp.uri(secret, user.email || user.username) };
+  }
+
+  /** Step 2: a code from the app turns it on. Returns 8 one-time recovery codes (shown once). */
+  async enableTwoFactor(user, code) {
+    const p = user.mfaPending;
+    if (!p || Date.now() - p.at > 30 * 60000) throw httpError(400, 'Start the setup again (it expires after 30 minutes).');
+    const step = totp.verify(p.secret, code);
+    if (step === null) throw httpError(400, "That code didn't match. Check the time on your phone is set automatically, then try the newest code.");
+    const recovery = Array.from({ length: 8 }, () => crypto.randomBytes(5).toString('hex').toUpperCase().replace(/(.{5})(.{5})/, '$1-$2'));
+    user.mfa = { on: true, secret: p.secret, at: Date.now(), lastStep: step, recovery: recovery.map((r) => sha256(r.replace('-', ''))) };
+    delete user.mfaPending;
+    await this.save();
+    return { recovery };
+  }
+
+  async disableTwoFactor(user, code) {
+    if (!user.mfa || !user.mfa.on) return;
+    if (!this.useSecondFactor(user, code)) throw httpError(400, "That code didn't work.");
+    delete user.mfa;
+    await this.save();
   }
 
   recordFailure(keys) {
@@ -269,9 +342,9 @@ class Auth {
     return user;
   }
 
-  async login({ username, password }, ip) {
+  async login({ username, password, code }, ip) {
     const keys = [`ip:${ip}`, `user:${String(username || '').toLowerCase()}`];
-    this.checkRate(keys);
+    this.checkRate(keys, LOGIN_MAX);
     const user = this.findByLogin(username);
     const ok = user ? await verifyPassword(password, user.passHash) : await verifyPassword(password, 'scrypt$AAAA$AAAA');
     if (!user || !ok) {
@@ -279,6 +352,7 @@ class Auth {
       throw httpError(401, 'Wrong username, email or password', 'LOGIN');
     }
     if (user.disabled) throw httpError(403, 'This account has been suspended. Contact support.', 'DISABLED');
+    this.checkSecondFactor(user, code, keys);
     user.lastLogin = Date.now();
     this.save().catch(() => {});
     return this.createSession(user);
@@ -525,6 +599,8 @@ class Auth {
     const ownerEmail = this.isAdminEmail(id);
     if (user) {
       if (user.disabled) throw httpError(403, 'This account has been suspended. Contact support.', 'DISABLED');
+      this.checkRate([`fb2fa:${user.id}`], LOGIN_MAX);
+      this.checkSecondFactor(user, body.code, [`fb2fa:${user.id}`]);
       if (id.email && user.email !== id.email) user.email = id.email;
       if (ownerEmail && user.role !== 'owner') user.role = 'owner';
       user.emailVerified = !!(id.emailVerified || id.provider === 'google.com');

@@ -364,18 +364,79 @@ TREEHOST_BACKUP_RSYNC=u123456@u123456.your-storagebox.de:tree-host
 
 ## 10. Security checklist
 
+What Tree Host does by itself, and what you set up on the machine. `sudo bash /opt/tree-host/deploy/doctor.sh` checks
+most of the setup items for you.
+
+### Sign-in and access (built in)
+
+- **Two-factor sign-in for staff.** On the real site (an `https://` address) every staff account must turn on
+  two-factor sign-in (a 6-digit code from an authenticator app) before the Staff Console opens; until then it can only
+  do what a customer can. Each account gets 8 one-time recovery codes. Customers can turn it on too (Account).
+  `TREEHOST_STAFF_2FA=0` turns the requirement off; don't, on a public site.
+- **No look-alike names.** Usernames like `admin`, `Admin_1`, `TreeHostSupport`, `support`, `moderator` or `owner`
+  can't be registered, so nobody can pose as the team. There's no built-in "admin" account: the first account made is
+  the Owner, under your own name.
+- **Login lockout.** 5 wrong passwords or 2FA codes from one address (or for one account) lock it out for 15 minutes.
+- **Least privilege.** Give people the lowest role that does the job: **Support** for helpers (no files, settings or
+  deleting), **Admin** only for people you trust with money and every customer's data. Roles & permissions in the Staff
+  Console shows exactly what each role can do.
+- **Session cookies** are HttpOnly, SameSite=Strict and Secure (https only), and expire after 30 days.
+
+### The website (built in, plus Caddy)
+
+- **HTTPS only:** Caddy gets the certificate and redirects http to https; HSTS (with subdomains) is on.
+- **Security headers:** a Content Security Policy (scripts only from Tree Host, plus Google's sign-in when Firebase is
+  on; each page's own inline scripts are allowed by their exact hash), `X-Frame-Options: DENY` and
+  `frame-ancestors 'none'` against clickjacking, `nosniff`, and no referrer.
+- **No server banner:** Node sends none, and `deploy/Caddyfile` removes Caddy's (`-Server`). There are no directory
+  listings, and paths outside the site's files are refused.
+- **Input checks:** every form and API request is size-limited and validated on the server; text shown in pages is
+  escaped.
+- **Cloud WAF:** put the **website** (treehost.online) behind Cloudflare's proxy (orange cloud) once you launch, then set
+  `TREEHOST_TRUST_CLOUDFLARE=1`. Keep `play.` and the game ports DNS-only (grey cloud): Cloudflare's free plan doesn't
+  proxy Minecraft. Leave `TREEHOST_TRUST_CLOUDFLARE=0` otherwise, or visitors could fake their IP to dodge sign-in limits.
+
+### Minecraft servers (built in)
+
+- **One container per server:** hard memory and swap limits, a CPU limit and a process limit (stops fork bombs and
+  runaway loops), all Linux capabilities dropped, `no-new-privileges`, a read-only system, and it runs as an unprivileged
+  user (never root). Only that server's own folder is mounted. Don't turn isolation off on a public host.
+- **Tree Host itself runs as the `treehost` user**, not root, with systemd hardening (`NoNewPrivileges`,
+  `ProtectSystem`, `ProtectHome`, `PrivateTmp`).
+- **Disk:** each plan has a disk limit, checked every few minutes; a server over it is stopped until it's cleaned up.
+- **Files stay inside the server folder:** the file manager refuses `../` paths and never follows links; world uploads
+  refuse unsafe paths, skip links, never write through a link, and can't unpack to more than they claim.
+- **Console commands** go to the Minecraft console only (never a system shell), one line at a time with control
+  characters removed, so a command can't smuggle in another.
+- **Jar scanning:** uploaded plugin and mod jars (and jars bundled inside them) are checked for known Minecraft malware
+  (fractureiser, Skyrage) before they're installed. A match is refused, logged, and the team gets a notification.
+- **Random ports:** new servers get a random free port from the range, not the next one in line.
+
+### The machine (you set up)
+
 - Use SSH keys and disable password login (`PasswordAuthentication no` in `/etc/ssh/sshd_config`).
-- Keep Ubuntu updated: `sudo apt update && sudo apt upgrade` (or turn on `unattended-upgrades`).
-- Every Minecraft server runs in its own Docker container: no access to the host, its own memory/CPU/process limits,
-  a read-only system, and only its own folder mounted. Don't turn isolation off on a public host.
-- Only give **Admin** to people you trust with money and every customer's data. Use **Support** for helpers.
+- **Automatic security updates:** `install.sh` turns on Ubuntu's unattended-upgrades (no automatic reboots). Reboot
+  for kernel updates during a quiet hour; Tree Host starts every server again afterwards.
+- **Off-site backups:** backups run every night, but a copy on the same machine doesn't survive the machine. Set
+  `TREEHOST_BACKUP_RSYNC` in `/etc/tree-host.env` (e.g. a Hetzner Storage Box) so each one is also copied elsewhere.
+  Customer and billing records are also in Firebase, which is separate from the machine.
+- **Game DDoS protection:** OVH's game firewall filters attacks on the Minecraft ports before they reach the machine
+  (turn on the game profile for the port range). TCPShield or Cloudflare Spectrum can sit in front later if attacks
+  outgrow it.
 - Never share `/etc/tree-host.env` or `/etc/tree-host-firebase.json`: they hold your Stripe, email and Firebase keys.
-- Put the **website** (treehost.online) behind Cloudflare's proxy (orange cloud) once you launch, and then set
-  `TREEHOST_TRUST_CLOUDFLARE=1`. Keep `play.` and the game ports DNS-only (grey cloud): Cloudflare doesn't proxy Minecraft.
-  On OVH, also turn on the game firewall profile for the Minecraft ports.
-- Leave `TREEHOST_TRUST_CLOUDFLARE=0` unless the website really sits behind Cloudflare's orange-cloud proxy; otherwise
-  visitors could fake their IP address to dodge sign-in limits.
 - Keep the Realtime Database rules locked (`.read`/`.write` false). Test-mode rules would let anyone read every account.
+
+### When Tree Host grows past one machine (later)
+
+At launch the website and the Minecraft servers share one machine, with the servers in locked-down containers. When a
+second machine is added for game servers, keep the website on its own machine and make the game machines take orders
+only from it:
+
+- the game machine's API answers only the website's IP address (firewall allow-list), over mutual TLS (both sides prove
+  who they are with certificates);
+- requests carry short-lived signed tokens, so a captured one can't be replayed;
+- disk I/O limits per container (`--device-read-bps`/`--device-write-bps` for the data disk) once servers share disks
+  with other customers' heavy workloads.
 
 ---
 

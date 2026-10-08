@@ -1,6 +1,7 @@
 'use strict';
 const MOTD = require('./motd');
 const { diagnose } = require('./doctor');
+const { scanJar } = require('./jarscan');
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
@@ -1137,7 +1138,10 @@ class Instance extends EventEmitter {
 
   write(cmd) {
     if (!this.proc) throw new Error('Server is not running.');
-    this.proc.stdin.write(cmd.replace(/^\//, '') + '\n');
+    // One command at a time: line breaks and control characters would smuggle extra commands into the console.
+    const clean = String(cmd).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 2000);
+    if (!clean) return;
+    this.proc.stdin.write(clean.replace(/^\//, '') + '\n');
   }
 
   command(cmd) {
@@ -1387,6 +1391,7 @@ class Instance extends EventEmitter {
       out.on('error', reject);
       out.on('finish', resolve);
     });
+    await this.assertCleanJar(tmp, file);
     const meta = await readPluginMeta(tmp);
     if (meta.name === 'TreeHostStaff') {
       await fsp.rm(tmp, { force: true });
@@ -1423,6 +1428,16 @@ class Instance extends EventEmitter {
     return { file, plugin: meta.name || null, version: meta.version || null, replaced, restarted };
   }
 
+  /** Refuses (and deletes) an uploaded jar that contains known Minecraft malware (src/jarscan.js). */
+  async assertCleanJar(tmp, file) {
+    const r = await scanJar(tmp).catch(() => ({ infected: false }));
+    if (!r.infected) return;
+    await fsp.rm(tmp, { force: true });
+    this.sysLog(`Blocked ${file}: it contains ${r.family} malware (${r.entry}). It was not installed.`);
+    this.logActivity('security', 'Tree Host', `blocked the jar ${file}: it contains ${r.family} malware`);
+    throw Object.assign(new Error(`${file} contains code from known Minecraft malware (${r.family}), so it was not installed. Download plugins only from their official page.`), { status: 400 });
+  }
+
   async savePluginUpload(name, stream) {
     const file = safeFileName(name);
     this.assertNotProtected(path.join(this.pluginDir, file));
@@ -1438,6 +1453,7 @@ class Instance extends EventEmitter {
       out.on('error', reject);
       out.on('finish', resolve);
     });
+    await this.assertCleanJar(tmp, file);
     try {
       await fsp.rename(tmp, dest);
     } catch (e) {
@@ -1856,10 +1872,15 @@ class Manager extends EventEmitter {
   }
 
   async nextCustomerPort() {
+    // A random free port in the range, so server addresses can't be guessed one after another.
     const used = this.usedPorts();
-    for (let p = this.customerPorts.lo; p <= this.customerPorts.hi; p++) {
-      if (!used.has(p) && (await isPortFree(p))) return p;
+    const ports = [];
+    for (let p = this.customerPorts.lo; p <= this.customerPorts.hi; p++) if (!used.has(p)) ports.push(p);
+    for (let i = ports.length - 1; i > 0; i--) {
+      const j = crypto.randomInt(i + 1);
+      [ports[i], ports[j]] = [ports[j], ports[i]];
     }
+    for (const p of ports) if (await isPortFree(p)) return p;
     throw Object.assign(new Error('No free ports left on this host. Contact support.'), { status: 503 });
   }
 

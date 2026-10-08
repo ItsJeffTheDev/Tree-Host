@@ -154,9 +154,15 @@ async function extractZip(zipPath, dest, { maxBytes = 8 * 1024 ** 3 } = {}) {
       await fh.read(data, 0, compSize, start);
       let out;
       if (method === 0) out = data;
-      else if (method === 8) out = zlib.inflateRawSync(data);
+      else if (method === 8) out = zlib.inflateRawSync(data, { maxOutputLength: rawSize + 1024 }); // a zip can't lie about its size
       else throw Object.assign(new Error(`That zip uses a compression method we can't read (${method}). Zip it again with the standard tool.`), { status: 400 });
       await fsp.mkdir(path.dirname(target), { recursive: true });
+      // Never write through a link (one left inside the folder could point outside it): check where it really goes.
+      const realDir = await fsp.realpath(path.dirname(target));
+      const realRoot = await fsp.realpath(root);
+      if (realDir !== realRoot && !realDir.startsWith(realRoot + path.sep)) throw Object.assign(new Error('That zip would write outside the server folder.'), { status: 400 });
+      const existing = await fsp.lstat(target).catch(() => null);
+      if (existing && existing.isSymbolicLink()) await fsp.unlink(target);
       await fsp.writeFile(target, out);
       names.push(name);
     }
@@ -166,4 +172,44 @@ async function extractZip(zipPath, dest, { maxBytes = 8 * 1024 ** 3 } = {}) {
   return names;
 }
 
-module.exports = { writeZip, extractZip, crc32 };
+/**
+ * Calls fn(name, data) for each file in a zip (or jar), reading at most maxBytes in total (for scanning uploads).
+ */
+async function forEachEntry(zipPath, fn, { maxBytes = 512 * 1024 ** 2 } = {}) {
+  const fh = await fsp.open(zipPath, 'r');
+  try {
+    const { size } = await fh.stat();
+    const tailLen = Math.min(size, 65557);
+    const tail = Buffer.alloc(tailLen);
+    await fh.read(tail, 0, tailLen, size - tailLen);
+    let eocd = -1;
+    for (let i = tailLen - 22; i >= 0; i--) if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw Object.assign(new Error("That file isn't a zip."), { status: 400 });
+    const count = tail.readUInt16LE(eocd + 10);
+    const cd = Buffer.alloc(tail.readUInt32LE(eocd + 12));
+    await fh.read(cd, 0, cd.length, tail.readUInt32LE(eocd + 16));
+    let total = 0;
+    for (let n = 0, p = 0; n < count && p + 46 <= cd.length; n++) {
+      if (cd.readUInt32LE(p) !== 0x02014b50) break;
+      const method = cd.readUInt16LE(p + 10);
+      const compSize = cd.readUInt32LE(p + 20);
+      const rawSize = cd.readUInt32LE(p + 24);
+      const nLen = cd.readUInt16LE(p + 28);
+      const lho = cd.readUInt32LE(p + 42);
+      const name = cd.toString('utf8', p + 46, p + 46 + nLen);
+      p += 46 + nLen + cd.readUInt16LE(p + 30) + cd.readUInt16LE(p + 32);
+      if (name.endsWith('/') || (method !== 0 && method !== 8)) continue;
+      total += rawSize;
+      if (total > maxBytes) throw Object.assign(new Error('That file unpacks to more than can be checked.'), { status: 400 });
+      const lh = Buffer.alloc(30);
+      await fh.read(lh, 0, 30, lho);
+      const data = Buffer.alloc(compSize);
+      await fh.read(data, 0, compSize, lho + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28));
+      await fn(name, method === 0 ? data : zlib.inflateRawSync(data, { maxOutputLength: rawSize + 1024 }));
+    }
+  } finally {
+    await fh.close();
+  }
+}
+
+module.exports = { writeZip, extractZip, forEachEntry, crc32 };

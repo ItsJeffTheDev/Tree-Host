@@ -37,6 +37,7 @@ function fromActivity(e) {
     return { section: 'actions', perm: 'moderation.view', title: 'New appeal', link: num ? `actions/${num}` : 'actions', urgent: true };
   }
   if (e.kind === 'crash') return { section: 'servers', perm: 'servers.viewAll', title: 'Server crashed' };
+  if (e.kind === 'security') return { section: 'servers', perm: 'servers.viewAll', title: 'Malware blocked', urgent: true };
   return null;
 }
 

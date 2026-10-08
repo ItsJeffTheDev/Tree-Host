@@ -55,7 +55,7 @@
         box.innerHTML = members.map((m, i) => `
           <article class="member reveal d${(i % 3) + 1} ${/owner/i.test(m.role) ? 'lead' : ''}">
             <div class="member-ava">
-              ${m.mcName ? `<img src="https://mc-heads.net/avatar/${encodeURIComponent(m.mcName)}/112" alt="${esc(m.username)}'s Minecraft head" width="112" height="112" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{textContent:'${esc(m.username.charAt(0).toUpperCase())}'}))">` : `<span>${esc(m.username.charAt(0).toUpperCase())}</span>`}
+              ${m.mcName ? `<img src="https://mc-heads.net/avatar/${encodeURIComponent(m.mcName)}/112" alt="${esc(m.username)}'s Minecraft head" width="112" height="112" loading="lazy" data-initial="${esc(m.username.charAt(0).toUpperCase())}">` : `<span>${esc(m.username.charAt(0).toUpperCase())}</span>`}
             </div>
             <h3>${esc(m.username)}</h3>
             <div class="member-role">${esc(m.role)}${m.title ? ` · ${esc(m.title)}` : ''}</div>
@@ -63,6 +63,8 @@
             ${m.since ? `<span class="small muted">On the team since ${esc(since(m.since))}</span>` : ''}
           </article>`).join('');
         box.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+        // A Minecraft head that fails to load becomes the person's initial (no inline handlers: the page has a CSP).
+        box.querySelectorAll('img[data-initial]').forEach((img) => img.addEventListener('error', () => img.replaceWith(Object.assign(document.createElement('span'), { textContent: img.dataset.initial }))));
       })
       .catch(() => (box.innerHTML = '<p class="muted" style="text-align:center;grid-column:1/-1">Could not load the team. Please refresh.</p>'));
   })();

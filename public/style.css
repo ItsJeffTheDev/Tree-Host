@@ -710,3 +710,8 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .sn-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .sn-when { white-space: nowrap; }
 .sn-toast { cursor: pointer; max-width: 360px; overflow-wrap: anywhere; }
+
+/* Two-factor sign-in setup */
+.tf-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
+.tf-key { font-size: 15px; letter-spacing: 1px; word-break: break-all; }
+.tf-codes { margin: 0; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; font-family: var(--mono); font-size: 15px; line-height: 1.7; columns: 2; }

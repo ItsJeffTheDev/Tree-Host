@@ -249,7 +249,7 @@ function showFirebaseAuth(forceMode) {
   /** Hands the Firebase sign-in to Tree Host, which answers with a session (or asks for a username). */
   const finish = async (user, more = {}) => {
     const idToken = await user.getIdToken();
-    const r = await api('POST', '/api/auth/firebase', { idToken, ...more });
+    const r = await withSecondFactor((code) => api('POST', '/api/auth/firebase', { idToken, ...more, ...(code ? { code } : {}) }));
     if (r.needsProfile) {
       state.pendingProfile = { suggested: r.suggested || '' };
       // Check if we've saved the username locally (fallback for Firebase sync issues)
@@ -469,7 +469,8 @@ function showAuth(forceMode) {
       reset: '/api/auth/reset',
     }[mode];
     try {
-      await api('POST', url, body);
+      if (mode === 'login') await withSecondFactor((code) => api('POST', url, code ? { ...body, code } : body));
+      else await api('POST', url, body);
       if (mode === 'forgot') {
         const ok = $('#auth-ok');
         ok.textContent = 'If an account uses that email, a reset link is on its way. Check your inbox (and spam).';
@@ -587,7 +588,7 @@ function renderUserBox() {
     <div class="row" style="flex-wrap:wrap;margin-top:6px">
       <button class="btn sm" id="ub-account">Account</button>
       ${state.me.hosted ? '<button class="btn sm" id="ub-billing">' + ic('card') + ' Billing</button>' : ''}
-      ${isTeam() && hasPerm('console.access') ? '<a class="btn sm" href="/admin">' + ic('tools') + ' Staff Console</a>' : ''}
+      ${isTeam() && (hasPerm('console.access') || state.me.user.needs2fa) ? '<a class="btn sm" href="/admin">' + ic('tools') + ' Staff Console</a>' : ''}
       <button class="btn sm" id="ub-switch" title="Switch to another account or add one">⇄ Switch</button>
       <button class="btn sm" id="ub-logout">Sign out</button>
     </div>`;
@@ -666,6 +667,108 @@ function openModal(html) {
   return { root, close };
 }
 
+// ---------- two-factor sign-in (authenticator app codes, src/totp.js) ----------
+
+/** Asks for the 6-digit code (or a recovery code) during sign-in. Resolves with the code, or null if cancelled. */
+function askSecondFactor(message) {
+  return new Promise((resolve) => {
+    const { root, close } = openModal(`
+      <h2>${ic('lock')} Two-factor sign-in</h2>
+      <p class="muted" style="margin-top:-6px">${esc(message || 'Enter the 6-digit code from your authenticator app.')}</p>
+      <form id="tf-form" class="stack">
+        <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" placeholder="123456" required style="font-size:22px;letter-spacing:4px;text-align:center">
+        <p class="hint" style="margin:0">Lost your phone? Type one of your recovery codes instead.</p>
+        <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Sign in</button></div>
+      </form>`);
+    let done = false;
+    $('#tf-form', root).addEventListener('submit', (e) => {
+      e.preventDefault();
+      done = true;
+      const code = e.target.elements.code.value.trim();
+      close();
+      resolve(code);
+    });
+    $$('[data-close]', root).forEach((b) => b.addEventListener('click', () => !done && resolve(null)));
+    $('input', root).focus();
+  });
+}
+
+/** Runs a sign-in request, asking for the 2FA code (and retrying) when the account has it on. */
+async function withSecondFactor(send) {
+  try {
+    return await send(undefined);
+  } catch (err) {
+    if (err.code !== 'MFA_REQUIRED') throw err;
+    let message;
+    for (;;) {
+      const code = await askSecondFactor(message);
+      if (!code) throw Object.assign(new Error('Sign-in cancelled.'), { code: 'CANCELLED' });
+      try {
+        return await send(code);
+      } catch (e2) {
+        if (e2.code !== 'MFA_INVALID') throw e2;
+        message = e2.message;
+      }
+    }
+  }
+}
+
+function renderTwoFactorCard(box) {
+  if (!box) return;
+  const u = state.me.user;
+  const required = !!u.needs2fa || (u.twoFactor && isTeam() && hasPerm('console.access') && /^https:/.test(state.me.publicUrl || ''));
+  box.innerHTML = u.twoFactor
+    ? `<h3>${ic('lock')} Two-factor sign-in</h3>
+       <p style="margin:0"><span class="badge green">${ic('check')} On</span> Signing in asks for a code from your authenticator app.</p>
+       ${required ? '<p class="hint" style="margin:0">Staff accounts must keep it on.</p>' : '<div class="row"><button class="btn sm" id="tf-off">Turn off</button></div>'}`
+    : `<h3>${ic('lock')} Two-factor sign-in</h3>
+       <p class="hint" style="margin:0">Protects your account even if someone learns your password: signing in also asks for a 6-digit code
+       from an app like Google Authenticator, Authy or 1Password.${u.needs2fa ? ' <b>Staff need it on to use the Staff Console.</b>' : ''}</p>
+       <div class="row"><button class="btn primary sm" id="tf-on">Set up two-factor sign-in</button></div>`;
+  if ($('#tf-on', box)) $('#tf-on', box).addEventListener('click', () => attempt(() => setUpTwoFactor(box)));
+  if ($('#tf-off', box)) {
+    $('#tf-off', box).addEventListener('click', () => attempt(async () => {
+      const code = await askSecondFactor('Enter a current code to turn two-factor sign-in off.');
+      if (!code) return;
+      await api('POST', '/api/auth/2fa/disable', { code });
+      state.me.user.twoFactor = false;
+      toast('Two-factor sign-in is off.');
+      openAccount();
+    }));
+  }
+}
+
+async function setUpTwoFactor(box) {
+  const { secret, uri } = await api('POST', '/api/auth/2fa/setup');
+  box.innerHTML = `<h3>${ic('lock')} Set up two-factor sign-in</h3>
+    <ol class="tf-steps">
+      <li>Open your authenticator app and add an account. Choose <b>Enter a setup key</b> (or tap the link below on your phone).</li>
+      <li>Account name: <b>Tree Host</b>. Key: <code class="tf-key">${esc(secret.replace(/(.{4})/g, '$1 ').trim())}</code> <button type="button" class="btn sm" id="tf-copy">${ic('copy')} Copy</button>
+        <br><a href="${esc(uri)}" class="small">Open in authenticator app</a></li>
+      <li>Type the 6-digit code it shows:</li>
+    </ol>
+    <form id="tf-enable" class="row"><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required style="max-width:160px;letter-spacing:3px">
+      <button class="btn primary">Turn on</button></form>`;
+  $('#tf-copy', box).addEventListener('click', () => navigator.clipboard.writeText(secret).then(() => toast('Key copied.')));
+  $('#tf-enable', box).addEventListener('submit', (e) => {
+    e.preventDefault();
+    attempt(async () => {
+      const { recovery } = await api('POST', '/api/auth/2fa/enable', { code: e.target.elements.code.value.trim() });
+      state.me.user.twoFactor = true;
+      delete state.me.user.needs2fa;
+      box.innerHTML = `<h3>${ic('check')} Two-factor sign-in is on</h3>
+        <p style="margin:0">Save these <b>recovery codes</b> somewhere safe (a password manager, or printed). Each one signs you in once
+        if you lose your phone. They are only shown now.</p>
+        <pre class="tf-codes">${recovery.map(esc).join('\n')}</pre>
+        <div class="row"><button type="button" class="btn sm" id="tf-copy-codes">${ic('copy')} Copy codes</button>
+        ${location.pathname.startsWith('/admin') ? '<button type="button" class="btn primary sm" id="tf-reload">Open the Staff Console</button>' : ''}</div>`;
+      $('#tf-copy-codes', box).addEventListener('click', () => navigator.clipboard.writeText(recovery.join('\n')).then(() => toast('Recovery codes copied.')));
+      if ($('#tf-reload', box)) $('#tf-reload', box).addEventListener('click', () => location.reload());
+    });
+  });
+  $('input', box).focus();
+}
+
 // ---------- account ----------
 
 async function openAccount() {
@@ -719,7 +822,9 @@ async function openAccount() {
       </div>
       <div><button class="btn">Change password</button></div>
     </form>
+    <div class="card stack" id="acc-2fa"></div>
     <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+  renderTwoFactorCard($('#acc-2fa', root));
 
   const loadTokens = async () => {
     const list = await api('GET', '/api/auth/tokens');
