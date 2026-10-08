@@ -26,6 +26,7 @@ const { StaffNotices } = require('./staff-notices');
 const { Players } = require('./players');
 const lagdoctor = require('./lagdoctor');
 const pluginUpdates = require('./pluginupdates');
+const { Playit } = require('./playit');
 const { Moderation, TYPES, REASONS } = require('./moderation');
 const MOTD = require('./motd');
 const backups = require('./backups');
@@ -652,6 +653,8 @@ manager.on('status', (inst) => {
   if (!inst.proc && inst.status === 'stopped') players.onStopped(inst).catch(() => {});
 });
 manager.on('removed', (id) => players.forget(id));
+let playit = null; // src/playit.js, when TREEHOST_PLAYIT_SECRET_PATH is set (see main)
+manager.on('removed', (id) => playit && playit.release(id).catch((e) => console.error(`[playit] ${id}: ${e.message}`)));
 
 // Plugin updates (src/pluginupdates.js): the first start after an update decides whether to keep it.
 manager.on('status', (inst) => {
@@ -2160,6 +2163,7 @@ route('POST', '/api/servers', async (req) => {
     installModpackFiles(inst, pack).catch((e) => inst.sysLog(`Modpack install failed: ${e.message}`));
   }
   inst.logActivity('server', who(req), `created ${inst.provider.label} ${inst.cfg.version} server "${inst.cfg.name}"`);
+  if (playit) playit.ensure(inst).catch((e) => inst.sysLog(`Could not get a playit address yet (${e.message}). Tree Host tries again in a few minutes.`));
   return inst.toJSON();
 });
 route('GET', '/api/servers/:id', (req, res, p) => getFor(req, p.id).toJSON());
@@ -4128,6 +4132,19 @@ async function main() {
   await activity.init();
   if (TEAM) await staffNotices.init();
   await manager.init();
+  // playit.gg addresses for every server (the tester site on a PC without port forwarding: tools/Start-Testers.ps1).
+  if (env('PLAYIT_SECRET_PATH', '')) {
+    try {
+      // Behind a proxy, players come in through the proxy; demo servers are for the tour.
+      playit = new Playit(env('PLAYIT_SECRET_PATH', ''), { skip: (inst) => !!inst.cfg.isDemo || !!proxyOf(inst) });
+      const sync = () => playit.reconcile(manager).catch((e) => console.error(`[playit] ${e.message}`));
+      sync();
+      setInterval(sync, 5 * 60 * 1000);
+      console.log('  Addresses: every server gets a free playit.gg address.');
+    } catch (e) {
+      console.error(`  playit is not set up: ${e.message}`);
+    }
+  }
   for (const inst of manager.instances.values()) if (inst.cfg.sleeping && !inst.proc) startWaker(inst).catch(() => {});
   // The demo server is set up again on every start (fresh settings, and demos made by older versions get tidied).
   for (const inst of manager.instances.values()) if (inst.cfg.isDemo) setUpDemoServer(inst).catch((e) => console.error(`[demo server] ${e.message}`));

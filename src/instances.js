@@ -1720,6 +1720,8 @@ class Manager extends EventEmitter {
       this.instances.set(cfg.id, inst);
       if (cfg.lastPid && !this.docker) await this.cleanupOrphan(inst, cfg.lastPid);
       if (this.gameHost && !cfg.gateway) cfg.autoAddress = this.gameAddress(cfg.port);
+      // A playit.gg address (src/playit.js) wins while it still points at this port.
+      if (cfg.playit && cfg.playit.port === cfg.port && cfg.playit.address) cfg.autoAddress = cfg.playit.address;
     }
     await this.fixDuplicatePorts();
     this.memTimer = setInterval(() => this.pollMemory().catch(() => {}), 15000);
