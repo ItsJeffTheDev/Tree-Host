@@ -5,8 +5,10 @@
 //  - Staff can add more. A locked one works like the staff plugin: it's put back if it was removed or changed, and
 //    customers can't delete, turn off or replace it. An unlocked one is installed once per version: if the owner
 //    deletes it, it stays deleted until a new version is uploaded (or staff push it again).
-// Which servers get them: customer, demo and team servers of the Bukkit family (Paper, Purpur, Folia, ...), narrowed
-// down per plugin to the server types picked for it. Each server remembers what it got in cfg.managedPlugins.
+// Which servers get them: customer, demo and team servers that load plugins (Paper, Purpur, Folia, ... and the Velocity,
+// Waterfall and BungeeCord proxies). A plugin goes where its jar fits (plugin.yml = Paper family, bungee.yml = BungeeCord
+// and Waterfall, velocity-plugin.json = Velocity), or only to the server types picked for it. The staff plugin is Paper
+// family only. Each server remembers what it got in cfg.managedPlugins.
 
 const fs = require('fs');
 const fsp = fs.promises;
@@ -27,7 +29,9 @@ const MAX_JAR = 50 * 1024 * 1024;
 const HISTORY = 10;
 
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
-const BUKKIT_TYPES = describe().filter((p) => p.family === 'bukkit').map((p) => ({ id: p.id, label: p.label }));
+const PLUGIN_FAMILIES = ['bukkit', 'velocity', 'bungee'];
+const PLUGIN_TYPES = describe().filter((p) => PLUGIN_FAMILIES.includes(p.family)).map((p) => ({ id: p.id, label: p.label, family: p.family }));
+const BUKKIT_TYPES = PLUGIN_TYPES.filter((t) => t.family === 'bukkit');
 const clean = (v, n) => String(v ?? '').replace(/[\u0000-\u0008\u000b-\u001f<>]/g, '').trim().slice(0, n);
 const err = (status, message) => Object.assign(new Error(message), { status });
 
@@ -148,7 +152,9 @@ class ManagedPlugins {
     try {
       const m = await this.readMeta(tmp);
       if (m.invalid) throw err(400, "That jar couldn't be read. Is it damaged?");
-      if (!m.format || !/plugin\.yml$/.test(m.format)) throw err(400, 'That jar has no plugin.yml, so it is not a Bukkit/Paper plugin.');
+      m.platforms = (m.platforms || []).filter((x) => PLUGIN_FAMILIES.includes(x));
+      if (!m.platforms.length) throw err(400, 'That jar is not a server plugin: it has no plugin.yml (Paper), bungee.yml (BungeeCord/Waterfall) or velocity-plugin.json (Velocity).');
+      if (staff && m.format !== 'plugin.yml') throw err(400, 'The Tree Host staff plugin is a Paper plugin (it must have a plugin.yml).');
       if (staff && m.name !== 'TreeHostStaff') throw err(400, `That's "${m.name || 'an unnamed plugin'}", not the Tree Host staff plugin (its plugin.yml must say name: TreeHostStaff).`);
       if (!staff && m.name === 'TreeHostStaff') throw err(400, 'That is the Tree Host staff plugin: upload new versions of it on its own card.');
       return m;
@@ -175,6 +181,7 @@ class ManagedPlugins {
       locked: o.locked !== false,
       autoInstall: o.autoInstall !== false,
       paused: false,
+      platforms: m.platforms,
       serverTypes: this.types(o.serverTypes),
       size: buf.length,
       hash,
@@ -218,7 +225,7 @@ class ManagedPlugins {
     }
     p.history = this.pushHistory(p);
     await fsp.writeFile(this.jarPath(p), buf);
-    Object.assign(p, { filename, version, notes, hash, size: buf.length, uploadedAt: Date.now(), uploadedBy: by });
+    Object.assign(p, { filename, version, notes, hash, size: buf.length, uploadedAt: Date.now(), uploadedBy: by, platforms: m.platforms });
     await this.save();
     this.syncAllSoon();
     return p;
@@ -289,14 +296,21 @@ class ManagedPlugins {
 
   types(v) {
     const list = Array.isArray(v) ? v : String(v || '').split(',');
-    const ok = new Set(BUKKIT_TYPES.map((t) => t.id));
+    const ok = new Set(PLUGIN_TYPES.map((t) => t.id));
     return [...new Set(list.map((t) => String(t).trim().toLowerCase()).filter((t) => ok.has(t)))];
   }
 
   // ---------- which plugins go where ----------
 
+  /** Picked types win; none picked = every server the jar is a plugin for (plugins added before proxies: Paper family). */
   appliesTo(p, inst) {
-    return !p.paused && this.eligible(inst) && (!p.serverTypes.length || p.serverTypes.includes(inst.cfg.type));
+    if (p.paused || !this.eligible(inst)) return false;
+    return p.serverTypes.length ? p.serverTypes.includes(inst.cfg.type) : (p.platforms || ['bukkit']).includes(inst.provider.family);
+  }
+
+  /** The staff plugin is a Paper plugin: Paper-family servers only. */
+  staffApplies(inst) {
+    return !!this.staffJar && this.eligible(inst) && inst.provider.family === 'bukkit';
   }
 
   /** Lower-case file names on this server that customers can't touch (the staff plugin is handled by the instance). */
@@ -307,7 +321,7 @@ class ManagedPlugins {
   /** What Tree Host knows about a file in a server's plugin folder, for the dashboard (null if it's the owner's own). */
   infoFor(inst, file) {
     const f = String(file).toLowerCase().replace(/\.disabled$/, '');
-    if (f === STAFF_FILE.toLowerCase() && this.staffJar && this.eligible(inst)) return { id: STAFF_ID, builtIn: true, locked: true, name: 'Tree Host Staff' };
+    if (f === STAFF_FILE.toLowerCase() && this.staffApplies(inst)) return { id: STAFF_ID, builtIn: true, locked: true, name: 'Tree Host Staff' };
     const p = this.meta.plugins.find((x) => x.filename.toLowerCase() === f && this.appliesTo(x, inst));
     return p ? { id: p.id, builtIn: false, locked: p.locked, name: p.name, description: p.description } : null;
   }
@@ -400,7 +414,7 @@ class ManagedPlugins {
     const staff = p === STAFF_ID;
     const rows = [];
     for (const inst of this.manager.instances.values()) {
-      if (staff ? !(this.staffJar && this.eligible(inst)) : !this.appliesTo(p, inst)) continue;
+      if (staff ? !this.staffApplies(inst) : !this.appliesTo(p, inst)) continue;
       const file = staff ? STAFF_FILE : p.filename;
       const want = staff ? this.staffHash : p.hash;
       const full = path.join(inst.pluginDir, file);
@@ -432,6 +446,7 @@ class ManagedPlugins {
       locked: true,
       autoInstall: true,
       paused: false,
+      platforms: ['bukkit'],
       serverTypes: [],
       size: this.staffJar ? this.staffJar.length : 0,
       hash: this.staffHash,
@@ -444,7 +459,7 @@ class ManagedPlugins {
   }
 
   async view(id, { servers = false } = {}) {
-    const p = id === STAFF_ID ? this.staffView() : { ...this.get(id), builtIn: false };
+    const p = id === STAFF_ID ? this.staffView() : { platforms: ['bukkit'], ...this.get(id), builtIn: false };
     const cov = await this.coverage(id === STAFF_ID ? STAFF_ID : this.get(id));
     return { ...p, coverage: cov.counts, ...(servers ? { servers: cov.servers } : {}) };
   }
@@ -464,4 +479,4 @@ class ManagedPlugins {
   }
 }
 
-module.exports = { ManagedPlugins, STAFF_ID, BUKKIT_TYPES, MAX_JAR };
+module.exports = { ManagedPlugins, STAFF_ID, BUKKIT_TYPES, PLUGIN_TYPES, MAX_JAR };

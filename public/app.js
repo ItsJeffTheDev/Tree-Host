@@ -1354,7 +1354,7 @@ async function renderSettings(body) {
 OK: back up the world, then switch to ${patch.version} with a fresh world.
 Cancel: keep the current version.`)) return;
         await api('PATCH', `/api/servers/${s.id}`, { ...patch, downgrade: 'fresh-world' });
-        toast(`Switched to ${patch.version} with a fresh world. Your old world is in Backups.`);
+        toast(`Switched to ${patch.version} with a fresh world. Your old world is in Backups. Start the server to install ${patch.version}.`);
         return;
       }
       toast(s.pid ? 'Saved. Restart the server to apply.' : 'Settings saved');
@@ -1637,11 +1637,11 @@ function bindDoctorBox(s, el) {
 // ---------- Bedrock crossplay card ----------
 
 function bedrockCardHtml(s) {
-  if (s.family !== 'bukkit' || !isTeam()) return '';
+  if (!['bukkit', 'velocity', 'bungee'].includes(s.family) || !isTeam()) return '';
   const edit = can('plugins', s);
   return `<div class="card stack" id="bedrock-card">
     <h3>${ic('phone')} Bedrock players <span class="muted small" style="font-weight:400">(phones, tablets, consoles and Windows can join)</span></h3>
-    <p class="hint" style="margin:0">Turns on Geyser and Floodgate, so Bedrock Edition players join with the <b>same address and port</b> as Java players, without a Java account.</p>
+    <p class="hint" style="margin:0">Turns on Geyser and Floodgate, so Bedrock Edition players join with the <b>same address and port</b> as Java players, without a Java account.${s.kind === 'proxy' ? ' On a proxy they reach every server in its network.' : ''}</p>
     ${s.bedrock
       ? `<div class="row" style="flex-wrap:wrap;align-items:center"><span class="badge green">On</span><span class="small">Bedrock address: <b class="copy" data-copy="${esc((s.publicAddress || '').split(':')[0])}">${esc((s.publicAddress || 'your address').split(':')[0])}</b> port <b>${s.port}</b></span>
           ${edit ? '<button class="btn sm" id="bedrock-off" type="button">Turn off</button>' : ''}</div>`

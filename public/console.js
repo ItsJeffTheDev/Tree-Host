@@ -430,6 +430,7 @@ async function consoleStaffPlugin(body) {
   let data = await api('GET', '/api/admin/managed-plugins');
   let q = '';
   const typeLabel = (id) => (data.types.find((t) => t.id === id) || { label: id }).label;
+  const fitsLabel = (p) => mpFits(p.platforms);
 
   const reload = async () => {
     data = await api('GET', '/api/admin/managed-plugins');
@@ -456,7 +457,7 @@ async function consoleStaffPlugin(body) {
       p.builtIn && p.source === 'uploaded' ? '<span class="badge green" title="A build uploaded here, not the one bundled with Tree Host">Uploaded build</span>' : '',
       p.builtIn && p.source === 'missing' ? '<span class="badge red">Jar missing</span>' : '',
     ].join('');
-    const types = p.serverTypes.length ? p.serverTypes.map((t) => `<span class="tag">${esc(typeLabel(t))}</span>`).join('') : '<span class="tag">All Bukkit-family servers</span>';
+    const types = p.serverTypes.length ? p.serverTypes.map((t) => `<span class="tag">${esc(typeLabel(t))}</span>`).join('') : `<span class="tag">${esc(fitsLabel(p))}</span>`;
     return `<div class="mp-card${p.paused ? ' paused' : ''}" data-id="${esc(p.id)}">
       <div class="mp-icon${p.builtIn ? ' builtin' : ''}">${ic(p.builtIn ? 'shield' : 'puzzle')}</div>
       <div class="mp-main">
@@ -521,7 +522,7 @@ async function consoleStaffPlugin(body) {
       $$('[data-mp]', el).forEach((b) =>
         b.addEventListener('click', () => {
           const act = b.dataset.mp;
-          if (act === 'details') mpDetailsModal(p.id, { typeLabel, canManage, reload });
+          if (act === 'details') mpDetailsModal(p.id, { typeLabel, fitsLabel, canManage, reload });
           if (act === 'version') mpVersionModal(p, reload);
           if (act === 'edit') mpSettingsModal(p, data.types, reload);
           if (act === 'remove') mpRemoveModal(p, reload);
@@ -569,7 +570,8 @@ async function mpReadPluginYml(file) {
     for (let i = 0, p = 0; i < count && p + 46 <= cd.byteLength; i++) {
       const nameLen = cd.getUint16(p + 28, true);
       const name = dec.decode(new Uint8Array(cd.buffer, p + 46, nameLen));
-      if (name === 'plugin.yml' || (name === 'paper-plugin.yml' && !hit)) hit = { method: cd.getUint16(p + 10, true), size: cd.getUint32(p + 20, true), local: cd.getUint32(p + 42, true) };
+      const rank = { 'plugin.yml': 4, 'paper-plugin.yml': 3, 'velocity-plugin.json': 2, 'bungee.yml': 1 }[name] || 0;
+      if (rank > (hit ? hit.rank : 0)) hit = { name, rank, method: cd.getUint16(p + 10, true), size: cd.getUint32(p + 20, true), local: cd.getUint32(p + 42, true) };
       p += 46 + nameLen + cd.getUint16(p + 30, true) + cd.getUint16(p + 32, true);
     }
     if (!hit || hit.size > 1 << 20) return null;
@@ -581,11 +583,15 @@ async function mpReadPluginYml(file) {
       blob = await new Response(blob.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
     } else if (hit.method !== 0) return null;
     const text = await blob.text();
+    if (hit.name.endsWith('.json')) {
+      const j = JSON.parse(text);
+      return { file: hit.name, name: j.name || j.id || '', version: j.version || '', description: j.description || '' };
+    }
     const field = (k) => {
       const m = new RegExp(`^${k}\\s*:\\s*(.*)$`, 'm').exec(text);
       return m ? m[1].replace(/\s+#.*$/, '').trim().replace(/^['"]|['"]$/g, '') : '';
     };
-    return { name: field('name'), version: field('version'), description: field('description') };
+    return { file: hit.name, name: field('name'), version: field('version'), description: field('description') };
   } catch {
     return null;
   }
@@ -601,7 +607,7 @@ function mpJarPicker(root, onFile) {
     if (f.size > 50 * 1024 * 1024) return toast('Plugins can be up to 50 MB.', 'error');
     const yml = await mpReadPluginYml(f);
     dz.classList.add('has-file');
-    $('.mp-drop-text', dz).innerHTML = `${ic('check')} <b>${esc(f.name)}</b> <span class="muted">· ${fmtSize(f.size)}${yml && yml.name ? ` · plugin.yml: ${esc(yml.name)} ${esc(yml.version)}` : ''}</span>`;
+    $('.mp-drop-text', dz).innerHTML = `${ic('check')} <b>${esc(f.name)}</b> <span class="muted">· ${fmtSize(f.size)}${yml && yml.name ? ` · ${esc(yml.file)}: ${esc(yml.name)} ${esc(yml.version)}` : ''}</span>`;
     onFile(f, yml);
   };
   dz.addEventListener('dragover', (e) => (e.preventDefault(), dz.classList.add('over')));
@@ -616,9 +622,16 @@ function mpJarPicker(root, onFile) {
 const MP_DROP = `<div class="mp-drop"><input type="file" accept=".jar" hidden id="mp-file">
   <div class="mp-drop-text">${ic('upload')} Drop a <b>.jar</b> here or <label for="mp-file">choose a file</label> <span class="muted">(up to 50 MB)</span></div></div>`;
 
+/** Where a plugin goes when no server types are picked: every server its jar is a plugin for. */
+function mpFits(platforms) {
+  const names = { bukkit: 'Paper-family servers', velocity: 'Velocity proxies', bungee: 'BungeeCord and Waterfall proxies' };
+  const list = (platforms && platforms.length ? platforms : ['bukkit']).map((x) => names[x]).filter(Boolean);
+  return `Every one of: ${list.join(', ')}`;
+}
+
 const mpTypePicks = (types, picked) =>
-  `<div class="row" style="flex-wrap:wrap;gap:6px">${types.map((t) => `<label class="tag-pick"><input type="checkbox" name="type" value="${esc(t.id)}" ${picked.includes(t.id) ? 'checked' : ''}> ${esc(t.label)}</label>`).join('')}</div>
-   <div class="hint small" style="margin:4px 0 0">None picked = every Bukkit-family server.</div>`;
+  `<div class="row" style="flex-wrap:wrap;gap:6px">${types.map((t) => `<label class="tag-pick"><input type="checkbox" name="type" value="${esc(t.id)}" ${picked.includes(t.id) ? 'checked' : ''}> ${esc(t.label)}${t.family !== 'bukkit' ? ' <span class="muted small">(proxy)</span>' : ''}</label>`).join('')}</div>
+   <div class="hint small" style="margin:4px 0 0">None picked = every server the jar is a plugin for: plugin.yml → Paper family, velocity-plugin.json → Velocity, bungee.yml → BungeeCord and Waterfall.</div>`;
 
 function mpAddModal(types, reload) {
   const { root, close } = openModal(`
@@ -626,8 +639,8 @@ function mpAddModal(types, reload) {
     <form id="mp-add-form" class="stack">
       ${MP_DROP}
       <div class="grid2">
-        <label class="field">Name <input type="text" name="name" maxlength="60" placeholder="Read from plugin.yml" required></label>
-        <label class="field">Version <input type="text" name="version" maxlength="40" placeholder="Read from plugin.yml"></label>
+        <label class="field">Name <input type="text" name="name" maxlength="60" placeholder="Read from the jar" required></label>
+        <label class="field">Version <input type="text" name="version" maxlength="40" placeholder="Read from the jar"></label>
       </div>
       <label class="field">Description <textarea name="description" rows="2" maxlength="500" placeholder="What it does (owners see this on their Plugins tab)"></textarea></label>
       <div class="mp-field"><span>Server types</span>${mpTypePicks(types, [])}</div>
@@ -769,7 +782,7 @@ function mpRemoveModal(p, reload) {
   });
 }
 
-async function mpDetailsModal(id, { typeLabel, canManage, reload }) {
+async function mpDetailsModal(id, { typeLabel, fitsLabel, canManage, reload }) {
   const p = await api('GET', `/api/admin/managed-plugins/${encodeURIComponent(id)}`).catch((e) => toast(e.message, 'error'));
   if (!p) return;
   let filter = 'all';
@@ -781,7 +794,7 @@ async function mpDetailsModal(id, { typeLabel, canManage, reload }) {
       ${row('File on servers', `<code>${esc(p.filename)}</code> · ${fmtSize(p.size)}`)}
       ${row('SHA-256', `<code class="mp-hash" title="Click to copy">${esc(p.hash || 'unknown')}</code>`)}
       ${row('Rules', `${p.locked ? `${ic('lock')} Locked: owners can't remove it` : 'Optional: owners may remove or turn it off'}${p.paused ? ' · <b>paused</b>' : ''}${!p.builtIn && !p.autoInstall ? ' · installed only when pushed' : ''}`)}
-      ${row('Server types', p.serverTypes.length ? p.serverTypes.map((t) => esc(typeLabel(t))).join(', ') : 'Every Bukkit-family server')}
+      ${row('Server types', p.serverTypes.length ? p.serverTypes.map((t) => esc(typeLabel(t))).join(', ') : esc(fitsLabel(p)))}
       ${p.builtIn ? row('Source', p.source === 'uploaded' ? 'Uploaded in the Staff Console' : p.source === 'bundled' ? 'Bundled with Tree Host (<code>minecraft-plugin/TreeHostStaff.jar</code>)' : '<span class="badge red">missing</span>') : ''}
       ${p.uploadedAt ? row('Uploaded', `${esc(new Date(p.uploadedAt).toLocaleString())}${p.uploadedBy ? ` by <b>${esc(p.uploadedBy)}</b>` : ''}`) : ''}
       ${p.notes ? row('Notes', `<div style="white-space:pre-wrap">${esc(p.notes)}</div>`) : ''}

@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const { PUBLIC, DATA } = require('./paths');
 const { Manager, readPluginMeta } = require('./instances');
 const { SupportChat } = require('./support-chat');
-const { ManagedPlugins, STAFF_ID, BUKKIT_TYPES, MAX_JAR } = require('./managed-plugins');
+const { ManagedPlugins, STAFF_ID, PLUGIN_TYPES, MAX_JAR } = require('./managed-plugins');
 const { Auth } = require('./auth');
 const { Rbac, PERMISSIONS, CREATOR_PERKS } = require('./rbac');
 const { Billing, durationText } = require('./billing');
@@ -2187,9 +2187,13 @@ route('PATCH', '/api/servers/:id', async (req, res, p) => {
     const worldVersion = inst.cfg.worldVersion || inst.cfg.version;
     if (olderMinecraft(body.version, worldVersion) && (await inst.hasWorld())) {
       if (body.downgrade !== 'fresh-world') {
-        throw httpError(409, `Your world was last played on Minecraft ${worldVersion}. Minecraft can't open a world in an older version, so ${body.version} would crash. To go back to ${body.version}, Tree Host can back up this world and start a fresh one (you can restore the backup any time).`, 'DOWNGRADE');
+        throw httpError(409, `Your world was last played on Minecraft ${worldVersion}. Minecraft can't open a world in an older version, so ${body.version} would crash. To go back to ${body.version}, Tree Host can back up this world and start a fresh one (you can restore the backup any time).${inst.proc ? ' The server is stopped first.' : ''}`, 'DOWNGRADE');
       }
-      if (inst.proc) throw httpError(400, 'Stop the server first.');
+      // Asked for: stop it here, instead of failing and leaving the old version in place.
+      if (inst.proc) {
+        inst.sysLog(`Stopping the server to switch to ${body.version}...`);
+        await inst.stopAndWait();
+      }
       await backups.create(inst, { label: `World from ${worldVersion}, before switching to ${body.version}`, by: who(req) });
       await inst.resetWorlds();
       inst.cfg.worldVersion = null;
@@ -2311,7 +2315,7 @@ async function pushStaffPlugin() {
 }
 
 route('GET', '/api/admin/managed-plugins', async () => ({
-  types: BUKKIT_TYPES,
+  types: PLUGIN_TYPES,
   plugins: await managedPlugins.list(),
 }), { perm: 'system.view' });
 
@@ -2418,7 +2422,7 @@ route('PUT', '/api/account/team-profile', async (req) => {
 // plugins staff add there (src/managed-plugins.js) are synced right after it.
 
 const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
-const managedEligible = (inst) => TEAM && (inst.isCustomer || inst.cfg.isDemo || inst.cfg.space === 'team') && inst.provider.family === 'bukkit';
+const managedEligible = (inst) => TEAM && (inst.isCustomer || inst.cfg.isDemo || inst.cfg.space === 'team') && ['bukkit', 'velocity', 'bungee'].includes(inst.provider.family);
 const managedPlugins = new ManagedPlugins({
   manager,
   eligible: managedEligible,
@@ -2430,7 +2434,7 @@ const managedPlugins = new ManagedPlugins({
 }).load();
 if (!managedPlugins.staffJar) console.error('  The Tree Host staff plugin (minecraft-plugin/TreeHostStaff.jar) is missing: run node minecraft-plugin/build.js');
 
-manager.protectedPlugin = (inst) => managedEligible(inst) && !!managedPlugins.staffJar;
+manager.protectedPlugin = (inst) => managedPlugins.staffApplies(inst);
 manager.lockedPluginFiles = (inst) => managedPlugins.lockedFiles(inst);
 manager.managedPluginInfo = (inst, file) => managedPlugins.infoFor(inst, file);
 
@@ -3224,17 +3228,20 @@ async function installModpackFiles(inst, pack) {
 
 // ---------- Bedrock crossplay: Geyser + Floodgate, installed in one click ----------
 
+// On a proxy (Velocity, Waterfall, BungeeCord) Geyser goes on the proxy, so Bedrock players reach every server behind it.
+const GEYSER_DL = 'https://download.geysermc.org/v2/projects';
 const GEYSER = {
-  'Geyser-Spigot.jar': 'https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot',
-  'floodgate-spigot.jar': 'https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot',
+  bukkit: { 'Geyser-Spigot.jar': `${GEYSER_DL}/geyser/versions/latest/builds/latest/downloads/spigot`, 'floodgate-spigot.jar': `${GEYSER_DL}/floodgate/versions/latest/builds/latest/downloads/spigot` },
+  velocity: { 'Geyser-Velocity.jar': `${GEYSER_DL}/geyser/versions/latest/builds/latest/downloads/velocity`, 'floodgate-velocity.jar': `${GEYSER_DL}/floodgate/versions/latest/builds/latest/downloads/velocity` },
+  bungee: { 'Geyser-BungeeCord.jar': `${GEYSER_DL}/geyser/versions/latest/builds/latest/downloads/bungeecord`, 'floodgate-bungee.jar': `${GEYSER_DL}/floodgate/versions/latest/builds/latest/downloads/bungee` },
 };
 const geyserCache = path.join(DATA, 'cache', 'geyser');
 
-/** The latest Geyser and Floodgate for Spigot/Paper, downloaded at most once a day and shared by every server. */
-async function geyserJars(log) {
+/** The latest Geyser and Floodgate for a platform, downloaded at most once a day and shared by every server. */
+async function geyserJars(family, log) {
   await fsp.mkdir(geyserCache, { recursive: true });
   const out = {};
-  for (const [name, url] of Object.entries(GEYSER)) {
+  for (const [name, url] of Object.entries(GEYSER[family])) {
     const file = path.join(geyserCache, name);
     const st = await fsp.stat(file).catch(() => null);
     if (!st || Date.now() - st.mtimeMs > 86400000) {
@@ -3253,20 +3260,21 @@ async function geyserJars(log) {
 
 route('POST', '/api/servers/:id/bedrock', async (req, res, p) => {
   const inst = getFor(req, p.id, 'plugins');
-  if (inst.provider.family !== 'bukkit') throw httpError(400, 'Bedrock crossplay works on Paper, Purpur, Folia and Spigot servers.');
-  if (!versionAtLeast(inst.cfg.version, [1, 16, 5])) throw httpError(400, 'Geyser needs Minecraft 1.16.5 or newer.');
-  if (proxyOf(inst)) throw httpError(400, "This server is behind your proxy, so Bedrock players would have to come through the proxy. Turn it on for a standalone server.");
+  const family = inst.provider.family;
+  if (!GEYSER[family]) throw httpError(400, 'Bedrock crossplay works on Paper, Purpur, Folia and Spigot servers, and on Velocity, Waterfall and BungeeCord proxies.');
+  if (family === 'bukkit' && !versionAtLeast(inst.cfg.version, [1, 16, 5])) throw httpError(400, 'Geyser needs Minecraft 1.16.5 or newer.');
   const { enabled } = await readJson(req);
+  if (enabled && proxyOf(inst)) throw httpError(400, 'This server is behind your proxy: turn Bedrock crossplay on for the proxy instead, and Bedrock players reach every server in the network.');
   const dir = path.join(inst.dir, inst.pluginDirName);
   if (enabled) {
-    const jars = await geyserJars((m) => inst.sysLog(m));
+    const jars = await geyserJars(family, (m) => inst.sysLog(m));
     await fsp.mkdir(dir, { recursive: true });
     for (const [name, file] of Object.entries(jars)) await fsp.copyFile(file, path.join(dir, name));
     inst.cfg.bedrock = true;
     await inst.applyBedrock();
     inst.sysLog(`Bedrock crossplay is on: phones, consoles and Windows players join with the same address (port ${inst.cfg.port}).${inst.proc ? ' Restart the server to start it.' : ''}`);
   } else {
-    for (const name of Object.keys(GEYSER)) await fsp.rm(path.join(dir, name), { force: true }).catch(() => {});
+    for (const name of Object.keys(GEYSER[family])) await fsp.rm(path.join(dir, name), { force: true }).catch(() => {});
     inst.cfg.bedrock = false;
     inst.sysLog(`Bedrock crossplay is off.${inst.proc ? ' Restart the server to finish.' : ''}`);
   }
@@ -3876,7 +3884,7 @@ function pageCsp(body, req) {
     "default-src 'self'",
     `script-src 'self' ${[...google, ...hashes].join(' ')}`.trim(),
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https:",
+    "img-src 'self' data: blob: https:",
     "font-src 'self'",
     "media-src 'self'",
     `connect-src 'self'${fb ? ' https://*.googleapis.com https://www.gstatic.com' : ''}`,

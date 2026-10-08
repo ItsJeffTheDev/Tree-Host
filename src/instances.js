@@ -132,11 +132,19 @@ async function readPluginMeta(file) {
   } catch {
     return { invalid: true };
   }
+  // Every loader the jar has a descriptor for (some plugins ship one jar for Paper, Velocity and BungeeCord).
+  const platforms = [
+    (entries['paper-plugin.yml'] || entries['plugin.yml']) && 'bukkit',
+    entries['bungee.yml'] && 'bungee',
+    entries['velocity-plugin.json'] && 'velocity',
+    entries['fabric.mod.json'] && 'fabric',
+  ].filter(Boolean);
   for (const n of ['paper-plugin.yml', 'plugin.yml', 'bungee.yml']) {
     if (entries[n]) {
       const t = entries[n].toString('utf8');
       return {
         format: n,
+        platforms,
         name: yamlField(t, 'name'),
         version: yamlField(t, 'version'),
         apiVersion: yamlField(t, 'api-version'),
@@ -149,9 +157,9 @@ async function readPluginMeta(file) {
     if (entries[n]) {
       try {
         const j = JSON.parse(entries[n].toString('utf8'));
-        return { format: n, name: j.name || j.id, version: j.version, description: j.description };
+        return { format: n, platforms, name: j.name || j.id, version: j.version, description: j.description };
       } catch {
-        return { format: n };
+        return { format: n, platforms };
       }
     }
   }
@@ -657,8 +665,9 @@ class Instance extends EventEmitter {
 
   /** Geyser listens for Bedrock players on the server's own port (UDP), and Floodgate lets them in without a Java account. */
   async applyBedrock() {
-    if (!this.cfg.bedrock || this.provider.family !== 'bukkit') return;
-    const file = path.join(this.dir, this.pluginDirName, 'Geyser-Spigot', 'config.yml');
+    const folder = { bukkit: 'Geyser-Spigot', velocity: 'Geyser-Velocity', bungee: 'Geyser-BungeeCord' }[this.provider.family];
+    if (!this.cfg.bedrock || !folder) return;
+    const file = path.join(this.dir, this.pluginDirName, folder, 'config.yml');
     await fsp.mkdir(path.dirname(file), { recursive: true });
     let text = (await exists(file)) ? await fsp.readFile(file, 'utf8') : '';
     const bedrock = `  port: ${this.cfg.port}\n  clone-remote-port: false`;
