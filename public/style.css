@@ -724,3 +724,14 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .btn.needs-attention { border-color: var(--danger); }
 .sn-2fa { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .sn-2fa .btn { margin-left: auto; }
+
+/* Players tab */
+.pl-head { border-radius: 4px; image-rendering: pixelated; vertical-align: middle; }
+.pl-online { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.pl-card { display: grid; grid-template-columns: 40px 1fr; gap: 6px 12px; align-items: center; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.pl-card .row { grid-column: 1 / -1; }
+.pl-info { display: flex; flex-direction: column; min-width: 0; }
+.pl-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.pl-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pl-row:last-child { border-bottom: 0; }
+.pl-chat { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; overflow-wrap: anywhere; }

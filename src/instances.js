@@ -1012,6 +1012,7 @@ class Instance extends EventEmitter {
         console.error(`[console hook] ${e.message}`);
       }
     }
+    this.manager.emit('line', this, line); // for features that read the console (players, lag doctor)
     if (this.status === 'starting' && (/Done \([\d.,]+m?s\)!/.test(line) || /Listening on \//.test(line))) {
       this.setStatus('running');
       const startup = diagnose(this.logs.filter((l) => l.s > (this.startSeq || 0)).map((l) => stripAnsi(l.t))).filter((f) => f.warning);

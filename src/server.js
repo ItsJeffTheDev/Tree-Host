@@ -23,6 +23,7 @@ const providers = require('./providers');
 const java = require('./java');
 const { Activity } = require('./activity');
 const { StaffNotices } = require('./staff-notices');
+const { Players } = require('./players');
 const { Moderation, TYPES, REASONS } = require('./moderation');
 const MOTD = require('./motd');
 const backups = require('./backups');
@@ -67,6 +68,7 @@ const rbac = new Rbac();
 const billing = new Billing();
 const activity = new Activity();
 const staffNotices = new StaffNotices();
+const players = new Players();
 const moderation = new Moderation();
 manager.teamMode = TEAM;
 // A test site on this PC (http://localhost...) may run customer servers without Docker; the real site never does.
@@ -641,6 +643,13 @@ activity.listeners.add((e) => {
   if (TEAM) staffNotices.onActivity(e);
 });
 manager.on('removed', (id) => broadcast('removed', { id }));
+
+// The Players tab (src/players.js): joins, leaves and chat from every server's console.
+manager.on('line', (inst, line) => players.onLine(inst, line).catch(() => {}));
+manager.on('status', (inst) => {
+  if (!inst.proc && inst.status === 'stopped') players.onStopped(inst).catch(() => {});
+});
+manager.on('removed', (id) => players.forget(id));
 
 /** Customers see their own servers' activity; staff see server events; sign-ups and billing need activity.viewAll. */
 function canSeeEvent(user, e) {
@@ -3621,6 +3630,17 @@ route('POST', '/api/servers/:id/backups/:bid/restore', async (req, res, p) => {
 route('DELETE', '/api/servers/:id/backups/:bid', async (req, res, p) => {
   await backups.remove(getFor(req, p.id, 'manage'), p.bid);
   return { ok: true };
+});
+
+// Players tab: who's online, playtime, chat, whitelist/ops/bans; actions run as console commands.
+route('GET', '/api/servers/:id/players', (req, res, p) => players.summary(getFor(req, p.id)));
+route('POST', '/api/servers/:id/players/action', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'command');
+  const body = await readJson(req);
+  const cmd = players.action(inst, body);
+  inst.logActivity('audit', who(req), `ran "${cmd}" from the Players tab`);
+  if (TEAM && inst.cfg.owner !== req.user.id && rbac.isStaff(req.user)) audit(req, `ran "${cmd}" on "${inst.cfg.name}" from the Players tab`, inst);
+  return { ok: true, command: cmd };
 });
 
 // Plugin / mod browser (Modrinth)

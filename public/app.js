@@ -254,8 +254,8 @@ function renderMain() {
       ${s.isDemo ? demoBannerHtml() : ''}
       <div id="srv-head"></div>
       <div class="tabs">
-        ${['console', 'stats', 'plugins', 'backups', 'files', 'settings']
-          .filter((t) => (t === 'files' ? can('files', s) : t === 'settings' ? can('settings', s) || s.isDemo : true))
+        ${['console', 'players', 'stats', 'plugins', 'backups', 'files', 'settings']
+          .filter((t) => (t === 'files' ? can('files', s) : t === 'settings' ? can('settings', s) || s.isDemo : t === 'players' ? s.kind !== 'proxy' && !s.isDemo : true))
           .map(
             (t) =>
               `<button class="tab ${state.tab === t ? 'active' : ''}" data-tab="${t}">${
@@ -507,6 +507,7 @@ function renderTab() {
   else if (state.tab === 'files') renderFiles(body);
   else if (state.tab === 'backups') renderBackups(body);
   else if (state.tab === 'stats') renderStats(body);
+  else if (state.tab === 'players') renderPlayers(body).catch((e) => (body.innerHTML = `<div class="warn-box">${esc(e.message)}</div>`));
   else {
     renderSettings(body);
     if (current()?.isDemo && !can('settings', current())) lockDemoSettings(body);
