@@ -885,6 +885,7 @@ route('PATCH', '/api/auth/me', async (req) => {
     if (body.password) throw httpError(400, 'Change your password with "Send password reset email".');
   }
   await auth.updateUser(req.user, body);
+  if (body.mcName !== undefined) syncStaffListsSoon(); // staff badges follow the new Minecraft name right away
   return auth.publicUser(req.user);
 });
 route('GET', '/api/auth/tokens', (req) => (TEAM ? auth.listApiTokens(req.user) : []));
