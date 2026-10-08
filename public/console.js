@@ -80,6 +80,7 @@ function initConsole() {
   renderUserBox();
   startAgentChatEvents(); // the Support chat count in the menu stays live on every page
   startStaffNotices(); // the bell, and the counts on Billing, People, Action logs and Servers
+  $('#main').addEventListener('click', (e) => e.target.closest('#ov-2fa') && openSecurity()); // the 2FA reminder on Overview
   const show = () => {
     $('#modal-root').innerHTML = ''; // a dialog from the previous section must not stay open over this one
     const [id, sub] = location.hash.slice(1).split('/'); // e.g. #actions/TH-000012
@@ -266,7 +267,11 @@ async function consoleOverview(body) {
     cards.push(stat(fmtUptime(d.system.uptimeSec * 1000), `Tree Host uptime · Node ${esc(d.system.node)}`));
   }
   const me = state.me.user;
-  body.innerHTML = `
+  const remind2fa = !me.twoFactor
+    ? `<div class="warn-box sn-2fa"><b>${ic('lock')} Protect your staff account.</b> Turn on two-factor sign-in, so a stolen password isn't enough to get in.
+       <button class="btn sm primary" id="ov-2fa">Set it up</button></div>`
+    : '';
+  body.innerHTML = `${remind2fa}
     <p class="muted" style="margin-top:0">Signed in as <b>${esc(me.username)}</b> · <span class="badge ${ROLE_BADGE[me.role] || ''}">${esc(me.roleLabel)}</span>
       · you see the parts of the console your role allows (<a href="#roles">what can each role do?</a>).</p>
     <div class="stat-row">${cards.join('')}</div>

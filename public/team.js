@@ -587,12 +587,14 @@ function renderUserBox() {
     }
     <div class="row" style="flex-wrap:wrap;margin-top:6px">
       <button class="btn sm" id="ub-account">Account</button>
+      <button class="btn sm ${u.needs2fa ? 'needs-attention' : ''}" id="ub-security" title="Two-factor sign-in">${ic('lock')} Security${u.needs2fa ? ' <span class="nav-count">!</span>' : ''}</button>
       ${state.me.hosted ? '<button class="btn sm" id="ub-billing">' + ic('card') + ' Billing</button>' : ''}
       ${isTeam() && (hasPerm('console.access') || state.me.user.needs2fa) ? '<a class="btn sm" href="/admin">' + ic('tools') + ' Staff Console</a>' : ''}
       <button class="btn sm" id="ub-switch" title="Switch to another account or add one">⇄ Switch</button>
       <button class="btn sm" id="ub-logout">Sign out</button>
     </div>`;
   $('#ub-account').addEventListener('click', openAccount);
+  $('#ub-security').addEventListener('click', openSecurity);
   $('#ub-switch').addEventListener('click', () => openAccountSwitcher().catch((e) => toast(e.message, 'error')));
   if ($('#ub-billing')) $('#ub-billing').addEventListener('click', openBilling);
   $('#ub-logout').addEventListener('click', () => signOut(false));
@@ -713,6 +715,20 @@ async function withSecondFactor(send) {
   }
 }
 
+/** Account → Security: two-factor sign-in. */
+function openSecurity() {
+  const { root } = openModal(`
+    <h2>${ic('lock')} Security</h2>
+    <p class="muted" style="margin-top:-6px">Keep your Tree Host account safe, even if someone learns your password.</p>
+    <div class="card stack" id="sec-2fa"></div>
+    <div class="card stack">
+      <h3>${ic('key')} Password</h3>
+      <p class="hint" style="margin:0">${state.me.user.firebase ? 'You sign in with your email or Google: change your password from the sign-in page with <b>Forgot password</b>.' : 'Change it in <b>Account</b>. Use a long one you don\'t use anywhere else.'}</p>
+    </div>
+    <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+  renderTwoFactorCard($('#sec-2fa', root));
+}
+
 function renderTwoFactorCard(box) {
   if (!box) return;
   const u = state.me.user;
@@ -741,12 +757,19 @@ function renderTwoFactorCard(box) {
 async function setUpTwoFactor(box) {
   const { secret, uri } = await api('POST', '/api/auth/2fa/setup');
   box.innerHTML = `<h3>${ic('lock')} Set up two-factor sign-in</h3>
-    <ol class="tf-steps">
-      <li>Open your authenticator app and add an account. Choose <b>Enter a setup key</b> (or tap the link below on your phone).</li>
-      <li>Account name: <b>Tree Host</b>. Key: <code class="tf-key">${esc(secret.replace(/(.{4})/g, '$1 ').trim())}</code> <button type="button" class="btn sm" id="tf-copy">${ic('copy')} Copy</button>
-        <br><a href="${esc(uri)}" class="small">Open in authenticator app</a></li>
-      <li>Type the 6-digit code it shows:</li>
-    </ol>
+    <div class="tf-setup">
+      <div class="tf-qr">${typeof qrSvg === 'function' ? qrSvg(uri, 228) : ''}</div>
+      <ol class="tf-steps">
+        <li>Install an authenticator app on your phone if you don't have one: <b>Google Authenticator</b>, <b>Microsoft Authenticator</b>, <b>Authy</b> or <b>1Password</b>.</li>
+        <li>In the app, add an account and <b>scan this QR code</b>.</li>
+        <li>Type the 6-digit code the app shows below.</li>
+      </ol>
+    </div>
+    <details class="tf-manual"><summary>Can't scan it?</summary>
+      <p class="small" style="margin:6px 0">Choose <b>Enter a setup key</b> in the app, name it <b>Tree Host</b>, and type this key:</p>
+      <code class="tf-key">${esc(secret.replace(/(.{4})/g, '$1 ').trim())}</code> <button type="button" class="btn sm" id="tf-copy">${ic('copy')} Copy</button>
+      <br><a href="${esc(uri)}" class="small">On your phone? Open it in your authenticator app</a>
+    </details>
     <form id="tf-enable" class="row"><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required style="max-width:160px;letter-spacing:3px">
       <button class="btn primary">Turn on</button></form>`;
   $('#tf-copy', box).addEventListener('click', () => navigator.clipboard.writeText(secret).then(() => toast('Key copied.')));
