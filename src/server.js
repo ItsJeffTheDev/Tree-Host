@@ -3790,7 +3790,7 @@ function pageCsp(body, req) {
     if (/\ssrc\s*=/i.test(attrs) || /type\s*=\s*["']?application\/ld\+json/i.test(attrs)) continue; // files and data blocks
     hashes.push(`'sha256-${crypto.createHash('sha256').update(m[2], 'utf8').digest('base64')}'`);
   }
-  const google = fb ? ['https://www.gstatic.com'] : [];
+  const google = fb ? ['https://www.gstatic.com', 'https://apis.google.com'] : []; // Firebase sign-in, and Google's sign-in pop-up helper
   const header = [
     "default-src 'self'",
     `script-src 'self' ${[...google, ...hashes].join(' ')}`.trim(),
@@ -3799,7 +3799,7 @@ function pageCsp(body, req) {
     "font-src 'self'",
     "media-src 'self'",
     `connect-src 'self'${fb ? ' https://*.googleapis.com https://www.gstatic.com' : ''}`,
-    `frame-src ${fb ? `https://${fb.authDomain} https://accounts.google.com` : "'none'"}`,
+    `frame-src ${fb ? `https://${fb.authDomain} https://accounts.google.com https://apis.google.com` : "'none'"}`,
     "frame-ancestors 'none'",
     "object-src 'none'",
     "base-uri 'self'",
