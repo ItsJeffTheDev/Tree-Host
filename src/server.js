@@ -25,6 +25,7 @@ const { Activity } = require('./activity');
 const { StaffNotices } = require('./staff-notices');
 const { Players } = require('./players');
 const lagdoctor = require('./lagdoctor');
+const pluginUpdates = require('./pluginupdates');
 const { Moderation, TYPES, REASONS } = require('./moderation');
 const MOTD = require('./motd');
 const backups = require('./backups');
@@ -651,6 +652,23 @@ manager.on('status', (inst) => {
   if (!inst.proc && inst.status === 'stopped') players.onStopped(inst).catch(() => {});
 });
 manager.on('removed', (id) => players.forget(id));
+
+// Plugin updates (src/pluginupdates.js): the first start after an update decides whether to keep it.
+manager.on('status', (inst) => {
+  const u = inst.cfg.pluginUpdate;
+  if (u && inst.status === 'running' && (inst.lastStartAt || 0) > u.at) {
+    pluginUpdates.confirm(inst);
+    inst.sysLog(`Plugin update kept: the server started fine with ${u.items.map((i) => i.newFile).join(', ')}.`);
+  }
+});
+manager.onCrash = (inst) => {
+  const u = inst.cfg.pluginUpdate;
+  if (!u || (inst.lastStartAt || 0) < u.at) return;
+  const back = pluginUpdates.rollback(inst);
+  if (!back.length) return;
+  inst.sysLog(`The server crashed right after a plugin update, so the update was undone: ${back.map((i) => `${i.newFile} → ${i.oldFile}`).join(', ')}. Start it again to use the old version${back.length === 1 ? '' : 's'}.`);
+  inst.logActivity('crash', 'Tree Host', `undid a plugin update after a crash (${back.map((i) => i.oldFile).join(', ')})`);
+};
 
 /** Customers see their own servers' activity; staff see server events; sign-ups and billing need activity.viewAll. */
 function canSeeEvent(user, e) {
@@ -3654,6 +3672,27 @@ route('POST', '/api/servers/:id/lag-doctor', async (req, res, p) => {
   inst.sysLog(`Lag doctor: ${worst.title}.`);
   return report;
 });
+
+// Plugin updates and the upgrade assistant (Modrinth knows each jar by its hash).
+route('GET', '/api/servers/:id/plugin-updates', (req, res, p) => pluginUpdates.check(getFor(req, p.id)));
+route('POST', '/api/servers/:id/plugin-updates', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'plugins');
+  const body = await readJson(req);
+  const done = await pluginUpdates.update(inst, Array.isArray(body.files) ? body.files.map(String) : null, who(req));
+  if (done.length) {
+    inst.sysLog(`${who(req)} updated ${done.map((d) => `${d.newFile} (${d.from} → ${d.to})`).join(', ')}.${inst.proc ? ' Restart to load the new version.' : ''} If the next start crashes, the old version comes back by itself.`);
+    inst.logActivity('deploy', who(req), `updated ${done.length} plugin${done.length === 1 ? '' : 's'}`);
+  }
+  return { updated: done };
+});
+route('POST', '/api/servers/:id/plugin-updates/rollback', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'plugins');
+  if (inst.proc) throw httpError(400, 'Stop the server first, then undo the update.');
+  const back = pluginUpdates.rollback(inst);
+  if (back.length) inst.sysLog(`${who(req)} undid the plugin update: ${back.map((i) => i.oldFile).join(', ')}.`);
+  return { restored: back };
+});
+route('GET', '/api/servers/:id/upgrade-check', (req, res, p, q) => pluginUpdates.upgradeReport(getFor(req, p.id), String(q.get('version') || '')));
 
 // Plugin / mod browser (Modrinth)
 route('GET', '/api/servers/:id/modrinth/search', (req, res, p, q) => modrinth.search(getFor(req, p.id), q.get('q')));

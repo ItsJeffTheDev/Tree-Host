@@ -755,6 +755,7 @@ async function renderPlugins(body) {
   const noPlugins = s.family === 'vanilla';
   body.innerHTML = `
     ${noPlugins ? '<div class="card"><h3>Vanilla servers do not load plugins</h3><p class="hint" style="margin:0">Switch the type to Paper, Purpur or Spigot in Settings to test plugins.</p></div>' : ''}
+    ${!noPlugins && !s.isDemo ? '<div id="plugin-updates"></div>' : ''}
     ${isTeam() && can('deploy', s) ? deployCardHtml(s) : ''}
     ${hostFeatures() ? `<div class="card">
       <h3>Auto-deploy from ${isTeam() ? 'a build folder on the host PC' : 'your build output'}</h3>
@@ -786,6 +787,7 @@ async function renderPlugins(body) {
       </div>
       <div id="plugin-table" class="muted">Loading...</div>
     </div>`;
+  if ($('#plugin-updates', body)) pluginUpdatesCard($('#plugin-updates', body), s).catch(() => {});
 
   bindDeployCard(body);
   if ($('#watch-form')) {
@@ -1224,6 +1226,7 @@ async function renderSettings(body) {
           <label class="field"><span id="set-build-label">${esc(type?.buildLabel || 'Build')}</span> <select name="build" id="set-build"><option value="${esc(s.build)}">${esc(s.build)}</option></select></label>
         </div>
         <label class="check"><input type="checkbox" id="set-pre"> Show pre-releases and snapshots</label>
+        ${s.kind !== 'proxy' ? '<div id="upgrade-check"></div>' : ''}
         <label class="field ${s.type === 'custom' ? '' : 'hidden'}" id="set-custom-wrap">Server jar path
           <input type="text" name="customJar" value="${esc(s.customJar)}" placeholder="C:\\path\\to\\server.jar">
         </label>
@@ -1301,6 +1304,8 @@ async function renderSettings(body) {
   typeSel.addEventListener('change', () => loadVersions(null));
   pre.addEventListener('change', () => loadVersions(verSel.value));
   verSel.addEventListener('change', () => fillBuildSelect(buildSel, state.typeMap.get(typeSel.value), verSel.value, 'latest'));
+  const resetUpgrade = upgradeAssistant($('#upgrade-check'), s, () => verSel.value);
+  if (resetUpgrade) verSel.addEventListener('change', resetUpgrade);
   pre.checked = /-(pre|rc)|snapshot|w\d/i.test(s.version);
   const lockSoftware = () => {
     if (can('manage', s)) return;

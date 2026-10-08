@@ -133,3 +133,84 @@ async function lagDoctorCard(box, s) {
   };
   draw(last, false);
 }
+
+// =====================================================================================================
+// Plugin updates (Plugins tab) and the upgrade assistant (Settings → Server software)
+// =====================================================================================================
+
+async function pluginUpdatesCard(box, s) {
+  const pending = s.pluginUpdate;
+  const draw = (list, busy) => {
+    const ups = (list || []).filter((p) => p.update);
+    box.innerHTML = `<div class="card stack">
+      <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h3 style="margin:0">${ic('refresh')} Updates</h3>
+        <div class="row" style="gap:8px">
+          ${list && ups.length > 1 && can('plugins', s) ? `<button class="btn sm primary" id="pu-all">Update all (${ups.length})</button>` : ''}
+          <button class="btn sm" id="pu-check" ${busy ? 'disabled' : ''}>${busy ? 'Checking…' : list ? 'Check again' : 'Check for updates'}</button>
+        </div>
+      </div>
+      ${pending ? `<div class="warn-box">Updated ${timeAgo(pending.at)}: ${pending.items.map((i) => esc(`${i.newFile} (${i.from} → ${i.to})`)).join(', ')}.
+        ${s.running ? 'Restart to load it.' : ''} If the next start crashes, the old version comes back by itself.
+        ${can('plugins', s) && !s.pid ? '<button class="btn sm" id="pu-undo" style="margin-left:6px">Undo now</button>' : ''}</div>` : ''}
+      ${list ? (list.length ? list.map((p) => `<div class="pl-row">
+          ${p.icon ? `<img src="${esc(p.icon)}" width="22" height="22" alt="" style="border-radius:4px">` : ic('puzzle')}
+          <span><b>${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>` : esc(p.title)}</b>
+            <span class="muted small">${p.onModrinth ? `${esc(p.current || '')}${p.update ? ` → <b>${esc(p.latest)}</b>` : ' · up to date'}` : 'not on Modrinth: update it from its own page'}</span></span>
+          ${p.update && can('plugins', s) ? `<button class="btn sm" data-pu="${esc(p.file)}">Update</button>` : ''}
+        </div>`).join('') : '<p class="muted small" style="margin:0">No plugins installed.</p>')
+        : '<p class="muted small" style="margin:0">Checks Modrinth for newer versions that fit this server type and Minecraft version, including plugins you uploaded yourself.</p>'}
+    </div>`;
+    $('#pu-check', box).addEventListener('click', () => attempt(async () => {
+      draw(list, true);
+      try {
+        draw(await api('GET', `/api/servers/${s.id}/plugin-updates`), false);
+      } catch (e) {
+        draw(list, false);
+        throw e;
+      }
+    }));
+    const doUpdate = (files) => attempt(async () => {
+      const r = await api('POST', `/api/servers/${s.id}/plugin-updates`, { files });
+      toast(r.updated.length ? `Updated ${r.updated.length}. ${s.running ? 'Restart to load it.' : ''}` : 'Nothing to update.');
+      renderTab();
+    });
+    $$('[data-pu]', box).forEach((b) => b.addEventListener('click', () => doUpdate([b.dataset.pu])));
+    if ($('#pu-all', box)) $('#pu-all', box).addEventListener('click', () => doUpdate(null));
+    if ($('#pu-undo', box)) $('#pu-undo', box).addEventListener('click', () => attempt(async () => {
+      await api('POST', `/api/servers/${s.id}/plugin-updates/rollback`);
+      toast('Update undone: the old version is back.');
+      renderTab();
+    }));
+  };
+  draw(null, false);
+}
+
+/** Under the version picker: check every plugin against the version you're about to switch to. */
+function upgradeAssistant(box, s, getVersion) {
+  if (!box) return;
+  const draw = (r, busy) => {
+    const v = getVersion();
+    const changed = v && v !== s.version;
+    box.innerHTML = changed || r ? `<div class="upgrade-box">
+      <div class="row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <span>${ic('puzzle')} <b>Upgrade assistant</b> <span class="muted small">Do your plugins work on ${esc(v)}?</span></span>
+        <button type="button" class="btn sm" id="ua-run" ${busy ? 'disabled' : ''}>${busy ? 'Checking…' : 'Check plugins'}</button></div>
+      ${r ? `<p class="small" style="margin:8px 0 4px">${r.ok} ready · <b style="color:${r.missing ? 'var(--danger)' : 'inherit'}">${r.missing} without a ${esc(r.version)} version</b> · ${r.unknown} can't be checked</p>
+        ${r.items.map((i) => `<div class="small ua-item ua-${i.status}">${i.status === 'ok' ? '✅' : i.status === 'missing' ? '⛔' : '❔'} <b>${esc(i.title)}</b> <span class="muted">${esc(i.note)}</span></div>`).join('')}
+        ${r.items.some((i) => i.update) ? '<p class="small muted" style="margin:6px 0 0">After switching, use Plugins → Updates to get the versions that fit.</p>' : ''}` : ''}
+    </div>` : '';
+    const btn = $('#ua-run', box);
+    if (btn) btn.addEventListener('click', () => attempt(async () => {
+      draw(r, true);
+      try {
+        draw(await api('GET', `/api/servers/${s.id}/upgrade-check?version=${encodeURIComponent(getVersion())}`), false);
+      } catch (e) {
+        draw(r, false);
+        throw e;
+      }
+    }));
+  };
+  draw(null, false);
+  return () => draw(null, false);
+}

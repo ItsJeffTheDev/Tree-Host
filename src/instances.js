@@ -375,6 +375,7 @@ class Instance extends EventEmitter {
       players: [...this.players],
       pid: this.proc ? this.proc.pid : live ? 'demo' : null,
       startedAt: this.startedAt,
+      pluginUpdate: c.pluginUpdate ? { at: c.pluginUpdate.at, items: c.pluginUpdate.items } : null,
       createdAt: c.createdAt,
       isDemo: !!c.isDemo,
     };
@@ -928,6 +929,7 @@ class Instance extends EventEmitter {
     const proc = spawn(cmd, full, { cwd: this.dir, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     this.proc = proc;
     this.startedAt = Date.now();
+    this.lastStartAt = this.startedAt; // kept after it stops (startedAt isn't)
     this.players.clear();
     this.status = 'starting';
     this.emitStatus();
@@ -980,6 +982,7 @@ class Instance extends EventEmitter {
         const findings = diagnose(this.logs.slice(-400).map((l) => stripAnsi(l.t)), { memoryExit: javaInside && code === 137 });
         this.diagnosis = findings.length ? { at: Date.now(), crashed: true, findings } : null;
         for (const f of findings) this.sysLog(`Crash doctor: ${f.title}. ${f.fix}`);
+        if (this.manager.onCrash) this.manager.onCrash(this); // e.g. undo a plugin update that broke it, before any restart
         this.logActivity('crash', 'Tree Host', `reports a crash (exit code ${code})${findings.length ? `: ${findings[0].title}` : lastLines.length ? `: ${lastLines.join(' / ').slice(0, 300)}` : ''}`);
         if (c.autoRestart && !this.restartPending) {
           if (this.crashTimes.length > 3) {
