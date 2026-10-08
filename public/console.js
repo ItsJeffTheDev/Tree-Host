@@ -59,6 +59,7 @@ function initConsole() {
   const sections = CONSOLE_SECTIONS.filter((s) => hasPerm(s.perm));
   side.innerHTML = `
     <a href="/" class="brand" style="text-decoration:none;color:inherit"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Staff Console</div></div></a>
+    <button class="sn-bell" id="sn-bell" type="button">${ic('bell')} Notifications<span class="nav-count hidden" id="sn-count"></span></button>
     <nav class="console-nav">${sections.map((s) => `<a href="#${s.id}" data-sec="${s.id}">${ic(s.icon)} ${s.label}</a>`).join('')}</nav>
     <a class="help-link" href="/dashboard">← Back to dashboard</a>
     <a class="help-link" href="/staff-docs" target="_blank">${ic('books')} Staff docs</a>
@@ -66,17 +67,163 @@ function initConsole() {
     <div id="user-box" class="user-box"></div>`;
   renderUserBox();
   startAgentChatEvents(); // the Support chat count in the menu stays live on every page
+  startStaffNotices(); // the bell, and the counts on Billing, People, Action logs and Servers
   const show = () => {
     $('#modal-root').innerHTML = ''; // a dialog from the previous section must not stay open over this one
     const [id, sub] = location.hash.slice(1).split('/'); // e.g. #actions/TH-000012
     const sec = sections.find((s) => s.id === id) || sections[0];
     $$('[data-sec]', side).forEach((a) => a.classList.toggle('active', a.dataset.sec === sec.id));
+    markNoticesRead(sec.id); // opening a section clears its count
     const main = $('#main');
     main.innerHTML = `<div class="console-page"><h1 class="console-title">${sec.label}</h1><div id="console-body"><div class="muted">Loading...</div></div></div>`;
     sec.render($('#console-body'), sub).catch((e) => ($('#console-body').innerHTML = `<div class="warn-box">${esc(e.message)}</div>`));
   };
   window.addEventListener('hashchange', show);
+  consoleRefresh = show;
   show();
+}
+
+// Re-draws the open section when something new happens there (a new subscription while Billing is open), but never
+// while someone is typing or has a dialog open, so nothing they're doing is lost.
+let consoleRefresh = null;
+let refreshTimer = null;
+function refreshOpenSection() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    const busy = $('#modal-root').children.length || (document.activeElement && document.activeElement.matches('input, textarea, select'));
+    if (consoleRefresh && !busy) consoleRefresh();
+  }, 800);
+}
+
+// ---------- staff notifications (src/staff-notices.js) ----------
+// A new support chat, a failed payment, a sign-up, an appeal or a crash: the bell counts them, each menu section shows
+// its own count, a pop-up appears the moment one arrives, and (if turned on) a desktop alert when the tab is hidden.
+
+const staffNotes = { items: [], unread: 0, sections: {} };
+const NOTE_ICON = { chat: 'chat', billing: 'card', people: 'users', actions: 'scroll', servers: 'crash' };
+
+async function startStaffNotices() {
+  $('#sn-bell').addEventListener('click', openNoticePanel);
+  applyNotices(await api('GET', '/api/staff/notices').catch(() => null));
+  const es = agentChat.es || new EventSource('/api/events'); // one live connection (the chat one) when it exists
+  es.addEventListener('staffnote', (e) => onStaffNote(JSON.parse(e.data)));
+  setInterval(() => api('GET', '/api/staff/notices').then(applyNotices).catch(() => {}), 60000);
+}
+
+function applyNotices(d) {
+  if (!d) return;
+  Object.assign(staffNotes, { items: d.items, unread: d.unread, sections: d.sections || {} });
+  renderNoticeCounts();
+  if ($('#sn-list')) renderNoticeList();
+}
+
+function renderNoticeCounts() {
+  const c = $('#sn-count');
+  if (!c) return;
+  c.textContent = staffNotes.unread > 99 ? '99+' : staffNotes.unread;
+  c.classList.toggle('hidden', !staffNotes.unread);
+  for (const a of $$('.console-nav [data-sec]')) {
+    if (a.dataset.sec === 'chat') continue; // Support chat keeps its own count (chats waiting for an answer)
+    const n = staffNotes.sections[a.dataset.sec] || 0;
+    let b = $('.nav-count', a);
+    if (!b && !n) continue;
+    if (!b) {
+      b = document.createElement('span');
+      b.className = 'nav-count';
+      a.appendChild(b);
+    }
+    b.textContent = n;
+    b.classList.toggle('hidden', !n);
+  }
+}
+
+async function markNoticesRead(section) {
+  if (section ? !staffNotes.sections[section] : !staffNotes.unread) return;
+  applyNotices(await api('POST', '/api/staff/notices/read', section ? { section } : {}).catch(() => null));
+}
+
+function onStaffNote(n) {
+  const here = !document.hidden && location.hash.slice(1).split('/')[0] === n.section;
+  staffNotes.items = [{ ...n, unread: !here }, ...staffNotes.items].slice(0, 60);
+  const open = location.hash.slice(1).split('/')[0] || 'overview';
+  if ((here && n.section !== 'chat') || open === 'overview') refreshOpenSection(); // chat updates itself live already
+  if (here) api('POST', '/api/staff/notices/read', { section: n.section }).catch(() => {});
+  else {
+    staffNotes.unread++;
+    staffNotes.sections[n.section] = (staffNotes.sections[n.section] || 0) + 1;
+  }
+  renderNoticeCounts();
+  if ($('#sn-list')) renderNoticeList();
+  // A pop-up you can click to go straight there (new chats already get one from the chat code: chat.js)
+  if (n.section !== 'chat') showNoticeToast(n);
+  if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+    const d = new Notification(`Tree Host: ${n.title}`, { body: n.text, tag: n.id, icon: '/brand/tree-host-logo-512.png' });
+    d.onclick = () => {
+      window.focus();
+      location.hash = n.link;
+      d.close();
+    };
+  }
+}
+
+function showNoticeToast(n) {
+  const el = document.createElement('div');
+  el.className = `toast sn-toast ${n.urgent ? 'error' : 'info'}`;
+  el.innerHTML = `<b>${esc(n.title)}</b><br>${esc(n.text)}`;
+  el.addEventListener('click', () => {
+    location.hash = n.link;
+    el.remove();
+  });
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.remove(), n.urgent ? 12000 : 7000);
+}
+
+function openNoticePanel() {
+  const { root, close } = openModal(`
+    <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <h2 style="margin:0">${ic('bell')} Notifications</h2>
+      <div class="row" style="gap:8px">
+        <span id="sn-desk"></span>
+        <button class="btn sm" id="sn-all">Mark all read</button>
+      </div>
+    </div>
+    <p class="muted small" style="margin:6px 0 12px">New support chats, billing, sign-ups, appeals and crashes. You only see what your role can open.</p>
+    <div class="sn-list" id="sn-list"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-close>Close</button></div>`);
+  renderNoticeList();
+  renderDesktopToggle();
+  $('#sn-all', root).addEventListener('click', () => markNoticesRead(null));
+  $('#sn-list', root).addEventListener('click', (e) => {
+    const a = e.target.closest('[data-link]');
+    if (!a) return;
+    close();
+    location.hash = a.dataset.link;
+  });
+}
+
+function renderNoticeList() {
+  const list = $('#sn-list');
+  if (!list) return;
+  list.innerHTML = staffNotes.items.length
+    ? staffNotes.items.map((n) => `<button class="sn-item ${n.unread ? 'unread' : ''} ${n.urgent ? 'urgent' : ''}" data-link="${esc(n.link)}">
+        <span class="sn-ic">${ic(NOTE_ICON[n.section] || 'bell')}</span>
+        <span class="sn-body"><b>${esc(n.title)}</b><span class="muted small">${esc(n.text)}</span></span>
+        <span class="muted small sn-when">${esc(timeAgo(n.t))}</span></button>`).join('')
+    : '<div class="muted" style="padding:20px;text-align:center">Nothing yet. New support chats, payments, sign-ups and appeals show up here.</div>';
+}
+
+function renderDesktopToggle() {
+  const el = $('#sn-desk');
+  if (!el || !('Notification' in window)) return;
+  if (Notification.permission === 'granted') el.innerHTML = `<span class="badge green">${ic('check')} Desktop alerts on</span>`;
+  else if (Notification.permission === 'denied') el.innerHTML = '<span class="badge" title="Allow notifications for this site in your browser settings">Desktop alerts blocked</span>';
+  else {
+    el.innerHTML = '<button class="btn sm" id="sn-desk-on">Turn on desktop alerts</button>';
+    $('#sn-desk-on').addEventListener('click', async () => {
+      await Notification.requestPermission();
+      renderDesktopToggle();
+    });
+  }
 }
 
 // ---------- overview ----------

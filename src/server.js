@@ -22,6 +22,7 @@ const { keepAwake } = require('./keepawake');
 const providers = require('./providers');
 const java = require('./java');
 const { Activity } = require('./activity');
+const { StaffNotices } = require('./staff-notices');
 const { Moderation, TYPES, REASONS } = require('./moderation');
 const MOTD = require('./motd');
 const backups = require('./backups');
@@ -63,6 +64,7 @@ const auth = new Auth();
 const rbac = new Rbac();
 const billing = new Billing();
 const activity = new Activity();
+const staffNotices = new StaffNotices();
 const moderation = new Moderation();
 manager.teamMode = TEAM;
 // A test site on this PC (http://localhost...) may run customer servers without Docker; the real site never does.
@@ -619,6 +621,18 @@ function broadcast(event, data, inst) {
 }
 
 manager.on('status', (inst) => broadcast('status', inst.toJSON(), inst));
+
+// Staff notifications (src/staff-notices.js): each one goes live to the staff members whose role can open it.
+staffNotices.listeners.add((n) => {
+  const msg = `event: staffnote
+data: ${JSON.stringify({ ...n, perm: undefined, unread: true })}
+
+`;
+  for (const [res, user] of clients) if (user && TEAM && can(user, 'console.access') && can(user, n.perm)) res.write(msg);
+});
+activity.listeners.add((e) => {
+  if (TEAM) staffNotices.onActivity(e);
+});
 manager.on('removed', (id) => broadcast('removed', { id }));
 
 /** Customers see their own servers' activity; staff see server events; sign-ups and billing need activity.viewAll. */
@@ -1825,6 +1839,14 @@ const STAFF_DOCS = [
 ];
 const staffDocsFor = (user) => STAFF_DOCS.filter((d) => can(user, d.perm)).map(({ perm, ...d }) => d);
 route('GET', '/api/staff/docs', (req) => ({ docs: staffDocsFor(req.user) }), { perm: 'console.access' });
+
+// Staff notifications: the bell and the counts in the Staff Console menu.
+route('GET', '/api/staff/notices', (req) => staffNotices.forUser(req.user, can), { perm: 'console.access' });
+route('POST', '/api/staff/notices/read', async (req) => {
+  const { section } = await readJson(req);
+  staffNotices.markRead(req.user.id, section ? String(section).slice(0, 40) : null);
+  return staffNotices.forUser(req.user, can);
+}, { perm: 'console.access' });
 route('GET', '/api/staff/docs/:id', async (req, res, p) => {
   const doc = STAFF_DOCS.find((d) => d.id === p.id);
   if (!doc || !can(req.user, doc.perm)) throw httpError(404, 'No such staff guide.');
@@ -3842,6 +3864,7 @@ route('POST', '/api/support/chats', async (req) => {
   const c = await supportChat.create(req.user, { text: b.text, subject: b.subject, serverId });
   chatEvent(c, { type: 'new', chat: supportChat.summary(c, 'staff') }, { toCustomer: false });
   activity.log('people', req.user.username, `started a support chat: "${c.subject}"`);
+  staffNotices.add({ section: 'chat', perm: 'support.chat', title: 'New support chat', who: req.user.username, text: `${req.user.username}: "${c.subject}"`, link: `chat/${c.id}`, urgent: true });
   return supportChat.full(c, 'customer');
 });
 
@@ -3951,6 +3974,7 @@ async function main() {
     manager.defaultOwner = () => (auth.firstAdmin() || {}).id || null;
   }
   await activity.init();
+  if (TEAM) await staffNotices.init();
   await manager.init();
   for (const inst of manager.instances.values()) if (inst.cfg.sleeping && !inst.proc) startWaker(inst).catch(() => {});
   // The demo server is set up again on every start (fresh settings, and demos made by older versions get tidied).
