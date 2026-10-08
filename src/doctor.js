@@ -5,10 +5,11 @@
 const RULES = [
   {
     id: 'java-too-old',
-    re: /UnsupportedClassVersionError|class file version (\d+)\.0|Unsupported class file major version (\d+)/,
+    // The last one is Paper's own launcher check ("Minecraft 26.1 and newer requires running the server with Java 25 or above").
+    re: /UnsupportedClassVersionError|class file version (\d+)\.0|Unsupported class file major version (\d+)|requires running the server with Java (\d+)/,
     find(m, text) {
       const cv = Number(m[1] || m[2]) || Number((/class file version (\d+)\.0/.exec(text) || [])[1]) || 0;
-      const java = cv ? cv - 44 : null;
+      const java = Number(m[3]) || (cv ? cv - 44 : null);
       return {
         title: 'Something needs a newer Java',
         detail: `A plugin, mod or the server itself was built for ${java ? `Java ${java}` : 'a newer Java'}, but the server runs an older one.`,
