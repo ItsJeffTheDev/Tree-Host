@@ -97,6 +97,8 @@ class Auth {
         .filter(Boolean),
     );
     this.allowFirstAdmin = false;
+    // TREEHOST_SIGNUP_CODE (a test site for invited testers): new accounts need the code from the tester link.
+    this.signupCode = '';
   }
 
   async init() {
@@ -225,6 +227,7 @@ class Auth {
     if (!body.acceptTerms) throw httpError(400, 'Please accept the Terms of Service and Privacy Policy.');
     const birthYear = this.checkAge(body);
     this.checkRate([`signup:${ip}`]);
+    this.checkSignupCode(body, [`signup:${ip}`]);
     this.recordFailure([`signup:${ip}`]);
     if (!cleanEmail(body.email)) throw httpError(400, 'Enter your email address');
     const first = !this.hasOwner();
@@ -574,6 +577,16 @@ class Auth {
   // ----- Firebase sign-in -----
 
   /** True for a verified email listed in TREEHOST_ADMIN_EMAILS (Google accounts are always verified). */
+  /** On a tester-only site, a new account needs the code from the tester link (a wrong one counts as a failed try). */
+  checkSignupCode(body, rateKeys) {
+    if (!this.signupCode) return;
+    const a = sha256(String(body.signupCode || ''));
+    const b = sha256(this.signupCode);
+    if (crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))) return;
+    this.recordFailure(rateKeys);
+    throw httpError(403, 'This is a private test site: sign up with the tester link you were sent.', 'SIGNUP_CODE');
+  }
+
   isAdminEmail(id) {
     return !!id.email && this.adminEmails.has(id.email) && (id.emailVerified || id.provider === 'google.com');
   }
@@ -620,6 +633,8 @@ class Auth {
       role = invite.role;
     } else if (!this.settings.allowSignup) {
       throw httpError(403, 'Sign-ups are closed right now. Please try again later.');
+    } else {
+      this.checkSignupCode(body, [`fb:${ip}`]);
     }
     const suggested = (id.name || id.email.split('@')[0] || '').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 32);
     if (!body.username) return { needsProfile: true, email: id.email, suggested };

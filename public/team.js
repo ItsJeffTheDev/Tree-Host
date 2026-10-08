@@ -249,7 +249,7 @@ function showFirebaseAuth(forceMode) {
   /** Hands the Firebase sign-in to Tree Host, which answers with a session (or asks for a username). */
   const finish = async (user, more = {}) => {
     const idToken = await user.getIdToken();
-    const r = await withSecondFactor((code) => api('POST', '/api/auth/firebase', { idToken, ...more, ...(code ? { code } : {}) }));
+    const r = await withSecondFactor((code) => api('POST', '/api/auth/firebase', { idToken, signupCode: testerCode(), ...more, ...(code ? { code } : {}) }));
     if (r.needsProfile) {
       state.pendingProfile = { suggested: r.suggested || '' };
       // Check if we've saved the username locally (fallback for Firebase sync issues)
@@ -461,6 +461,7 @@ function showAuth(forceMode) {
     if ((mode === 'signup' || (mode === 'invite' && inv.customer)) && ageBlocked()) return showError('Sorry, you need to be at least 13 to make a Tree Host account.');
     if (invite) body.invite = invite;
     if (reset) body.token = reset;
+    if (mode === 'signup') body.signupCode = testerCode();
     const url = {
       login: '/api/auth/login',
       invite: '/api/auth/accept-invite',
@@ -2043,3 +2044,15 @@ function bindCopies(el) {
   );
 }
 
+
+/** The code from a tester link (/dashboard?code=...), kept for the visit so it survives switching to Sign up. */
+function testerCode() {
+  const fromUrl = new URLSearchParams(location.search).get('code');
+  try {
+    if (fromUrl) sessionStorage.setItem('th_signup_code', fromUrl);
+    return fromUrl || sessionStorage.getItem('th_signup_code') || '';
+  } catch {
+    return fromUrl || '';
+  }
+}
+testerCode();

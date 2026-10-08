@@ -4115,6 +4115,7 @@ async function main() {
     await auth.init();
     await rbac.init();
     // Local test sites (http://localhost...) make the first account the admin; real sites use TREEHOST_ADMIN_EMAILS.
+    auth.signupCode = env('SIGNUP_CODE', '');
     auth.allowFirstAdmin = !auth.adminEmails.size && (!HOSTED || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/'));
     await billing.init();
     await moderation.init();

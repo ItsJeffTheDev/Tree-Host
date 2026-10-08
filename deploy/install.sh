@@ -63,8 +63,9 @@ if [ -f /etc/iptables/rules.v4 ] && grep -q -- '-A INPUT -j REJECT' /etc/iptable
   # Oracle Cloud images block everything except SSH with iptables (ufw can't open ports past that rule).
   # Open our ports just before the REJECT rule, now and after reboots.
   echo "    Oracle Cloud firewall detected: opening ports with iptables."
-  for spec in "80" "443" "$PORTS"; do
-    rule="-p tcp -m state --state NEW -m tcp --dport $spec -j ACCEPT"
+  for spec in "tcp 80" "tcp 443" "tcp $PORTS" "udp $PORTS"; do
+    set -- $spec
+    rule="-p $1 -m state --state NEW -m $1 --dport $2 -j ACCEPT"
     if ! grep -q -- "-A INPUT $rule" /etc/iptables/rules.v4; then
       sed -i "0,/^-A INPUT -j REJECT/s//-A INPUT $rule
 -A INPUT -j REJECT/" /etc/iptables/rules.v4
@@ -80,6 +81,7 @@ else
   ufw allow 80/tcp
   ufw allow 443/tcp
   ufw allow "$PORTS/tcp"
+  ufw allow "$PORTS/udp"   # Bedrock players (Geyser) use the same ports over UDP
   ufw --force enable
 fi
 
@@ -89,7 +91,13 @@ for v in 21 17 8 25; do docker pull -q "eclipse-temurin:$v-jre" || true; done
 echo "==> Starting Tree Host and HTTPS..."
 cp "$APP/deploy/tree-host.service" /etc/systemd/system/tree-host.service
 cp "$APP/deploy/tree-host-backup.service" "$APP/deploy/tree-host-backup.timer" /etc/systemd/system/
-cp "$APP/deploy/Caddyfile" /etc/caddy/Caddyfile
+# HTTPS for the address in TREEHOST_PUBLIC_URL (treehost.online uses the full Caddyfile; e.g. a test site gets its own).
+SITE_HOST=$(grep -E '^TREEHOST_PUBLIC_URL=' /etc/tree-host.env | cut -d= -f2 | sed -E 's#^https?://##; s#/.*$##')
+if [ -z "$SITE_HOST" ] || [ "$SITE_HOST" = "treehost.online" ]; then
+  cp "$APP/deploy/Caddyfile" /etc/caddy/Caddyfile
+else
+  sed -n '/^treehost.online {/,/^}/p' "$APP/deploy/Caddyfile" | sed "1s/^treehost.online {/$SITE_HOST {/" > /etc/caddy/Caddyfile
+fi
 systemctl daemon-reload
 systemctl enable --now tree-host tree-host-backup.timer
 systemctl reload caddy || systemctl restart caddy
