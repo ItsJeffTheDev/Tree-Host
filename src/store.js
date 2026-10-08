@@ -9,6 +9,15 @@ const firebase = require('./firebase');
 
 const writers = new Map(); // name -> { pending, running }
 
+/** Without Firebase everything lives in local files: say so once per start, not on every load and save. */
+let warnedLocal = false;
+function warnLocalOnly() {
+  if (warnedLocal) return;
+  warnedLocal = true;
+  console.warn('  ⚠️  Firebase not enabled: accounts, plans, activity and the rest are kept in local files only (lost on redeploy).');
+  console.warn('  ⚠️  Set FIREBASE_SERVICE_ACCOUNT and TREEHOST_TEAM=1 to enable Firebase sync.');
+}
+
 function localFile(name) {
   return path.join(DATA, `${name}.json`);
 }
@@ -38,8 +47,7 @@ const clean = (data) => JSON.parse(JSON.stringify(data ?? null));
 async function load(name) {
   const local = await readLocal(name);
   if (!firebase.dbEnabled()) {
-    console.warn(`  ⚠️  Firebase not enabled: ${name} loaded from local file only.`);
-    console.warn(`  ⚠️  Data will be lost on redeploy. Set FIREBASE_SERVICE_ACCOUNT to enable Firebase sync.`);
+    warnLocalOnly();
     return local;
   }
   const remote = await firebase.dbGet(name);
@@ -95,8 +103,7 @@ async function flush(name, w) {
           }
         }
       } else {
-        console.warn(`  ⚠️  Firebase not enabled: ${name} saved locally only. Data will be lost on redeploy.`);
-        console.warn(`  ⚠️  Set FIREBASE_SERVICE_ACCOUNT and TREEHOST_TEAM=1 to enable Firebase sync.`);
+        warnLocalOnly();
       }
     }
   } finally {
