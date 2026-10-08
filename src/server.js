@@ -3646,6 +3646,16 @@ route('POST', '/api/servers/:id/backups/:bid/restore', async (req, res, p) => {
   inst.logActivity('backup', who(req), `restored the backup "${b.label}"`);
   return b;
 });
+// Browse a backup and restore one file or folder (needs the same access as the Files tab).
+route('GET', '/api/servers/:id/backups/:bid/files', (req, res, p, q) => backups.listFiles(getFor(req, p.id, 'files'), p.bid, q.get('path') || ''));
+route('POST', '/api/servers/:id/backups/:bid/restore-file', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'files');
+  const r = await backups.restoreFile(inst, p.bid, String((await readJson(req)).path || ''));
+  inst.sysLog(`${who(req)} restored ${r.folder ? 'the folder' : ''} ${r.path} from the backup "${r.backup.label}" (${new Date(r.backup.createdAt).toLocaleString()}).`);
+  inst.logActivity('backup', who(req), `restored ${r.path} from the backup "${r.backup.label}"`);
+  if (TEAM && inst.cfg.owner !== req.user.id && rbac.isStaff(req.user)) audit(req, `restored ${r.path} on "${inst.cfg.name}" from a backup`, inst);
+  return r;
+});
 route('DELETE', '/api/servers/:id/backups/:bid', async (req, res, p) => {
   await backups.remove(getFor(req, p.id, 'manage'), p.bid);
   return { ok: true };

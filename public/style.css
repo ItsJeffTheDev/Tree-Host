@@ -744,3 +744,7 @@ details.menu > summary::-webkit-details-marker { display: none; }
 /* Upgrade assistant */
 .upgrade-box { border: 1px solid var(--border); background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
 .ua-item { padding: 3px 0; overflow-wrap: anywhere; }
+
+/* Backup browser */
+.bb-crumbs { font-size: 13.5px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.bb-list { max-height: 55vh; overflow-y: auto; }

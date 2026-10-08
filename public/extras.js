@@ -192,10 +192,11 @@ async function renderBackups(body) {
                 canRestore
                   ? `<button class="btn sm" data-restore="${esc(b.id)}">Restore</button> <button class="btn sm danger" data-bdel="${esc(b.id)}">Delete</button>`
                   : ''
-              }</td></tr>`,
+              }${can('files', s) ? ` <button class="btn sm" data-browse="${esc(b.id)}" title="Restore just one file or folder">Browse</button>` : ''}</td></tr>`,
           )
           .join('')}</tbody></table>`
       : 'No backups yet.';
+    $$('[data-browse]', el).forEach((b) => b.addEventListener('click', () => openBackupBrowser(s, list.find((x) => x.id === b.dataset.browse))));
     $$('[data-restore]', el).forEach((b) =>
       b.addEventListener('click', () => {
         const cur = current();

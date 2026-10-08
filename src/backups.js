@@ -151,4 +151,51 @@ async function removeAll(serverId) {
   await fsp.rm(path.join(ROOT, serverId), { recursive: true, force: true }).catch(() => {});
 }
 
-module.exports = { list, create, restore, remove, removeAll };
+/** A path inside a backup, checked so it can't leave the backup (or the server folder it's restored into). */
+function insidePath(root, rel) {
+  const clean = path.normalize(String(rel || '').replace(/\\/g, '/')).replace(/^([/\\])+/, '');
+  if (clean.split(/[/\\]/).includes('..')) throw Object.assign(new Error('That path is not allowed.'), { status: 400 });
+  const full = path.resolve(root, clean === '.' ? '' : clean);
+  if (full !== root && !full.startsWith(root + path.sep)) throw Object.assign(new Error('That path is not allowed.'), { status: 400 });
+  return { clean: clean === '.' ? '' : clean, full };
+}
+
+/** The files and folders at one level of a backup (for browsing it). */
+async function listFiles(inst, id, rel = '') {
+  const root = path.resolve(backupDir(inst, id));
+  const { clean, full } = insidePath(root, rel);
+  const st = await fsp.lstat(full).catch(() => null);
+  if (!st || !st.isDirectory()) throw Object.assign(new Error('Folder not found in this backup.'), { status: 404 });
+  const out = [];
+  for (const e of await fsp.readdir(full, { withFileTypes: true })) {
+    if (e.isSymbolicLink() || (!clean && e.name === 'backup.json')) continue;
+    const s = e.isFile() ? await fsp.stat(path.join(full, e.name)).catch(() => null) : null;
+    out.push({ name: e.name, dir: e.isDirectory(), size: s ? s.size : null });
+  }
+  return { path: clean.replace(/\\/g, '/'), entries: out.sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name)) };
+}
+
+/** Restores one file or folder from a backup to the same place in the server folder. World files need the server stopped. */
+async function restoreFile(inst, id, rel) {
+  const root = path.resolve(backupDir(inst, id));
+  const meta = JSON.parse(await fsp.readFile(path.join(root, 'backup.json'), 'utf8').catch(() => 'null'));
+  if (!meta) throw Object.assign(new Error('Backup not found'), { status: 404 });
+  const { clean, full } = insidePath(root, rel);
+  if (!clean || clean === 'backup.json') throw Object.assign(new Error('Pick a file or folder to restore.'), { status: 400 });
+  const st = await fsp.lstat(full).catch(() => null);
+  if (!st || st.isSymbolicLink()) throw Object.assign(new Error('That file is not in this backup.'), { status: 404 });
+  const top = clean.split(/[/\\]/)[0];
+  const inWorld = top !== inst.pluginDirName;
+  if (inWorld && (inst.proc || inst.status !== 'stopped')) throw Object.assign(new Error('Stop the server first: world files can only be restored while it is stopped.'), { status: 400 });
+  const dest = insidePath(path.resolve(inst.dir), clean).full;
+  // Never write through a link left inside the server folder
+  const realDir = await fsp.realpath(path.dirname(dest)).catch(() => null);
+  const realRoot = await fsp.realpath(inst.dir);
+  if (realDir && realDir !== realRoot && !realDir.startsWith(realRoot + path.sep)) throw Object.assign(new Error('That path is not allowed.'), { status: 400 });
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  await fsp.rm(dest, { recursive: true, force: true });
+  await fsp.cp(full, dest, { recursive: true, force: true });
+  return { path: clean.replace(/\\/g, '/'), folder: st.isDirectory(), backup: meta };
+}
+
+module.exports = { list, create, restore, remove, removeAll, listFiles, restoreFile };

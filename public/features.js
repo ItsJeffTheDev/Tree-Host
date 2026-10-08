@@ -214,3 +214,39 @@ function upgradeAssistant(box, s, getVersion) {
   draw(null, false);
   return () => draw(null, false);
 }
+
+// =====================================================================================================
+// Backups: browse one backup and restore a single file or folder
+// =====================================================================================================
+
+function openBackupBrowser(s, backup) {
+  const { root } = openModal(`
+    <h2>${ic('folder')} ${esc(backup.label)}</h2>
+    <p class="muted small" style="margin-top:-6px">Made ${esc(new Date(backup.createdAt).toLocaleString())}. Restore just the file or folder you need: it replaces the current copy, the rest stays as it is.</p>
+    <div class="bb-crumbs" id="bb-crumbs"></div>
+    <div class="bb-list" id="bb-list"><div class="muted">Loading…</div></div>
+    <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
+  const open = (rel) => attempt(async () => {
+    const d = await api('GET', `/api/servers/${s.id}/backups/${backup.id}/files?path=${encodeURIComponent(rel)}`);
+    const parts = d.path ? d.path.split('/') : [];
+    $('#bb-crumbs', root).innerHTML = [`<a href="#" data-go="">${esc(backup.label)}</a>`, ...parts.map((p, i) => `<a href="#" data-go="${esc(parts.slice(0, i + 1).join('/'))}">${esc(p)}</a>`)].join(' / ');
+    $('#bb-list', root).innerHTML = d.entries.length ? d.entries.map((e) => {
+      const full = d.path ? `${d.path}/${e.name}` : e.name;
+      return `<div class="pl-row">${ic(e.dir ? 'folder' : 'file')}
+        <span>${e.dir ? `<a href="#" data-go="${esc(full)}">${esc(e.name)}</a>` : esc(e.name)} <span class="muted small">${e.size != null ? fmtSize(e.size) : ''}</span></span>
+        <button class="btn sm" data-rf="${esc(full)}">Restore${e.dir ? ' folder' : ''}</button></div>`;
+    }).join('') : '<p class="muted small">This folder is empty.</p>';
+    $$('[data-go]', root).forEach((a) => a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      open(a.dataset.go);
+    }));
+    $$('[data-rf]', root).forEach((b) => b.addEventListener('click', () => {
+      if (!confirm(`Restore ${b.dataset.rf} from this backup?\n\nIt replaces the current copy of that ${b.textContent.includes('folder') ? 'folder' : 'file'}.`)) return;
+      attempt(async () => {
+        const r = await api('POST', `/api/servers/${s.id}/backups/${backup.id}/restore-file`, { path: b.dataset.rf });
+        toast(`Restored ${r.path}.`);
+      });
+    }));
+  });
+  open('');
+}
