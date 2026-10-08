@@ -79,3 +79,57 @@ async function renderPlayers(body) {
     run(b.dataset.add, form.elements.name.value.trim());
   }));
 }
+
+// =====================================================================================================
+// Lag doctor (on the Performance tab)
+// =====================================================================================================
+
+const LAG_COLORS = { bad: 'var(--danger)', warn: '#e3a008', info: 'var(--accent2, #4a9eff)', good: 'var(--accent)' };
+
+/** The lag doctor card, added at the top of the Performance tab. */
+async function lagDoctorCard(box, s) {
+  if (s.kind === 'proxy') return;
+  const last = await api('GET', `/api/servers/${s.id}/lag-doctor`).catch(() => null);
+  const draw = (r, busy) => {
+    box.innerHTML = `<div class="card stack lag-card">
+      <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div><h3 style="margin:0">${ic('pulse')} Lag doctor</h3>
+          <p class="muted small" style="margin:4px 0 0">Checks TPS, tick times, entities, memory and settings while the server runs, and explains what's slowing it down.</p></div>
+        ${can('command', s) ? `<button class="btn primary sm" id="lag-run" ${busy || !s.running ? 'disabled' : ''}>${busy ? 'Checking… (about 10 s)' : r ? 'Check again' : 'Check for lag'}</button>` : ''}
+      </div>
+      ${!s.running && !r ? '<p class="muted small" style="margin:0">Start the server to check it.</p>' : ''}
+      ${r ? `<div class="lag-nums">${[
+        r.numbers.tps != null ? ['TPS', r.numbers.tps.toFixed(1)] : null,
+        r.numbers.mspt ? ['ms a tick', r.numbers.mspt.avg.toFixed(1)] : null,
+        r.numbers.entities != null ? ['entities', r.numbers.entities] : null,
+        r.numbers.items != null ? ['dropped items', r.numbers.items] : null,
+        r.numbers.memMaxMb ? ['memory', `${Math.round(r.numbers.memUsedMb || 0)} / ${r.numbers.memMaxMb} MB`] : null,
+        ['view / sim distance', `${r.numbers.viewDistance} / ${r.numbers.simulationDistance}`],
+      ].filter(Boolean).map(([k, v]) => `<div class="stat"><div class="stat-num">${esc(v)}</div><div class="stat-label">${esc(k)}</div></div>`).join('')}</div>
+      ${r.findings.map((f, i) => `<div class="lag-item" style="border-left-color:${LAG_COLORS[f.severity]}">
+        <div><b>${esc(f.title)}</b> <span class="muted small">${esc(f.detail)}</span></div>
+        <div class="small">${ic('arrow')} ${esc(f.fix)}</div>
+        ${f.action && f.action.type === 'command' && can('command', s) && s.running ? `<button class="btn sm" data-lag-cmd="${i}" style="margin-top:6px">${esc(f.action.label)}</button>` : ''}
+        ${f.action && f.action.type === 'settings' && can('settings', s) ? '<button class="btn sm" data-lag-settings style="margin-top:6px">Open Settings</button>' : ''}
+      </div>`).join('')}
+      <p class="muted small" style="margin:0">Checked ${timeAgo(r.at)}.</p>` : ''}
+    </div>`;
+    const run = $('#lag-run', box);
+    if (run) run.addEventListener('click', () => attempt(async () => {
+      draw(r, true);
+      try {
+        draw(await api('POST', `/api/servers/${s.id}/lag-doctor`), false);
+      } catch (e) {
+        draw(r, false);
+        throw e;
+      }
+    }));
+    $$('[data-lag-cmd]', box).forEach((b) => b.addEventListener('click', () => attempt(async () => {
+      const f = r.findings[Number(b.dataset.lagCmd)];
+      await api('POST', `/api/servers/${s.id}/command`, { command: f.action.command });
+      toast('Done.');
+    })));
+    $$('[data-lag-settings]', box).forEach((b) => b.addEventListener('click', () => $('.tab[data-tab="settings"]')?.click()));
+  };
+  draw(last, false);
+}

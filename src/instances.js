@@ -396,7 +396,7 @@ class Instance extends EventEmitter {
   }
 
   appendLog(text) {
-    const line = { s: ++this.seq, t: text };
+    const line = { s: ++this.seq, t: text, at: Date.now() };
     this.logs.push(line);
     if (this.logs.length > MAX_LOG_LINES) this.logs.splice(0, this.logs.length - MAX_LOG_LINES);
     this.manager.emit('log', this.cfg.id, line);

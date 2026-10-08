@@ -1461,7 +1461,9 @@ async function renderStats(body) {
         <div class="seg" id="stats-range">${[[60, '1 hour'], [360, '6 hours'], [1440, '24 hours']].map(([m, l]) => `<button class="${statsRange === m ? 'on' : ''}" data-range="${m}">${l}</button>`).join('')}</div>
       </div>
       <div id="stats-body" class="muted">Loading...</div>
-    </div>`;
+    </div>
+    <div id="lag-doctor"></div>`;
+  lagDoctorCard($('#lag-doctor', body), s).catch(() => {});
   $$('[data-range]', body).forEach((b) => b.addEventListener('click', () => {
     statsRange = Number(b.dataset.range);
     renderStats(body);

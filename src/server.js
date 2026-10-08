@@ -24,6 +24,7 @@ const java = require('./java');
 const { Activity } = require('./activity');
 const { StaffNotices } = require('./staff-notices');
 const { Players } = require('./players');
+const lagdoctor = require('./lagdoctor');
 const { Moderation, TYPES, REASONS } = require('./moderation');
 const MOTD = require('./motd');
 const backups = require('./backups');
@@ -3641,6 +3642,17 @@ route('POST', '/api/servers/:id/players/action', async (req, res, p) => {
   inst.logActivity('audit', who(req), `ran "${cmd}" from the Players tab`);
   if (TEAM && inst.cfg.owner !== req.user.id && rbac.isStaff(req.user)) audit(req, `ran "${cmd}" on "${inst.cfg.name}" from the Players tab`, inst);
   return { ok: true, command: cmd };
+});
+
+// Lag doctor (src/lagdoctor.js): checks a running server for lag and explains it. The checks are console commands.
+route('GET', '/api/servers/:id/lag-doctor', (req, res, p) => getFor(req, p.id).lagReport || null);
+route('POST', '/api/servers/:id/lag-doctor', async (req, res, p) => {
+  const inst = getFor(req, p.id, 'command');
+  inst.sysLog(`${who(req)} ran the lag doctor: checking TPS, tick times and entities…`);
+  const report = await lagdoctor.examine(inst);
+  const worst = report.findings.find((f) => f.severity === 'bad') || report.findings[0];
+  inst.sysLog(`Lag doctor: ${worst.title}.`);
+  return report;
 });
 
 // Plugin / mod browser (Modrinth)

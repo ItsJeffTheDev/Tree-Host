@@ -735,3 +735,8 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .pl-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .pl-row:last-child { border-bottom: 0; }
 .pl-chat { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; overflow-wrap: anywhere; }
+
+/* Lag doctor */
+.lag-nums { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.lag-nums .stat-num { font-size: 18px; }
+.lag-item { border-left: 3px solid var(--border); padding: 6px 0 6px 12px; overflow-wrap: anywhere; }
