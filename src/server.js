@@ -3997,7 +3997,8 @@ function pageCsp(body, req) {
   for (const m of html.matchAll(/<script(\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {
     const attrs = m[1] || '';
     if (/\ssrc\s*=/i.test(attrs) || /type\s*=\s*["']?application\/ld\+json/i.test(attrs)) continue; // files and data blocks
-    hashes.push(`'sha256-${crypto.createHash('sha256').update(m[2], 'utf8').digest('base64')}'`);
+    // Browsers hash the script as parsed, with CRLF line endings turned into LF (files checked out on Windows have CRLF).
+    hashes.push(`'sha256-${crypto.createHash('sha256').update(m[2].replace(/\r\n?/g, '\n'), 'utf8').digest('base64')}'`);
   }
   const google = fb ? ['https://www.gstatic.com', 'https://apis.google.com'] : []; // Firebase sign-in, and Google's sign-in pop-up helper
   const header = [
