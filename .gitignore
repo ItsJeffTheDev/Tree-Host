@@ -17,3 +17,4 @@ promo/
 
 # Built staging site (node tools/build-staging.js)
 /staging/
+public/overlay/now-playing.json

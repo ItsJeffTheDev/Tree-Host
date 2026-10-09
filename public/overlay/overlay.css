@@ -102,3 +102,35 @@ html, body { margin: 0; background: transparent; color: var(--ink); font-family:
 .away-join .cta { font-size: 30px; }
 .away-join .link { font-size: 19px; }
 .away-join .fine { margin-top: 10px; font-size: 16px; color: var(--ink-2); }
+
+/* ---- now playing (700 x 190): follows the stream music player ---- */
+.np { --np-a: #46c37b; --np-b: #7beaa6; --np-beat: 0.65s; position: absolute; left: 20px; top: 20px; width: 660px; height: 150px;
+  display: flex; align-items: center; gap: 20px; padding: 18px 22px; transition: transform 0.6s cubic-bezier(0.2, 1.2, 0.4, 1), opacity 0.4s;
+  border-color: color-mix(in srgb, var(--np-a) 55%, transparent); }
+.np.np-out { transform: translateX(-760px); opacity: 0; }
+.np.np-swap { animation: np-swap 0.6s ease both; }
+@keyframes np-swap { 0% { transform: none; } 50% { transform: perspective(600px) rotateX(90deg); } 100% { transform: none; } }
+.np-art { position: relative; flex: none; width: 112px; height: 112px; border-radius: 18px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--np-a), var(--np-b)); box-shadow: 0 8px 24px color-mix(in srgb, var(--np-a) 45%, transparent); overflow: hidden; }
+.np-vinyl { position: absolute; inset: 10px; border-radius: 50%; background: repeating-radial-gradient(circle, rgba(0,0,0,.22) 0 2px, rgba(0,0,0,.08) 2px 5px);
+  animation: np-spin 4s linear infinite; }
+@keyframes np-spin { to { transform: rotate(360deg); } }
+.np-emoji { position: relative; font-size: 54px; filter: drop-shadow(0 3px 6px rgba(0,0,0,.35)); animation: np-bob var(--np-beat) ease-in-out infinite alternate; }
+@keyframes np-bob { to { transform: translateY(-4px) scale(1.06); } }
+.np-main { flex: 1; min-width: 0; }
+.np-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--np-b); }
+.np-live { width: 9px; height: 9px; border-radius: 50%; background: var(--np-a); box-shadow: 0 0 10px var(--np-a); animation: blink 1.2s steps(2) infinite; }
+.np-title { font-size: 32px; font-weight: 900; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-desc { font-size: 16px; color: var(--ink-2); margin-top: 1px; }
+.np-bar { height: 6px; border-radius: 99px; background: rgba(255,255,255,.12); margin-top: 12px; overflow: hidden; }
+.np-fill { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--np-a), var(--np-b)); transition: width 0.25s linear; }
+.np-time { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.np-time #credit { opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-eq { flex: none; display: flex; align-items: flex-end; gap: 5px; height: 70px; }
+.np-eq i { display: block; width: 8px; height: 100%; border-radius: 4px; background: linear-gradient(0deg, var(--np-a), var(--np-b)); transform-origin: bottom;
+  animation: np-eq var(--np-beat) ease-in-out infinite alternate; }
+.np-eq i:nth-child(2) { animation-delay: calc(var(--np-beat) * -0.35); animation-duration: calc(var(--np-beat) * 0.75); }
+.np-eq i:nth-child(3) { animation-delay: calc(var(--np-beat) * -0.7); animation-duration: calc(var(--np-beat) * 1.25); }
+.np-eq i:nth-child(4) { animation-delay: calc(var(--np-beat) * -0.2); animation-duration: calc(var(--np-beat) * 0.5); }
+.np-eq i:nth-child(5) { animation-delay: calc(var(--np-beat) * -0.55); animation-duration: calc(var(--np-beat) * 1.5); }
+@keyframes np-eq { 0% { transform: scaleY(0.15); } 100% { transform: scaleY(1); } }

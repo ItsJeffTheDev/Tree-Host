@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tree Host overlay: now playing</title>
+  <link rel="stylesheet" href="/overlay/overlay.css">
+</head>
+<body>
+  <!-- OBS browser source: 700 x 190. Follows promo/stream-music/Play-Stream-Music.bat. -->
+  <div class="np glass np-out" id="np">
+    <div class="np-art" id="art"><div class="np-vinyl"></div><span class="np-emoji" id="emoji">🎵</span></div>
+    <div class="np-main">
+      <div class="np-label"><span class="np-live"></span> Now playing</div>
+      <div class="np-title" id="title">Tree Host</div>
+      <div class="np-desc" id="desc">Original music</div>
+      <div class="np-bar"><div class="np-fill" id="fill"></div></div>
+      <div class="np-time"><span id="pos">0:00</span><span id="credit">Original music by Tree Host · no copyright</span><span id="dur">0:00</span></div>
+    </div>
+    <div class="np-eq" id="eq"><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+  <script src="/overlay/music.js"></script>
+</body>
+</html>
