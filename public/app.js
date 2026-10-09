@@ -2555,6 +2555,10 @@ function applyStatus(s) {
       if ($('#watch-list') && JSON.stringify(prev?.watches) !== JSON.stringify(s.watches)) renderWatches();
       if (prev && prev.status !== s.status && (s.status === 'stopped' || s.status === 'running')) loadPlugins();
     }
+    // The lag doctor can only check a running server: redraw it when the server starts or stops.
+    if (state.tab === 'stats' && prev && prev.status !== s.status && (s.status === 'stopped' || s.status === 'running') && $('#lag-doctor')) {
+      lagDoctorCard($('#lag-doctor'), s).catch(() => {});
+    }
   }
   if (prev && prev.status !== 'stopped' && s.status === 'stopped') refreshSystem();
 }

@@ -4,6 +4,12 @@
 // Loaded before app.js; app.js calls these when their tab or card is shown. Staff can use them on anyone's server
 // (the server checks the same permissions as everywhere else: src/server.js getFor).
 
+/** True while the server is up. Server data has a status, not a "running" flag; the live copy wins over a stale one. */
+function isUp(s) {
+  const live = typeof current === 'function' ? current() : null;
+  return (live && live.id === s.id ? live : s).status === 'running';
+}
+
 const fmtDur = (ms) => {
   const m = Math.floor(ms / 60000);
   if (m < 60) return `${m} min`;
@@ -95,9 +101,9 @@ async function lagDoctorCard(box, s) {
       <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
         <div><h3 style="margin:0">${ic('pulse')} Lag doctor</h3>
           <p class="muted small" style="margin:4px 0 0">Checks TPS, tick times, entities, memory and settings while the server runs, and explains what's slowing it down.</p></div>
-        ${can('command', s) ? `<button class="btn primary sm" id="lag-run" ${busy || !s.running ? 'disabled' : ''}>${busy ? 'Checking… (about 10 s)' : r ? 'Check again' : 'Check for lag'}</button>` : ''}
+        ${can('command', s) ? `<button class="btn primary sm" id="lag-run" ${busy || !isUp(s) ? 'disabled' : ''}>${busy ? 'Checking… (about 10 s)' : r ? 'Check again' : 'Check for lag'}</button>` : ''}
       </div>
-      ${!s.running && !r ? '<p class="muted small" style="margin:0">Start the server to check it.</p>' : ''}
+      ${!isUp(s) && !r ? '<p class="muted small" style="margin:0">Start the server to check it.</p>' : ''}
       ${r ? `<div class="lag-nums">${[
         r.numbers.tps != null ? ['TPS', r.numbers.tps.toFixed(1)] : null,
         r.numbers.mspt ? ['ms a tick', r.numbers.mspt.avg.toFixed(1)] : null,
@@ -109,7 +115,7 @@ async function lagDoctorCard(box, s) {
       ${r.findings.map((f, i) => `<div class="lag-item" style="border-left-color:${LAG_COLORS[f.severity]}">
         <div><b>${esc(f.title)}</b> <span class="muted small">${esc(f.detail)}</span></div>
         <div class="small">${ic('arrow')} ${esc(f.fix)}</div>
-        ${f.action && f.action.type === 'command' && can('command', s) && s.running ? `<button class="btn sm" data-lag-cmd="${i}" style="margin-top:6px">${esc(f.action.label)}</button>` : ''}
+        ${f.action && f.action.type === 'command' && can('command', s) && isUp(s) ? `<button class="btn sm" data-lag-cmd="${i}" style="margin-top:6px">${esc(f.action.label)}</button>` : ''}
         ${f.action && f.action.type === 'settings' && can('settings', s) ? '<button class="btn sm" data-lag-settings style="margin-top:6px">Open Settings</button>' : ''}
       </div>`).join('')}
       <p class="muted small" style="margin:0">Checked ${timeAgo(r.at)}.</p>` : ''}
@@ -151,7 +157,7 @@ async function pluginUpdatesCard(box, s) {
         </div>
       </div>
       ${pending ? `<div class="warn-box">Updated ${timeAgo(pending.at)}: ${pending.items.map((i) => esc(`${i.newFile} (${i.from} → ${i.to})`)).join(', ')}.
-        ${s.running ? 'Restart to load it.' : ''} If the next start crashes, the old version comes back by itself.
+        ${isUp(s) ? 'Restart to load it.' : ''} If the next start crashes, the old version comes back by itself.
         ${can('plugins', s) && !s.pid ? '<button class="btn sm" id="pu-undo" style="margin-left:6px">Undo now</button>' : ''}</div>` : ''}
       ${list ? (list.length ? list.map((p) => `<div class="pl-row">
           ${p.icon ? `<img src="${esc(p.icon)}" width="22" height="22" alt="" style="border-radius:4px">` : ic('puzzle')}
@@ -172,7 +178,7 @@ async function pluginUpdatesCard(box, s) {
     }));
     const doUpdate = (files) => attempt(async () => {
       const r = await api('POST', `/api/servers/${s.id}/plugin-updates`, { files });
-      toast(r.updated.length ? `Updated ${r.updated.length}. ${s.running ? 'Restart to load it.' : ''}` : 'Nothing to update.');
+      toast(r.updated.length ? `Updated ${r.updated.length}. ${isUp(s) ? 'Restart to load it.' : ''}` : 'Nothing to update.');
       renderTab();
     });
     $$('[data-pu]', box).forEach((b) => b.addEventListener('click', () => doUpdate([b.dataset.pu])));
