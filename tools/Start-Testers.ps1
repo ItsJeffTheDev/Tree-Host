@@ -75,6 +75,7 @@ $env:TREEHOST_DATA = $Data
 # Players' address: playit's (so the home IP stays private), or this PC's public IP when there's no playit.
 if (-not $agent) { $env:TREEHOST_GAME_HOST = $ip }
 $env:TREEHOST_TEST_SITE = '1'
+$env:TREEHOST_FUND_URL = 'https://demo.treehost.online'   # the real launch fund, for the stream's fund overlay
 $env:TREEHOST_RESET_HOURS = "$ResetHours"
 $env:TREEHOST_ISOLATION = 'docker'
 $env:TREEHOST_TRUST_CLOUDFLARE = '1'

@@ -7,6 +7,19 @@
   <meta name="description" content="Support Tree Host: donations pay for the servers and the features Minecraft players ask for.">
   <link rel="icon" href="/brand/tree-host-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/site.css">
+<style>
+  .tier-box { border: 1px solid rgba(123, 234, 166, .25); border-radius: 12px; padding: 10px 12px; margin: 4px 0 10px; background: rgba(70, 195, 123, .06); }
+  .tier-now { font-weight: 700; margin-bottom: 6px; min-height: 1.2em; }
+  .tier-list { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .tier-sep { opacity: .4; margin: 0 2px; }
+  .tier-pill { display: inline-block; font-weight: 900; font-size: 12px; letter-spacing: .4px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .tier-pill.tier-supporter { color: #062a33; background: #5ee7ff; }
+  .tier-pill.tier-founder { color: #2a1d00; background: #f5c542; }
+  .tier-pill.tier-legend { color: #fff; background: linear-gradient(90deg, #b06cff, #ff6bd5); }
+  .sup-head { border-radius: 10px; image-rendering: pixelated; object-fit: cover; }
+  .supporter.tier-legend { box-shadow: 0 0 0 1px rgba(176, 108, 255, .55), 0 8px 24px rgba(176, 108, 255, .18); }
+  .supporter.tier-founder { box-shadow: 0 0 0 1px rgba(245, 197, 66, .45); }
+</style>
 </head>
 <body data-page="donate">
   <header id="site-header"></header>
@@ -54,13 +67,21 @@
             <input type="text" id="d-name" maxlength="40" placeholder="Steve" autocomplete="nickname"></label>
           <label class="d-field"><span>Message <span class="muted">(optional)</span></span>
             <input type="text" id="d-message" maxlength="140" placeholder="Keep it up!"></label>
+          <label class="d-field" id="mc-wrap"><span>Your Minecraft name <span class="muted">(optional: for your badge)</span></span>
+            <input type="text" id="d-mc" maxlength="16" placeholder="Steve" autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9_]{3,16}"></label>
+          <div class="tier-box" id="tier-box" hidden>
+            <div class="tier-now" id="tier-now"></div>
+            <div class="tier-list" id="tier-list"></div>
+            <p class="small muted" style="margin:6px 0 0">Your badge shows in chat, the player list and above your head on every Tree Host server.
+              It's a thank-you: cosmetic only, never pay-to-win. Gifts add up, so you can move up a tier later.</p>
+          </div>
           <label class="d-check"><input type="checkbox" id="d-listed" checked> Show my name and message on this page</label>
           <p class="muted" id="via-link" hidden style="margin:0">Donations go through Stripe's secure donation page, where you choose the amount.
             Thank you for helping Tree Host get to launch!</p>
           <div class="d-error" id="d-error" hidden></div>
           <button class="block" id="d-go">Donate</button>
           <p class="small muted d-fine">One payment through Stripe; it doesn't renew. Tree Host is a business, so donations aren't
-            tax-deductible, and they don't buy a plan or anything in return. Questions? <a data-email="billing" href="#">Email billing</a>.</p>
+            tax-deductible, and they don't buy a plan. The in-game badge is a cosmetic thank-you. Questions? <a data-email="billing" href="#">Email billing</a>.</p>
         </div>
       </form>
     </div>
@@ -108,8 +129,15 @@
       } else amount = c;
       label();
     };
+    const TIER_BADGE = { supporter: '♥ SUPPORTER', founder: '★ FOUNDER', legend: '✦ LEGEND' };
+    let tiers = [];
+    const showTier = () => {
+      const t = tiers.find((x) => amount >= x.minCents);
+      $('#tier-now').innerHTML = t ? `Your badge: <span class="tier-pill tier-${esc(t.id)}">${TIER_BADGE[t.id]}</span>` : '';
+    };
     const label = () => {
       $('#d-go').textContent = info && info.mode === 'off' ? 'Donate with Stripe' : amount >= 100 ? `Donate ${money(amount)}` : 'Donate';
+      showTier();
     };
     document.querySelectorAll('.amount').forEach((b) => b.addEventListener('click', () => pick(b.dataset.c === 'custom' ? 'custom' : Number(b.dataset.c))));
     $('#custom').addEventListener('input', () => {
@@ -138,15 +166,20 @@
         : d.targetCents ? `${pct}% of the way there.` : '';
       $('#wall-section').hidden = !d.supporters.length;
       $('#wall').innerHTML = d.supporters.map((s) => `
-        <div class="supporter">
-          <div class="sup-ava">${esc((s.name || '?').trim().charAt(0).toUpperCase())}</div>
-          <div><b>${esc(s.name)}</b>${s.message ? `<p>${esc(s.message)}</p>` : ''}<span class="small muted">${new Date(s.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
+        <div class="supporter${s.tier ? ` tier-${esc(s.tier)}` : ''}">
+          ${s.mcName ? `<img class="sup-ava sup-head" src="https://mc-heads.net/avatar/${encodeURIComponent(s.mcName)}/96" width="48" height="48" alt="" loading="lazy">`
+            : `<div class="sup-ava">${esc((s.name || '?').trim().charAt(0).toUpperCase())}</div>`}
+          <div><b>${esc(s.name)}</b>${s.tier ? ` <span class="tier-pill tier-${esc(s.tier)}">${TIER_BADGE[s.tier] || ''}</span>` : ''}${s.message ? `<p>${esc(s.message)}</p>` : ''}<span class="small muted">${new Date(s.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
         </div>`).join('');
+      tiers = d.tiers || [];
+      $('#tier-box').hidden = !tiers.length;
+      $('#tier-list').innerHTML = tiers.slice().reverse().map((t) => `<span class="tier-pill tier-${esc(t.id)}">${TIER_BADGE[t.id] || esc(t.label)}</span> <span class="small muted">${money(t.minCents)}+</span>`).join('<span class="tier-sep">·</span>');
+      showTier();
       label();
       // Without payments on this site, the button opens the Stripe donation page, where the amount is chosen:
       // the amount buttons, name and message would be ignored, so they're hidden.
       const viaLink = !!d.fallbackUrl;
-      ['#amounts', '#custom-wrap', '#d-name', '#d-message', '#d-listed'].forEach((sel) => {
+      ['#amounts', '#custom-wrap', '#d-name', '#d-message', '#d-listed', '#d-mc', '#tier-box'].forEach((sel) => {
         const el = $(sel).closest('.d-field, .d-check') || $(sel);
         el.hidden = viaLink || (sel === '#custom-wrap' && el.hidden);
         if (viaLink) el.style.display = 'none';
@@ -242,7 +275,7 @@
         const r = await fetch('/api/donations', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amountCents: amount, name: $('#d-name').value, message: $('#d-message').value, listed: $('#d-listed').checked }),
+          body: JSON.stringify({ amountCents: amount, name: $('#d-name').value, message: $('#d-message').value, listed: $('#d-listed').checked, mcName: $('#d-mc').value.trim() }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || 'Something went wrong. Please try again.');

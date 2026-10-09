@@ -88,6 +88,10 @@ import net.md_5.bungee.api.chat.TextComponent;
  *  - joinfull:  they can join when the server is full,
  *  - whitelist: they can join through the whitelist.
  * Creators get no protection from kicks or bans: those stay the owner's call.
+ *
+ * Launch fund supporters are in plugins/TreeHostStaff/founders.txt ("minecraftName|tier", tier = supporter, founder or
+ * legend). They wear a cosmetic badge in chat, the player list and above their head: ♥ SUPPORTER, ★ FOUNDER, ✦ LEGEND.
+ * Staff and creator badges come first.
  */
 public final class TreeHostStaff extends JavaPlugin implements Listener {
     private static final String BADGE = ChatColor.GOLD + "" + ChatColor.BOLD + "✔ STAFF " + ChatColor.RESET;
@@ -117,6 +121,9 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     private volatile Map<String, Creator> creators = Collections.emptyMap(); // lower-case name -> label and perks
     private File creatorsFile;
     private long creatorsModified = -2;
+    private volatile Map<String, String> founders = Collections.emptyMap(); // lower-case name -> tier
+    private File foundersFile;
+    private long foundersModified = -2;
     private volatile boolean proxyTrusted; // Tree Host put this server behind its owner's proxy, which checks accounts
     private volatile String[] motdFrames = new String[0]; // the owner's MOTD (several frames = animated)
     private volatile int motdInterval = 3;
@@ -132,6 +139,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     public void onEnable() {
         staffFile = new File(getDataFolder(), "staff.txt");
         creatorsFile = new File(getDataFolder(), "creators.txt");
+        foundersFile = new File(getDataFolder(), "founders.txt");
         motdFile = new File(getDataFolder(), "motd.txt");
         grantedFile = new File(getDataFolder(), "granted-ops.txt");
         actionsFile = new File(getDataFolder(), "staff-actions.log");
@@ -140,6 +148,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         folia = classExists("io.papermc.paper.threadedregions.RegionizedServer");
         reload();
         reloadCreators();
+        reloadFounders();
         reloadMotd();
         getServer().getPluginManager().registerEvents(this, this);
         setupBadges();
@@ -149,6 +158,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             public void run() {
                 reload();
                 reloadCreators();
+                reloadFounders();
                 reloadMotd();
                 runSync(TreeHostStaff.this::undoBans);
                 runSync(TreeHostStaff.this::syncOps);
@@ -250,6 +260,72 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             }
         }
         creators = next;
+    }
+
+    // ---------- launch fund supporters ----------
+
+    private void reloadFounders() {
+        long m = foundersFile.exists() ? foundersFile.lastModified() : -1;
+        if (m == foundersModified) return;
+        foundersModified = m;
+        Map<String, String> next = new HashMap<>();
+        if (m >= 0) {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(foundersFile), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty() || line.startsWith("#")) continue;
+                    String[] parts = line.split("\\|", 2);
+                    String name = parts[0].trim();
+                    String tier = parts.length > 1 ? parts[1].trim().toLowerCase(Locale.ROOT) : "supporter";
+                    if (!name.matches("[A-Za-z0-9_]{3,16}") || !tier.matches("supporter|founder|legend")) continue;
+                    next.put(name.toLowerCase(Locale.ROOT), tier);
+                }
+            } catch (Exception e) {
+                getLogger().warning("Could not read the Tree Host supporter list: " + e.getMessage());
+            }
+        }
+        founders = next;
+    }
+
+    /** A supporter's tier (null for everyone else, staff, creators with a badge, and where names can't be trusted). */
+    private String founderOf(String name) {
+        if (name == null || !trusted() || roleOf(name) != null) return null;
+        Creator c = creators.get(name.toLowerCase(Locale.ROOT));
+        if (c != null && c.has("badge")) return null;
+        return founders.get(name.toLowerCase(Locale.ROOT));
+    }
+
+    private static String founderBadge(String tier) {
+        switch (tier) {
+            case "legend": return ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "✦ LEGEND " + ChatColor.RESET;
+            case "founder": return ChatColor.GOLD + "" + ChatColor.BOLD + "★ FOUNDER " + ChatColor.RESET;
+            default: return ChatColor.AQUA + "" + ChatColor.BOLD + "♥ SUPPORTER " + ChatColor.RESET;
+        }
+    }
+
+    /** A supporter joins: their badge in the player list and above their head. */
+    private void founderJoined(Player p) {
+        String tier = founderOf(p.getName());
+        if (tier == null) return;
+        String badge = founderBadge(tier);
+        try {
+            p.setPlayerListName(badge + ChatColor.WHITE + p.getName());
+        } catch (Throwable ignored) {
+        }
+        try {
+            Scoreboard board = getServer().getScoreboardManager().getMainScoreboard();
+            Team team = board.getTeam("th_fund_" + tier);
+            if (team == null) team = board.registerNewTeam("th_fund_" + tier);
+            team.setPrefix(badge);
+            try {
+                team.setColor(ChatColor.WHITE);
+            } catch (Throwable ignored) {
+            }
+            team.addEntry(p.getName());
+        } catch (Throwable ignored) {
+            // Folia has no scoreboards; the chat and player list badges still work.
+        }
     }
 
     /** A creator's perks (null for everyone else, for staff, and on servers where names can't be trusted). */
@@ -432,6 +508,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         if (role == null) {
             hideVanishedFrom(p);
             creatorJoined(e, p);
+            founderJoined(p);
             return;
         }
         grantOp(p);
@@ -626,7 +703,9 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         staffChatMode.remove(name.toLowerCase(Locale.ROOT));
         removeEntity(badges.remove(e.getPlayer().getUniqueId()));
         if (grantedOps.contains(name.toLowerCase(Locale.ROOT))) deop(name);
-        String[] teams = roleOf(name) != null ? new String[] { TEAM, FLOAT_TEAM } : creatorOf(name) != null ? new String[] { CREATOR_TEAM } : new String[0];
+        String fund = founderOf(name);
+        String[] teams = roleOf(name) != null ? new String[] { TEAM, FLOAT_TEAM } : creatorOf(name) != null ? new String[] { CREATOR_TEAM }
+                : fund != null ? new String[] { "th_fund_" + fund } : new String[0];
         for (String team : teams) {
             try {
                 Team t = getServer().getScoreboardManager().getMainScoreboard().getTeam(team);
@@ -650,6 +729,10 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             // Creators: the badge goes in front of whatever chat format the server uses (other chat plugins keep working).
             Creator c = creatorOf(p.getName());
             if (c != null && c.has("badge")) e.setFormat(c.badge() + e.getFormat());
+            else {
+                String tier = founderOf(p.getName());
+                if (tier != null) e.setFormat(founderBadge(tier) + e.getFormat());
+            }
             return;
         }
         if (!components) {

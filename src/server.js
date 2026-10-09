@@ -1936,6 +1936,22 @@ route('GET', '/api/health', () => ({ ok: true }), { public: true });
 // Stream overlays (public/overlay/*.html, added to OBS as browser sources on this PC). Only answers requests made on
 // this PC directly: anything through the Cloudflare tunnel carries CF-Connecting-IP and is refused, so the tester
 // code and the numbers aren't public.
+// The launch fund for the stream overlay (public/overlay/fund.html): this site's own numbers, or, on the tester PC,
+// the real site's (TREEHOST_FUND_URL, e.g. https://demo.treehost.online), fetched here so the page needs no CORS.
+let fundCache = { at: 0, data: null };
+route('GET', '/api/overlay/fund', async (req) => {
+  if (!fromThisPc(req) || req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']) throw httpError(404, 'Not found');
+  const src = env('FUND_URL', '');
+  if (!src) return billing.donationSummary();
+  if (Date.now() - fundCache.at > 15000 || !fundCache.data) {
+    try {
+      const r = await fetch(`${src.replace(/\/$/, '')}/api/donations`, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) fundCache = { at: Date.now(), data: await r.json() };
+    } catch {}
+  }
+  return fundCache.data || billing.donationSummary();
+}, { public: true });
+
 route('GET', '/api/overlay', (req, res, p, q) => {
   if (!fromThisPc(req) || req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']) throw httpError(404, 'Not found');
   const servers = [...manager.instances.values()].filter((i) => i.isCustomer);
@@ -2544,6 +2560,20 @@ function creatorListText() {
   return `# Tree Host creators (YouTubers) and their perks. Managed by Tree Host: changes here are undone.\n${lines.sort().join('\n')}\n`;
 }
 
+/** founders.txt for the staff plugin: "minecraftName|tier" for everyone who backed the launch fund (badge on every server). */
+function founderListText() {
+  const lines = billing.founders((id) => auth.userById(id))
+    .filter((f) => /^[A-Za-z0-9_]{3,16}$/.test(f.mcName))
+    .map((f) => `${f.mcName}|${f.tier.id}`)
+    .sort();
+  return `# Tree Host launch fund supporters (badge on every Tree Host server). Managed by Tree Host: changes here are undone.\n${lines.join('\n')}\n`;
+}
+billing.hooks.donated = (d) => {
+  syncStaffListsSoon();
+  const f = billing.founders((id) => auth.userById(id)).find((x) => (d.userId ? x.mcName === ((auth.userById(d.userId) || {}).mcName || d.mcName) : x.mcName === d.mcName));
+  if (testSite) testSite.event('donation', { user: d.public ? d.name || 'Someone' : 'Someone', server: f ? f.tier.label : 'Supporter' });
+};
+
 /** Every server's staff and creator lists, now (after a role or its permissions change). */
 const syncStaffListsSoon = () => setTimeout(() => {
   for (const i of manager.instances.values()) syncStaffPlugin(i).catch(() => {});
@@ -2580,6 +2610,9 @@ async function syncStaffPlugin(inst) {
   const list = path.join(dir, 'TreeHostStaff', 'staff.txt');
   const text = staffFileFor(inst);
   if ((await fsp.readFile(list, 'utf8').catch(() => null)) !== text) await fsp.writeFile(list, text);
+  const foundersFile = path.join(dir, 'TreeHostStaff', 'founders.txt');
+  const founders = founderListText();
+  if ((await fsp.readFile(foundersFile, 'utf8').catch(() => null)) !== founders) await fsp.writeFile(foundersFile, founders);
   const creatorsFile = path.join(dir, 'TreeHostStaff', 'creators.txt');
   const creators = creatorListText();
   if ((await fsp.readFile(creatorsFile, 'utf8').catch(() => null)) !== creators) await fsp.writeFile(creatorsFile, creators);

@@ -677,6 +677,45 @@ class Billing {
 
   // ----- donations (the launch fund) -----
 
+  /**
+   * Founder tiers: what someone has given in total decides the badge they wear on every Tree Host server and on the
+   * supporters wall. Cosmetic only. Staff can change the thresholds (settings.founderTiers).
+   */
+  founderTiers() {
+    const t = this.settings.founderTiers || {};
+    return [
+      { id: 'legend', label: 'Legend', minCents: t.legend || 5000 },
+      { id: 'founder', label: 'Founder', minCents: t.founder || 1000 },
+      { id: 'supporter', label: 'Supporter', minCents: t.supporter || 100 },
+    ];
+  }
+
+  tierFor(totalCents) {
+    return this.founderTiers().find((t) => totalCents >= t.minCents) || null;
+  }
+
+  /**
+   * Everyone who gave, added up per person (their account if they were signed in, else the Minecraft name they typed),
+   * with the Minecraft name their badge goes on. userById: (id) => account (for its Minecraft name).
+   */
+  founders(userById = () => null) {
+    const people = new Map();
+    for (const d of this.donations) {
+      if (d.status !== 'paid') continue;
+      const user = d.userId ? userById(d.userId) : null;
+      const mcName = (user && user.mcName) || d.mcName || '';
+      const key = d.userId ? `u:${d.userId}` : mcName ? `m:${mcName.toLowerCase()}` : `d:${d.id}`;
+      const p = people.get(key) || { mcName, name: d.name || '', totalCents: 0, since: d.paidAt, public: false };
+      p.totalCents += d.amountCents;
+      p.mcName = p.mcName || mcName;
+      p.name = p.name || d.name || '';
+      p.since = Math.min(p.since || d.paidAt, d.paidAt);
+      p.public = p.public || (d.public && !d.hidden);
+      people.set(key, p);
+    }
+    return [...people.values()].map((p) => ({ ...p, tier: this.tierFor(p.totalCents) })).filter((p) => p.tier);
+  }
+
   saveDonations() {
     return store.save('donations', this.donations);
   }
@@ -698,7 +737,13 @@ class Billing {
         .filter((d) => d.public && !d.hidden)
         .sort((a, b) => b.paidAt - a.paidAt)
         .slice(0, 24)
-        .map((d) => ({ name: d.name || 'Someone kind', message: d.hidden ? '' : d.message || '', at: d.paidAt })),
+        .map((d) => {
+          const total = paid.filter((x) => (d.userId ? x.userId === d.userId : d.mcName && x.mcName && x.mcName.toLowerCase() === d.mcName.toLowerCase()) || x === d)
+            .reduce((n, x) => n + x.amountCents, 0);
+          const tier = this.tierFor(total);
+          return { name: d.name || 'Someone kind', message: d.hidden ? '' : d.message || '', at: d.paidAt, mcName: d.mcName || '', tier: tier ? tier.id : null };
+        }),
+      tiers: this.founderTiers().map((t) => ({ id: t.id, label: t.label, minCents: t.minCents })),
     };
   }
 
@@ -758,7 +803,7 @@ class Billing {
   }
 
   /** Starts a donation: Stripe Checkout (one payment), or straight to "thank you" in demo mode. */
-  async donate({ amountCents, name, message, listed, userId }, origin) {
+  async donate({ amountCents, name, message, listed, userId, mcName }, origin) {
     const amount = Math.round(Number(amountCents));
     if (!(amount >= 100 && amount <= 100000)) throw httpError(400, `Choose an amount between ${money(100)} and ${money(100000)}.`);
     if (this.mode === 'off') throw httpError(400, 'Donations are not set up yet.', 'NO_PAYMENTS');
@@ -771,6 +816,8 @@ class Billing {
       message: String(message || '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 140),
       public: !!listed,
       userId: userId || null,
+      // the Minecraft name their badge goes on (signed-in donors use their account's)
+      mcName: /^[A-Za-z0-9_]{3,16}$/.test(String(mcName || '').trim()) ? String(mcName).trim() : '',
       status: 'pending',
       createdAt: Date.now(),
     };
@@ -803,6 +850,7 @@ class Billing {
     d.paidAt = Date.now();
     d.paymentIntent = o.payment_intent || null;
     this.hooks.notify('billing', { userId: d.userId, donorName: d.name || 'Someone' }, `donated ${money(d.amountCents)}${d.name ? ` (as ${d.name})` : ''} to the launch fund`);
+    if (this.hooks.donated) this.hooks.donated(d); // badges on servers, stream alert
   }
 
   /** Back from Stripe: ask whether the donation was paid (the webhook can't reach a test site on localhost). */
