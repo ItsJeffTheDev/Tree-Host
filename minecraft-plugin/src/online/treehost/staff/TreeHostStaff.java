@@ -3,8 +3,13 @@ package online.treehost.staff;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -18,6 +23,8 @@ import java.util.TimerTask;
 import org.bukkit.BanList;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -48,7 +55,12 @@ import net.md_5.bungee.api.chat.TextComponent;
  *  - can always join (whitelist, bans and a full server don't stop them),
  *  - can't be kicked or banned (kick and ban commands on them are refused, bans are undone),
  *  - are announced when they join, in green and gold,
- *  - wear a gold STAFF badge in chat (hover: "Official Tree Host Staff"), above their head and in the player list.
+ *  - wear a gold STAFF badge in chat (hover: "Official Tree Host Staff"), above their head and in the player list,
+ *  - are made operator while they're on the server when their role may run commands ("#op=name" lines); it's taken
+ *    away again when they leave, and an owner's own ops are never touched (granted-ops.txt remembers which ones),
+ *  - get /sc (staff chat), /thvanish (hidden from players), /thinfo (server health) and /thstaff (help),
+ *  - have every command they run written to the console and plugins/TreeHostStaff/staff-actions.log, so the owner
+ *    can see what staff did on their server.
  * Only on online-mode servers (or behind a proxy that checks accounts), so a name really belongs to its owner.
  *
  * Creators (YouTubers) are in plugins/TreeHostStaff/creators.txt ("minecraftName|Label|perk,perk"), with the perks
@@ -72,6 +84,11 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             "advancedban:tempban", "deop", "minecraft:deop"));
 
     private volatile Map<String, String> staff = Collections.emptyMap(); // lower-case name -> role label
+    private volatile Set<String> opStaff = Collections.emptySet(); // lower-case names whose role may be made operator
+    private final Set<String> grantedOps = Collections.synchronizedSet(new HashSet<String>()); // ops this plugin gave
+    private final Set<String> vanished = Collections.synchronizedSet(new HashSet<String>()); // lower-case names
+    private File grantedFile;
+    private File actionsFile;
     private volatile Map<String, Creator> creators = Collections.emptyMap(); // lower-case name -> label and perks
     private File creatorsFile;
     private long creatorsModified = -2;
@@ -91,6 +108,9 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         staffFile = new File(getDataFolder(), "staff.txt");
         creatorsFile = new File(getDataFolder(), "creators.txt");
         motdFile = new File(getDataFolder(), "motd.txt");
+        grantedFile = new File(getDataFolder(), "granted-ops.txt");
+        actionsFile = new File(getDataFolder(), "staff-actions.log");
+        loadGrantedOps();
         components = classExists("net.md_5.bungee.api.chat.TextComponent") && classExists("org.bukkit.entity.Player$Spigot");
         folia = classExists("io.papermc.paper.threadedregions.RegionizedServer");
         reload();
@@ -105,14 +125,19 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
                 reloadCreators();
                 reloadMotd();
                 runSync(TreeHostStaff.this::undoBans);
+                runSync(TreeHostStaff.this::syncOps);
             }
         }, 5000L, 5000L);
+        // Ops left over from a crash (the staff member wasn't here to leave): take them back now.
+        runSync(this::syncOps);
         getLogger().info("Tree Host staff protection is active (" + staff.size() + " staff, " + creators.size() + " creators, " + (trusted() ? "names verified" : "offline mode: no staff powers") + ").");
     }
 
     @Override
     public void onDisable() {
         if (timer != null) timer.cancel();
+        // Stopping: staff stop being operator (they get it back when they join again).
+        for (String name : new HashSet<>(grantedOps)) deop(name);
     }
 
     // ---------- the staff list ----------
@@ -122,6 +147,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         if (m == lastModified) return;
         lastModified = m;
         Map<String, String> next = new HashMap<>();
+        Set<String> ops = new HashSet<>();
         boolean trust = false;
         if (m >= 0) {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(staffFile), StandardCharsets.UTF_8))) {
@@ -129,6 +155,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
                 while ((line = r.readLine()) != null) {
                     line = line.trim();
                     if (line.equals("#trust=proxy")) trust = true;
+                    if (line.startsWith("#op=")) ops.add(line.substring(4).trim().toLowerCase(Locale.ROOT));
                     if (line.isEmpty() || line.startsWith("#")) continue;
                     String[] parts = line.split("\\|", 2);
                     String name = parts[0].trim();
@@ -140,6 +167,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             }
         }
         staff = next;
+        opStaff = ops;
         proxyTrusted = trust;
     }
 
@@ -300,6 +328,11 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onPlayerCommand(PlayerCommandPreprocessEvent e) {
         if (blocked(e.getPlayer(), e.getMessage())) e.setCancelled(true);
+        String role = roleOf(e.getPlayer().getName());
+        // Staff chat is logged by /sc itself; everything else staff run is written down for the owner.
+        if (role != null && !e.getMessage().matches("(?i)^/(sc|thchat|treehoststaff:sc|treehoststaff:thchat)( .*)?$")) {
+            logAction(e.getPlayer().getName() + " (" + role + ") ran: " + e.getMessage());
+        }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -363,9 +396,14 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         Player p = e.getPlayer();
         String role = roleOf(p.getName());
         if (role == null) {
+            hideVanishedFrom(p);
             creatorJoined(e, p);
             return;
         }
+        grantOp(p);
+        p.sendMessage(PREFIX + ChatColor.GREEN + "Staff tools: " + ChatColor.WHITE + "/sc" + ChatColor.GRAY + " staff chat, "
+                + ChatColor.WHITE + "/thvanish" + ChatColor.GRAY + ", " + ChatColor.WHITE + "/thinfo" + ChatColor.GRAY + ", "
+                + ChatColor.WHITE + "/thstaff" + ChatColor.GRAY + "." + (p.isOp() ? " You're operator while you're here." : ""));
         e.setJoinMessage(BADGE + ChatColor.GOLD + p.getName() + ChatColor.YELLOW + " (" + role + ") joined the game");
         try {
             p.setPlayerListName(BADGE + ChatColor.GOLD + p.getName());
@@ -443,6 +481,8 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         String name = e.getPlayer().getName();
+        vanished.remove(name.toLowerCase(Locale.ROOT));
+        if (grantedOps.contains(name.toLowerCase(Locale.ROOT))) deop(name);
         String team = roleOf(name) != null ? TEAM : creatorOf(name) != null ? CREATOR_TEAM : null;
         if (team == null) return;
         try {
@@ -486,6 +526,178 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             }
         }
         getServer().getConsoleSender().sendMessage("[STAFF] " + p.getName() + ": " + e.getMessage());
+    }
+
+    // ---------- operator while staff are on the server ----------
+
+    private boolean mayOp(String name) {
+        return name != null && roleOf(name) != null && opStaff.contains(name.toLowerCase(Locale.ROOT));
+    }
+
+    /** Makes a staff member operator (unless the owner already did: then it stays theirs to manage). */
+    private void grantOp(Player p) {
+        if (!mayOp(p.getName()) || p.isOp()) return;
+        try {
+            p.setOp(true);
+            grantedOps.add(p.getName().toLowerCase(Locale.ROOT));
+            saveGrantedOps();
+            logAction(p.getName() + " was made operator (Tree Host staff; taken away again when they leave).");
+        } catch (Throwable t) {
+            getLogger().warning("Could not make " + p.getName() + " operator: " + t.getMessage());
+        }
+    }
+
+    private void deop(String name) {
+        try {
+            Player online = getServer().getPlayerExact(name);
+            OfflinePlayer target = online != null ? online : getServer().getOfflinePlayer(name);
+            if (target.isOp()) target.setOp(false);
+        } catch (Throwable ignored) {
+        }
+        grantedOps.remove(name.toLowerCase(Locale.ROOT));
+        saveGrantedOps();
+    }
+
+    /** Ops this plugin gave go away when the person left, or isn't staff (or allowed op) any more. */
+    private void syncOps() {
+        for (String name : new HashSet<>(grantedOps)) {
+            Player p = getServer().getPlayerExact(name);
+            if (p == null || !mayOp(name)) deop(name);
+        }
+        for (Player p : getServer().getOnlinePlayers()) if (mayOp(p.getName())) grantOp(p);
+    }
+
+    private void loadGrantedOps() {
+        if (!grantedFile.exists()) return;
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(grantedFile), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = r.readLine()) != null) if (line.trim().matches("[A-Za-z0-9_]{3,16}")) grantedOps.add(line.trim().toLowerCase(Locale.ROOT));
+        } catch (Exception e) {
+            getLogger().warning("Could not read granted-ops.txt: " + e.getMessage());
+        }
+    }
+
+    private void saveGrantedOps() {
+        try {
+            getDataFolder().mkdirs();
+            try (Writer w = new OutputStreamWriter(new FileOutputStream(grantedFile), StandardCharsets.UTF_8)) {
+                w.write("# Tree Host staff this plugin made operator (taken away when they leave). Don't edit.\n");
+                synchronized (grantedOps) {
+                    for (String n : grantedOps) w.write(n + "\n");
+                }
+            }
+        } catch (Exception e) {
+            getLogger().warning("Could not save granted-ops.txt: " + e.getMessage());
+        }
+    }
+
+    /** What staff did on this server: in the console and in staff-actions.log, for the owner to read. */
+    private void logAction(String text) {
+        getLogger().info("[Tree Host staff] " + text);
+        try {
+            getDataFolder().mkdirs();
+            try (Writer w = new OutputStreamWriter(new FileOutputStream(actionsFile, true), StandardCharsets.UTF_8)) {
+                w.write(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + "  " + text + "\n");
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    // ---------- staff commands ----------
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        String name = command.getName().toLowerCase(Locale.ROOT);
+        String role = sender instanceof Player ? roleOf(sender.getName()) : "Console";
+        if (role == null) {
+            sender.sendMessage(PREFIX + ChatColor.RED + "That command is for official Tree Host staff.");
+            return true;
+        }
+        switch (name) {
+            case "thchat":
+                if (args.length == 0) {
+                    sender.sendMessage(PREFIX + ChatColor.YELLOW + "Usage: /sc <message>  (only Tree Host staff on this server see it)");
+                    return true;
+                }
+                String msg = String.join(" ", args);
+                String line = ChatColor.GOLD + "" + ChatColor.BOLD + "[Staff] " + ChatColor.GOLD + sender.getName() + ChatColor.GRAY + ": " + ChatColor.AQUA + msg;
+                for (Player p : getServer().getOnlinePlayers()) if (roleOf(p.getName()) != null) p.sendMessage(line);
+                if (!(sender instanceof Player)) sender.sendMessage(line);
+                logAction("[staff chat] " + sender.getName() + ": " + msg);
+                return true;
+            case "thvanish":
+                if (!(sender instanceof Player)) {
+                    sender.sendMessage("Only players can vanish.");
+                    return true;
+                }
+                Player me = (Player) sender;
+                String key = me.getName().toLowerCase(Locale.ROOT);
+                boolean hide = !vanished.contains(key);
+                if (hide) vanished.add(key);
+                else vanished.remove(key);
+                for (Player other : getServer().getOnlinePlayers()) {
+                    if (other == me || roleOf(other.getName()) != null) continue;
+                    try {
+                        if (hide) other.hidePlayer(this, me);
+                        else other.showPlayer(this, me);
+                    } catch (Throwable ignored) {
+                    }
+                }
+                me.sendMessage(PREFIX + (hide ? ChatColor.GREEN + "You're vanished: players can't see you (staff still can). /thvanish again to show yourself."
+                        : ChatColor.YELLOW + "You're visible again."));
+                logAction(me.getName() + (hide ? " vanished." : " is visible again."));
+                return true;
+            case "thinfo":
+                sendInfo(sender);
+                return true;
+            default:
+                sender.sendMessage(PREFIX + ChatColor.GREEN + "Official Tree Host staff tools" + ChatColor.GRAY + " (" + role + ")");
+                sender.sendMessage(ChatColor.WHITE + "  /sc <message>" + ChatColor.GRAY + "  chat with the other Tree Host staff on this server");
+                sender.sendMessage(ChatColor.WHITE + "  /thvanish" + ChatColor.GRAY + "  hide from players while you look into a problem");
+                sender.sendMessage(ChatColor.WHITE + "  /thinfo" + ChatColor.GRAY + "  TPS, memory, players, plugins and version at a glance");
+                sender.sendMessage(ChatColor.GRAY + "  You " + (sender instanceof Player && ((Player) sender).isOp() ? "are" : "aren't") + " operator. Staff can't be kicked or banned."
+                        + " Everything you run here is logged for the owner.");
+                return true;
+        }
+    }
+
+    /** Server health for staff: TPS (Paper), memory, players, plugins, version. */
+    private void sendInfo(CommandSender to) {
+        Runtime rt = Runtime.getRuntime();
+        long used = (rt.totalMemory() - rt.freeMemory()) / 1048576L, max = rt.maxMemory() / 1048576L;
+        String tps = "not available on this server type";
+        try {
+            double[] t = (double[]) getServer().getClass().getMethod("getTPS").invoke(getServer());
+            tps = String.format(Locale.ROOT, "%.1f, %.1f, %.1f (1, 5, 15 min)", Math.min(20, t[0]), Math.min(20, t[1]), Math.min(20, t[2]));
+        } catch (Throwable ignored) {
+        }
+        StringBuilder plugins = new StringBuilder();
+        org.bukkit.plugin.Plugin[] list = getServer().getPluginManager().getPlugins();
+        for (org.bukkit.plugin.Plugin pl : list) {
+            if (plugins.length() > 0) plugins.append(", ");
+            plugins.append(pl.isEnabled() ? ChatColor.WHITE : ChatColor.RED).append(pl.getName()).append(ChatColor.GRAY);
+        }
+        to.sendMessage(PREFIX + ChatColor.GREEN + "Server health");
+        to.sendMessage(ChatColor.GRAY + "  Version: " + ChatColor.WHITE + getServer().getName() + " " + getServer().getBukkitVersion());
+        to.sendMessage(ChatColor.GRAY + "  TPS: " + ChatColor.WHITE + tps);
+        to.sendMessage(ChatColor.GRAY + "  Memory: " + ChatColor.WHITE + used + " / " + max + " MB" + (used * 100 / Math.max(1, max) > 85 ? ChatColor.RED + " (nearly full)" : ""));
+        to.sendMessage(ChatColor.GRAY + "  Players: " + ChatColor.WHITE + getServer().getOnlinePlayers().size() + " / " + getServer().getMaxPlayers()
+                + ChatColor.GRAY + "  View distance: " + ChatColor.WHITE + getServer().getViewDistance() + ChatColor.GRAY + "  Online mode: " + ChatColor.WHITE + getServer().getOnlineMode());
+        to.sendMessage(ChatColor.GRAY + "  Plugins (" + list.length + ", red = off): " + plugins);
+    }
+
+    /** Someone who isn't staff joins: staff who vanished stay hidden from them. */
+    private void hideVanishedFrom(Player newcomer) {
+        synchronized (vanished) {
+            for (String n : vanished) {
+                Player v = getServer().getPlayerExact(n);
+                if (v == null) continue;
+                try {
+                    newcomer.hidePlayer(this, v);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
     }
 
     // ---------- helpers ----------

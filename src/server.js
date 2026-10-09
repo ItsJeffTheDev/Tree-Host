@@ -2448,7 +2448,12 @@ function staffListText() {
     .filter((u) => u.mcName && /^[A-Za-z0-9_]{3,16}$/.test(u.mcName) && !u.restriction && rbac.isStaff(u))
     .map((u) => `${u.mcName}|${rbac.role(u.role).label}`)
     .sort();
-  return `# Official Tree Host staff. Managed by Tree Host: changes here are undone.\n${lines.join('\n')}\n`;
+  // Operator while they're on a server: staff whose role may run console commands on any server anyway.
+  const ops = auth.users
+    .filter((u) => u.mcName && /^[A-Za-z0-9_]{3,16}$/.test(u.mcName) && !u.restriction && rbac.isStaff(u) && rbac.can(u, 'servers.operate'))
+    .map((u) => `#op=${u.mcName}`)
+    .sort();
+  return `# Official Tree Host staff. Managed by Tree Host: changes here are undone.\n${lines.join('\n')}\n${ops.length ? `${ops.join('\n')}\n` : ''}`;
 }
 const staffFileFor = (inst) => `${staffListText()}${manager.networkFor && manager.networkFor(inst) ? '#trust=proxy\n' : ''}`;
 

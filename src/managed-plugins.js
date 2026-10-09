@@ -441,7 +441,7 @@ class ManagedPlugins {
       name: 'Tree Host Staff',
       filename: STAFF_FILE,
       version: s.version || (this.staffSource === 'bundled' ? 'bundled' : ''),
-      description: 'Lets official Tree Host staff join and help on customer servers (even when whitelisted or full), shows the ✔ STAFF badge, and plays the owner\'s animated MOTD. Required on every Bukkit-family server.',
+      description: 'Lets official Tree Host staff join and help on customer servers (even when whitelisted or full), makes staff who may run commands operator while they are there, logs every staff command for the owner, gives staff /sc, /thvanish and /thinfo, shows the ✔ STAFF badge, and plays the owner\'s animated MOTD. Required on every Bukkit-family server.',
       notes: s.notes || '',
       locked: true,
       autoInstall: true,

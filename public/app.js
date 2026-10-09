@@ -962,7 +962,9 @@ function showStaffPluginInfo() {
         <li><b>Staff protection</b> - Staff members cannot be kicked or banned by mistake</li>
         <li><b>Visual identification</b> - Staff wear a gold <b>✔ STAFF</b> badge in chat so players know who they are</li>
         <li><b>Hover information</b> - Hovering over the badge shows "Official Tree Host Staff"</li>
-        <li><b>No commands</b> - The plugin has no commands and doesn't change your gameplay</li>
+        <li><b>Operator while helping</b> - Support staff are made operator when they join so they can fix things, and it's taken away when they leave. Your own ops list is never changed</li>
+        <li><b>Everything is logged</b> - Every command staff run on your server appears in your console and in <code>plugins/TreeHostStaff/staff-actions.log</code></li>
+        <li><b>Staff tools</b> - Only staff can use them: <code>/sc</code> (staff chat), <code>/thvanish</code> (hidden while looking into a problem), <code>/thinfo</code> (server health). Nothing changes for your players</li>
         <li><b>Tree Host YouTubers</b> - Creators we work with wear a red <b>▶ YOUTUBER</b> tag. They can't get past bans, and you can still kick them</li>
         <li><b>Tiny footprint</b> - Minimal performance impact on your server</li>
       </ul>
