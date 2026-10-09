@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tree Host overlay: away</title>
+  <link rel="stylesheet" href="/overlay/overlay.css">
+</head>
+<body>
+  <!-- OBS browser source: 1920 x 1080. For when you're in neither Minecraft nor the dashboard. ?name=Jeff -->
+  <div class="screen away">
+    <div class="blob"></div><div class="blob b2"></div>
+    <div class="away-grid">
+      <div class="term glass">
+        <div class="term-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">treehost@stream: ~/servers</span></div>
+        <div class="term-body" id="term"></div>
+      </div>
+      <div class="away-side">
+        <div class="away-head"><span data-logo></span> <span id="who">Jeff</span> is in another window</div>
+        <div class="away-sub" id="why">probably fixing something</div>
+        <div class="heart glass">
+          <div class="heart-top"><span>Tree Host heartbeat</span><b id="tps">vibes: immaculate</b></div>
+          <canvas id="beat" width="640" height="150"></canvas>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="n" data-o="servers">0</div><div class="l">servers</div></div>
+          <div class="stat"><div class="n" data-o="running">0</div><div class="l">online</div></div>
+          <div class="stat"><div class="n" data-o="players">0</div><div class="l">players</div></div>
+        </div>
+        <div class="join glass away-join">
+          <div class="qr" data-o="qr" data-size="150"></div>
+          <div>
+            <div class="cta">Make a server while you wait</div>
+            <div class="link" data-o="link">Loading…</div>
+            <div class="fine">Test servers reset in <b data-o="reset">…</b> · home PC, may be slow</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/qr.js"></script>
+  <script src="/overlay/overlay.js"></script>
+  <script src="/overlay/away.js"></script>
+</body>
+</html>

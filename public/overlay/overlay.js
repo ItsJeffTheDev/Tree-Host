@@ -55,5 +55,5 @@ const Overlay = (() => {
   setInterval(() => last && fill(last), 1000);
   document.querySelectorAll('[data-logo]').forEach((el) => (el.innerHTML = LOGO));
   poll();
-  return { on: (fn) => listeners.push(fn), params, LOGO };
+  return { on: (fn) => listeners.push(fn), params, LOGO, last: () => last, left };
 })();
