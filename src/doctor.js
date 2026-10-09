@@ -111,7 +111,24 @@ const RULES = [
   {
     id: 'watchdog',
     re: /The server has stopped responding|Watchdog Thread|A single server tick took/,
-    find() {
+    find(m, text) {
+      // The freeze report shows where the main thread was stuck; a plugin's frames look like "Name.jar//com.example...".
+      const after = text.slice(m.index);
+      const counts = new Map();
+      for (const f of after.matchAll(/([A-Za-z0-9_.+-]+)\.jar\/\//g)) {
+        if (/^(paper|purpur|folia|spigot|craftbukkit|server|patched|minecraft|bundler|libraries)/i.test(f[1])) continue;
+        counts.set(f[1], (counts.get(f[1]) || 0) + 1);
+      }
+      const plugin = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (plugin) {
+        const name = plugin[0].replace(/[-_]\d[\w.+-]*$/, ''); // "Chunky-1.4.10" -> "Chunky"
+        return {
+          title: `The server froze in ${name}`,
+          detail: `A tick took so long that the server stopped responding, and the main thread was stuck inside the plugin ${name} (${plugin[0]}.jar).`,
+          fix: `Update ${name}, or turn it off in Plugins and start again to check that it's the cause.`,
+          action: { type: 'disable', plugin: name, file: `${plugin[0]}.jar` },
+        };
+      }
       return { title: 'The server froze', detail: 'A tick took so long that the server stopped responding (often a heavy plugin, huge farms, or generating new chunks).', fix: 'Check the lines above for a plugin name, pre-generate the world (e.g. Chunky), and lower the view distance.' };
     },
   },

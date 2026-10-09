@@ -1614,7 +1614,7 @@ function bindDoctorBox(s, el) {
     const f = s.diagnosis.findings[Number(b.dataset.doc)];
     if (b.dataset.do === 'disable') {
       const list = await api('GET', `/api/servers/${s.id}/plugins`);
-      const p = list.find((x) => (x.name || '').toLowerCase() === f.action.plugin.toLowerCase() && x.enabled);
+      const p = list.find((x) => x.enabled && ((f.action.file && x.file === f.action.file) || (x.name || '').toLowerCase() === f.action.plugin.toLowerCase()));
       if (!p) throw new Error(`${f.action.plugin} isn't in the plugins folder (or is already off).`);
       await api('POST', `/api/servers/${s.id}/plugins/${encodeURIComponent(p.file)}/toggle`);
       toast(`${f.action.plugin} disabled. Start the server again.`);

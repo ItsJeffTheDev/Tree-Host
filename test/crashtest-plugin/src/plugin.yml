@@ -1,0 +1,14 @@
+name: CrashTest
+main: online.treehost.crashtest.CrashTest
+version: 1.0.0
+api-version: '1.13'
+author: Tree Host
+description: Crashes a TEST server on purpose to try the crash doctor. Never use on a real server.
+commands:
+  crashtest:
+    description: Crash this test server on purpose (freeze | memory | class)
+    usage: /crashtest freeze|memory|class
+    permission: crashtest.use
+permissions:
+  crashtest.use:
+    default: op
