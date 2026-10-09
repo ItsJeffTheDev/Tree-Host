@@ -18,3 +18,7 @@ promo/
 # Built staging site (node tools/build-staging.js)
 /staging/
 public/overlay/now-playing.json
+
+# Stream Deck: personal paths and state on this PC
+tools/stream-deck/deck-config.json
+tools/stream-deck/deck-state.json

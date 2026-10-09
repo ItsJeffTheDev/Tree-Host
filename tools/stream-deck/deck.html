@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tree Host Stream Deck</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #0b110d; --bg2: #0f1712; --panel: #131e17; --panel2: #18261d; --line: #22332a; --line2: #2c4135;
+    --text: #e8efe9; --muted: #8fa195; --faint: #5f7367; --accent: #46c37b; --accent2: #7beaa6; --dark: #05200f;
+    --warn: #f5b50a; --red: #ff5a5f; --r: 14px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", Roboto, sans-serif; }
+  body { min-height: 100vh; background: radial-gradient(1000px 420px at 85% -12%, rgba(70,195,123,.13), transparent 62%), var(--bg); }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  .ic { width: 18px; height: 18px; flex: none; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 14px 18px 22px; }
+
+  /* ---------- top bar ---------- */
+  .top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand img { width: 34px; height: 34px; }
+  .brand b { font-size: 17px; letter-spacing: -.2px; }
+  .brand span { display: block; color: var(--muted); font-size: 12px; margin-top: -2px; }
+  .tabs { display: flex; background: var(--bg2); border: 1px solid var(--line); border-radius: 11px; padding: 3px; gap: 2px; }
+  .tab { padding: 6px 14px; border-radius: 8px; color: var(--muted); font-weight: 600; display: flex; align-items: center; gap: 7px; }
+  .tab .ic { width: 16px; height: 16px; }
+  .tab.on { background: var(--panel2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line2); }
+  .tab .badge { background: var(--warn); color: #1d1500; border-radius: 99px; font-size: 11px; font-weight: 800; padding: 0 6px; }
+  .meters { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+  .meter { width: 116px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+  .meter div { display: flex; justify-content: space-between; gap: 8px; }
+  .meter b { color: var(--text); font-weight: 650; }
+  .meter i { display: block; height: 4px; border-radius: 9px; background: var(--line); margin-top: 4px; overflow: hidden; }
+  .meter i u { display: block; height: 100%; background: var(--accent); border-radius: 9px; transition: width .6s; }
+  .meter.mid i u { background: var(--warn); } .meter.bad i u { background: var(--red); }
+  .pill { display: inline-flex; align-items: center; gap: 7px; border-radius: 99px; padding: 5px 12px; font-weight: 800; font-size: 12.5px; letter-spacing: .6px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .pill.live { background: var(--red); border-color: var(--red); color: #fff; }
+  .pill.live::before { background: #fff; animation: blink 1.4s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+
+  /* ---------- layout ---------- */
+  .view { display: none; margin-top: 16px; }
+  .view.on { display: block; }
+  .live-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+  .card-h { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  .card-h h3 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); font-weight: 700; }
+  .card-h .aside { margin-left: auto; color: var(--muted); font-size: 12.5px; }
+  .card-b { padding: 14px 16px; }
+  .stack { display: grid; gap: 16px; }
+
+  /* ---------- get ready + service list ---------- */
+  .ready { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .ready .txt { flex: 1; min-width: 0; }
+  .ready .txt b { display: block; font-size: 15.5px; }
+  .ready .txt span { color: var(--muted); font-size: 12.5px; }
+  .progress { height: 5px; border-radius: 9px; background: var(--line); overflow: hidden; margin-top: 8px; }
+  .progress u { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .5s; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 10px; padding: 9px 16px; font-weight: 700; white-space: nowrap; transition: transform .1s, background .15s; }
+  .btn:not(:disabled):active { transform: scale(.97); }
+  .btn.primary { background: linear-gradient(180deg, var(--accent2), var(--accent)); color: var(--dark); box-shadow: 0 6px 22px rgba(70,195,123,.25); padding: 11px 20px; font-size: 15px; }
+  .btn.soft { background: var(--panel2); border: 1px solid var(--line2); }
+  .btn.soft:not(:disabled):hover { border-color: var(--accent); }
+
+  .svc { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid #1b2a21; position: relative; }
+  .svc:last-child { border-bottom: 0; }
+  .svc::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: transparent; }
+  .svc.on::before { background: var(--accent); } .svc.starting::before { background: var(--warn); } .svc.stuck::before { background: var(--red); }
+  .svc .ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--bg2); border: 1px solid var(--line); color: var(--faint); }
+  .svc.on .ico { color: var(--accent2); border-color: rgba(70,195,123,.35); background: rgba(70,195,123,.08); }
+  .svc.starting .ico { color: var(--warn); } .svc.stuck .ico { color: var(--red); }
+  .svc .nm { font-weight: 650; display: flex; align-items: center; gap: 8px; }
+  .svc .dt { color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .state { font-size: 11px; font-weight: 700; border-radius: 99px; padding: 1px 8px; background: var(--bg2); color: var(--faint); border: 1px solid var(--line); }
+  .svc.on .state { color: var(--accent2); border-color: rgba(70,195,123,.35); }
+  .svc.starting .state { color: var(--warn); border-color: rgba(245,181,10,.4); }
+  .svc.stuck .state { color: #ff9a9d; border-color: rgba(255,90,95,.45); }
+  .acts { display: flex; gap: 6px; }
+  .act { height: 32px; min-width: 32px; padding: 0 10px; border-radius: 9px; background: var(--panel2); border: 1px solid var(--line2); display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 12.5px; font-weight: 650; color: var(--text); }
+  .act:not(:disabled):hover { border-color: var(--accent); }
+  .act.go { background: rgba(70,195,123,.14); border-color: rgba(70,195,123,.5); color: var(--accent2); }
+  .act .ic { width: 15px; height: 15px; }
+  .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(245,181,10,.25); border-top-color: var(--warn); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- stream card ---------- */
+  .golive { width: 100%; padding: 16px; border-radius: 12px; font-size: 17px; font-weight: 800; background: #2a1215; border: 1px solid #5d2227; color: #ffd4d6; display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .golive:not(:disabled):hover { background: #3a1519; }
+  .golive.on { background: var(--red); border-color: var(--red); color: #fff; }
+  .golive .ic { width: 20px; height: 20px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .stat { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; }
+  .stat span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .7px; }
+  .stat b { font-size: 16px; }
+  .stat.mid b { color: var(--warn); } .stat.bad b { color: var(--red); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .toggle { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line2); text-align: left; font-weight: 650; }
+  .toggle small { display: block; color: var(--muted); font-weight: 500; font-size: 11.5px; }
+  .sw { margin-left: auto; width: 34px; height: 20px; border-radius: 99px; background: var(--line2); position: relative; flex: none; transition: background .2s; }
+  .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #c9d6cd; transition: left .2s; }
+  .toggle.on .sw { background: var(--accent); } .toggle.on .sw::after { left: 17px; background: #fff; }
+
+  .scenes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .scene { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--line); text-align: left; font-weight: 600; min-width: 0; }
+  .scene:hover { border-color: var(--line2); }
+  .scene span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scene kbd { font: 11px ui-monospace, Consolas, monospace; color: var(--faint); border: 1px solid var(--line2); border-radius: 5px; padding: 0 5px; }
+  .scene.fav span::after { content: " ★"; color: var(--accent); font-size: 11px; }
+  .scene.on { background: rgba(70,195,123,.14); border-color: var(--accent); }
+  .scene.on kbd { color: var(--accent2); border-color: var(--accent); }
+  .audio { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 99px; background: var(--bg2); border: 1px solid var(--line2); font-size: 13px; font-weight: 600; }
+  .chip.muted { background: #2a1215; border-color: #5d2227; color: #ffb3b6; }
+  .chip .ic { width: 15px; height: 15px; }
+  .empty { color: var(--muted); font-size: 13px; }
+  .empty a { color: var(--accent2); cursor: pointer; text-decoration: underline; }
+  .last { margin-top: 14px; display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 12.5px; padding: 0 2px; }
+  .last span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .last .ic { width: 15px; height: 15px; color: var(--faint); }
+
+  /* ---------- PC setup ---------- */
+  .setup-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .check { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #1b2a21; }
+  .check:last-child { border-bottom: 0; }
+  .check .mark { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--bg2); border: 1px solid var(--line); color: var(--faint); }
+  .check.ok .mark { color: var(--accent2); border-color: rgba(70,195,123,.4); background: rgba(70,195,123,.1); }
+  .check.bad .mark { color: var(--warn); border-color: rgba(245,181,10,.45); background: rgba(245,181,10,.08); }
+  .check .mark .ic { width: 16px; height: 16px; }
+  .check b { display: block; }
+  .check p { margin: 1px 0 0; color: var(--muted); font-size: 12.5px; }
+  .check.ok p { color: var(--faint); }
+  .apps { display: flex; flex-wrap: wrap; gap: 8px; }
+  .app { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 99px; background: var(--bg2); border: 1px solid var(--line2); font-size: 13px; font-weight: 600; color: var(--muted); }
+  .app.on { color: var(--accent2); border-color: rgba(70,195,123,.5); background: rgba(70,195,123,.08); }
+  .app .ic { width: 14px; height: 14px; }
+  .app em { font-style: normal; font-size: 11px; color: var(--warn); }
+  .hint { color: var(--muted); font-size: 12.5px; margin: 0 0 10px; }
+
+  /* ---------- activity ---------- */
+  .log { font: 12.5px/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace; max-height: calc(100vh - 170px); overflow: auto; padding: 12px 16px; }
+  .log div { display: grid; grid-template-columns: 86px 1fr; gap: 10px; }
+  .log time { color: var(--faint); }
+  .log .warn { color: var(--warn); } .log .error { color: #ff9a9d; } .log .good { color: var(--accent2); }
+
+  .foot { margin-top: 16px; color: var(--faint); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+  .foot .ic { width: 14px; height: 14px; }
+
+  /* ---------- toast + confirm ---------- */
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 16px); opacity: 0; pointer-events: none; background: var(--panel2); border: 1px solid var(--accent); border-radius: 12px; padding: 10px 16px; max-width: min(620px, 92vw); transition: .2s; z-index: 9; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast.err { border-color: var(--red); }
+  .modal { position: fixed; inset: 0; background: rgba(3,6,4,.65); display: none; place-items: center; z-index: 10; padding: 16px; }
+  .modal.show { display: grid; }
+  .modal .box { background: var(--panel); border: 1px solid var(--line2); border-radius: 16px; padding: 18px 20px; max-width: 440px; }
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+  @media (max-width: 1050px) { .live-grid, .setup-grid { grid-template-columns: 1fr; } .meters { margin-left: 0; width: 100%; } }
+  @media (max-width: 560px) { .scenes, .row2 { grid-template-columns: 1fr; } .meters { flex-wrap: wrap; } .svc { grid-template-columns: 36px minmax(0, 1fr); } .svc .acts { grid-column: 2; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><img src="/logo.svg" alt=""><div><b>Stream Deck</b><span>Tree Host</span></div></div>
+    <nav class="tabs" id="tabs">
+      <button class="tab" data-tab="live"><svg class="ic"><use href="/icons.svg#video"/></svg>Live</button>
+      <button class="tab" data-tab="setup"><svg class="ic"><use href="/icons.svg#sliders"/></svg>PC setup <span class="badge" id="setupBadge" hidden></span></button>
+      <button class="tab" data-tab="log"><svg class="ic"><use href="/icons.svg#activity"/></svg>Activity</button>
+    </nav>
+    <div class="meters" id="meters"></div>
+    <span class="pill" id="pill">OFFLINE</span>
+  </header>
+
+  <!-- ================= Live ================= -->
+  <section class="view" id="view-live">
+    <div class="live-grid">
+      <div class="card">
+        <div class="ready">
+          <div class="txt"><b id="readyTitle">Get ready to stream</b><span id="readySub"></span><div class="progress"><u id="readyBar"></u></div></div>
+          <button class="btn primary" id="getReady"><svg class="ic"><use href="/icons.svg#play"/></svg>Get ready</button>
+        </div>
+        <div id="services"></div>
+      </div>
+
+      <div class="stack">
+        <div class="card">
+          <div class="card-h"><h3>Stream</h3><span class="aside" id="streamAside"></span></div>
+          <div class="card-b">
+            <button class="golive" id="streamBtn" disabled></button>
+            <div class="stats" id="stats"></div>
+            <div class="row2">
+              <button class="toggle" id="boost"><svg class="ic"><use href="/icons.svg#bolt"/></svg><span>Boost PC<small>Full power, background apps closed</small></span><i class="sw"></i></button>
+              <button class="toggle" id="wrapUp"><svg class="ic"><use href="/icons.svg#flag"/></svg><span>Wrap up<small>End scene, music off, normal power</small></span></button>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h3>Scenes</h3><span class="aside">Keys 1–9</span></div>
+          <div class="card-b"><div class="scenes" id="scenes"></div></div>
+        </div>
+        <div class="card" id="audioCard">
+          <div class="card-h"><h3>Audio</h3></div>
+          <div class="card-b"><div class="audio" id="audio"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="last" id="last"></div>
+  </section>
+
+  <!-- ================= PC setup ================= -->
+  <section class="view" id="view-setup">
+    <div class="setup-grid">
+      <div class="card">
+        <div class="card-h"><h3>Make this PC stream its best</h3><span class="aside" id="setupScore"></span></div>
+        <div id="checks"></div>
+      </div>
+      <div class="card">
+        <div class="card-h"><h3>Boost PC closes</h3></div>
+        <div class="card-b">
+          <p class="hint">Apps closed when you press Boost PC or Get ready, to free memory and CPU. Click to turn each on or off.</p>
+          <div class="apps" id="apps"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Activity ================= -->
+  <section class="view" id="view-log">
+    <div class="card"><div class="log" id="log"></div></div>
+  </section>
+
+  <div class="foot"><svg class="ic"><use href="/icons.svg#lock"/></svg>Keep this window off stream. The dashboard opens in streamer mode, which hides emails and IP addresses.</div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="modal" id="modal"><div class="box"><div id="modalText"></div><div class="row"><button class="btn soft" id="modalNo">Cancel</button><button class="btn primary" id="modalYes">Do it</button></div></div></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const ic = (name) => `<svg class="ic"><use href="/icons.svg#${name}"/></svg>`;
+const STATE_TEXT = { on: 'Running', starting: 'Starting', stuck: 'Problem', off: 'Off' };
+let S = null;
+
+// ---------- small UI helpers ----------
+
+let toastTimer;
+function toast(msg, err) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = `toast show${err ? ' err' : ''}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = 'toast'), err ? 7000 : 5000);
+}
+function confirmBox(text) {
+  return new Promise((resolve) => {
+    $('modalText').textContent = text;
+    $('modal').classList.add('show');
+    const done = (v) => { $('modal').classList.remove('show'); resolve(v); };
+    $('modalYes').onclick = () => done(true);
+    $('modalNo').onclick = () => done(false);
+  });
+}
+async function send(body) {
+  try {
+    const r = await fetch('/api/action', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Deck': '1' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+    setTimeout(poll, 300);
+    return j.message;
+  } catch (e) {
+    toast(e.message, true);
+    return undefined;
+  }
+}
+const clock = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+const level = (v, mid, bad) => (v >= bad ? 'bad' : v >= mid ? 'mid' : '');
+
+// ---------- tabs ----------
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === name));
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('on', v.id === `view-${name}`));
+  try { localStorage.setItem('deck.tab', name); } catch {}
+}
+let startTab = 'live';
+try { startTab = localStorage.getItem('deck.tab') || 'live'; } catch {}
+showTab(startTab);
+
+// ---------- drawing ----------
+
+function drawTop() {
+  const h = S.health;
+  const ramPct = (h.ramUsedGb / h.ramTotalGb) * 100;
+  const meter = (label, value, pct, cls) => `<div class="meter ${cls}"><div><span>${label}</span><b>${value}</b></div><i><u style="width:${Math.min(100, Math.max(2, pct))}%"></u></i></div>`;
+  $('meters').innerHTML =
+    meter('CPU', `${h.cpu}%`, h.cpu, level(h.cpu, 75, 92)) +
+    meter('Memory', `${Math.round(h.ramUsedGb)} / ${Math.round(h.ramTotalGb)} GB`, ramPct, level(ramPct, 80, 92)) +
+    (h.cFreeGb != null ? meter('C: free', `${h.cFreeGb} GB`, 100 - Math.min(100, h.cFreeGb * 4), h.cFreeGb < 5 ? 'bad' : h.cFreeGb < 15 ? 'mid' : '') : '');
+  const o = S.obs;
+  $('pill').className = `pill${o.streaming ? ' live' : ''}`;
+  $('pill').textContent = o.streaming ? `LIVE ${o.streamStarted ? clock(Date.now() - o.streamStarted) : ''}` : 'OFFLINE';
+  const todo = S.checks.filter((c) => c.ok === false).length;
+  $('setupBadge').hidden = !todo;
+  $('setupBadge').textContent = todo;
+}
+
+function drawServices() {
+  const job = S.job && S.job.name === 'Get ready' ? S.job : null;
+  const step = (id) => job && job.steps.find((s) => s.id === id);
+  const running = job && job.running;
+  const on = S.services.filter((s) => s.state === 'on').length;
+
+  if (running) {
+    const done = job.steps.filter((s) => s.state !== 'wait' && s.state !== 'doing').length;
+    const cur = job.steps.find((s) => s.state === 'doing');
+    $('readyTitle').textContent = 'Getting ready...';
+    $('readySub').textContent = cur ? `${cur.name}${cur.id === 'docker' || cur.id === 'treehost' ? ' (this one can take a minute or two)' : ''}` : '';
+    $('readyBar').style.width = `${(done / job.steps.length) * 100}%`;
+  } else {
+    const all = on === S.services.length;
+    $('readyTitle').textContent = all ? 'Everything is running' : 'Get ready to stream';
+    $('readySub').textContent = all ? 'Start the stream when you are ready.' : `${on} of ${S.services.length} running. Get ready starts the rest in order.`;
+    $('readyBar').style.width = `${(on / S.services.length) * 100}%`;
+  }
+  $('getReady').disabled = !!running;
+  $('getReady').innerHTML = running ? '<span class="spin"></span>Working' : `${ic('play')}${on === S.services.length ? 'Check again' : 'Get ready'}`;
+
+  $('services').innerHTML = S.services.map((s) => {
+    const st = step(s.id);
+    const doing = running && st && st.state === 'doing';
+    const btns = [];
+    if (s.state === 'off') btns.push(`<button class="act go" data-svc="${s.id}" data-do="start" ${running ? 'disabled' : ''}>${ic('play')}Start</button>`);
+    if (s.can.includes('open') && s.state === 'on') btns.push(`<button class="act" data-svc="${s.id}" data-do="open" title="Open the dashboard">${ic('globe')}Open</button>`);
+    if (s.id === 'treehost' && s.state === 'on') btns.push(`<button class="act" data-link="1" title="Copy the tester link (it isn't shown, so it stays off stream)">${ic('copy')}</button>`);
+    if (s.can.includes('restart') && (s.state === 'stuck' || s.state === 'starting')) btns.push(`<button class="act" data-svc="${s.id}" data-do="restart" title="Restart">${ic('refresh')}Restart</button>`);
+    if (s.can.includes('stop') && s.state !== 'off') btns.push(`<button class="act" data-svc="${s.id}" data-do="stop" title="Stop">${ic('stop')}</button>`);
+    const badge = doing ? '<span class="spin"></span>' : `<span class="state">${STATE_TEXT[s.state]}</span>`;
+    return `<div class="svc ${doing ? 'starting' : s.state}" title="${esc(s.about)}">
+      <div class="ico">${ic(s.icon)}</div>
+      <div><div class="nm">${esc(s.name)} ${badge}</div><div class="dt">${esc(doing ? 'Starting...' : s.detail)}</div></div>
+      <div class="acts">${btns.join('')}</div></div>`;
+  }).join('');
+}
+
+function drawStream() {
+  const o = S.obs;
+  const b = $('streamBtn');
+  b.disabled = !o.connected;
+  b.className = `golive${o.streaming ? ' on' : ''}`;
+  b.innerHTML = o.streaming ? `${ic('stop')}Stop stream` : `${ic('play')}Start stream`;
+  $('streamAside').textContent = o.connected ? (o.streaming ? `Live for ${clock(Date.now() - o.streamStarted)}` : `On "${o.scene || ''}"`) : 'OBS not connected';
+  const st = o.stats;
+  $('stats').innerHTML = st
+    ? `<div class="stat"><span>FPS</span><b>${st.fps}</b></div>
+       <div class="stat ${level(st.cpu, 40, 70)}"><span>OBS CPU</span><b>${st.cpu}%</b></div>
+       <div class="stat ${st.skippedOutput > 0 ? (st.skippedOutput / Math.max(1, st.totalOutput) > 0.02 ? 'bad' : 'mid') : ''}"><span>Dropped</span><b>${st.skippedOutput}</b></div>`
+    : '';
+  $('stats').style.display = st ? '' : 'none';
+  $('boost').classList.toggle('on', S.boosted);
+  const wrapping = S.job && S.job.running && S.job.name === 'Wrap up';
+  $('wrapUp').disabled = !!(S.job && S.job.running);
+  $('wrapUp').querySelector('small').textContent = wrapping ? 'Wrapping up...' : 'End scene, music off, normal power';
+
+  if (o.connected) {
+    $('scenes').innerHTML = o.scenes.map((n, i) =>
+      `<button class="scene ${n === o.scene ? 'on' : ''} ${o.favorites.includes(n) ? 'fav' : ''}" data-scene="${esc(n)}"><span>${esc(n)}</span>${i < 9 ? `<kbd>${i + 1}</kbd>` : ''}</button>`).join('');
+    $('audio').innerHTML = o.inputs.length
+      ? o.inputs.map((a) => `<button class="chip ${a.muted ? 'muted' : ''}" data-mute="${esc(a.name)}">${ic(a.muted ? 'x' : 'pulse')}${esc(a.name)}</button>`).join('')
+      : '<div class="empty">No audio sources in this scene collection.</div>';
+    $('audioCard').style.display = '';
+  } else {
+    $('scenes').innerHTML = `<div class="empty">${o.controlOn ? 'Start OBS and its scenes appear here.' : 'The deck can\'t control OBS yet. <a data-goto="setup">Turn it on in PC setup</a>.'}</div>`;
+    $('audioCard').style.display = 'none';
+  }
+  const last = S.log[S.log.length - 1];
+  $('last').innerHTML = last ? `${ic('activity')}<span>${esc(last.msg)}</span>` : '';
+}
+
+function drawSetup() {
+  const done = S.checks.filter((c) => c.ok === true).length;
+  const total = S.checks.filter((c) => c.ok !== null).length;
+  $('setupScore').textContent = `${done} of ${total} done`;
+  $('checks').innerHTML = S.checks.map((c) => {
+    const cls = c.ok === true ? 'ok' : c.ok === false ? 'bad' : '';
+    const mark = c.ok === true ? 'check' : c.ok === false ? 'alert' : 'bulb';
+    const fix = c.fix && c.ok !== true ? `<button class="btn soft" data-fix="${c.fix.id}" ${c.fix.confirm ? `data-confirm="${esc(c.fix.confirm)}"` : ''}>${esc(c.fix.label)}</button>` : '';
+    return `<div class="check ${cls}"><div class="mark">${ic(mark)}</div><div><b>${esc(c.title)}</b><p>${esc(c.detail)}</p></div><div>${fix}</div></div>`;
+  }).join('');
+  $('apps').innerHTML = S.closeWhenLive.map((a) =>
+    `<button class="app ${a.on ? 'on' : ''}" data-app="${esc(a.name)}" data-on="${a.on ? 1 : 0}">${ic(a.on ? 'check' : 'plus')}${esc(a.name)}${a.running ? ' <em>open</em>' : ''}</button>`).join('') +
+    `<button class="app ${S.stopUbuntuWhenLive ? 'on' : ''}" data-ubuntu="${S.stopUbuntuWhenLive ? 1 : 0}">${ic(S.stopUbuntuWhenLive ? 'check' : 'plus')}Ubuntu (WSL)</button>`;
+}
+
+function drawLog() {
+  const box = $('log');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.innerHTML = S.log.map((l) => `<div class="${l.level}"><time>${new Date(l.t).toLocaleTimeString()}</time><span>${esc(l.msg)}</span></div>`).join('') || '<div class="empty">Nothing yet.</div>';
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/status', { cache: 'no-store' });
+    S = await r.json();
+    drawTop();
+    drawServices();
+    drawStream();
+    drawSetup();
+    drawLog();
+  } catch {
+    $('readyTitle').textContent = 'The deck stopped';
+    $('readySub').textContent = 'Run Stream-Deck.bat again.';
+  }
+}
+
+// ---------- buttons ----------
+
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button, a[data-goto]');
+  if (!b || b.disabled || !S) return;
+  const d = b.dataset;
+  if (d.tab) return showTab(d.tab);
+  if (d.goto) return showTab(d.goto);
+  if (b.id === 'getReady') return send({ kind: 'get-ready' });
+  if (b.id === 'wrapUp') return (await confirmBox('Wrap up? OBS switches to the end scene, the music stops and the power plan goes back to normal.')) && send({ kind: 'wrap-up' });
+  if (b.id === 'boost') return send({ kind: 'boost', value: !S.boosted });
+  if (b.id === 'streamBtn') {
+    if (S.obs.streaming) return (await confirmBox('Stop the stream now?')) && send({ kind: 'obs', id: 'stop' });
+    return send({ kind: 'obs', id: 'start' });
+  }
+  if (d.scene) return send({ kind: 'obs', id: 'scene', value: d.scene });
+  if (d.mute) return send({ kind: 'obs', id: 'mute', value: d.mute });
+  if (d.app) return send({ kind: 'close-app', id: d.app, value: d.on !== '1' });
+  if (d.ubuntu) return send({ kind: 'ubuntu', value: d.ubuntu !== '1' });
+  if (d.fix) {
+    if (d.confirm && !(await confirmBox(d.confirm))) return;
+    const msg = await send({ kind: 'fix', id: d.fix });
+    if (msg) toast(msg);
+    return;
+  }
+  if (d.link) {
+    const link = await send({ kind: 'tester-link' });
+    if (link === undefined) return;
+    if (!link) return toast('No tester link yet: wait for Tree Host to finish starting.', true);
+    try { await navigator.clipboard.writeText(link); toast('Tester link copied.'); } catch { toast('Couldn\'t copy the link.', true); }
+    return;
+  }
+  if (d.svc) {
+    const s = S.services.find((x) => x.id === d.svc);
+    if (d.do === 'stop' && !(await confirmBox(`Stop ${s.name}?`))) return;
+    if (d.do === 'restart' && !(await confirmBox(`Restart ${s.name}?`))) return;
+    send({ kind: 'service', id: d.svc, value: d.do });
+  }
+});
+
+// 1-9 switch OBS scenes (on the Live tab)
+document.addEventListener('keydown', (e) => {
+  if (!S || !S.obs.connected || e.ctrlKey || e.altKey || e.metaKey || !$('view-live').classList.contains('on')) return;
+  const n = Number(e.key);
+  if (n >= 1 && n <= 9 && S.obs.scenes[n - 1]) send({ kind: 'obs', id: 'scene', value: S.obs.scenes[n - 1] });
+});
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
