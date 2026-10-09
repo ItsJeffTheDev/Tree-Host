@@ -19,11 +19,25 @@ import java.util.Map;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.bukkit.BanList;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
+import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.World;
+import org.bukkit.entity.Entity;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -58,7 +72,11 @@ import net.md_5.bungee.api.chat.TextComponent;
  *  - wear a gold STAFF badge in chat (hover: "Official Tree Host Staff"), above their head and in the player list,
  *  - are made operator while they're on the server when their role may run commands ("#op=name" lines); it's taken
  *    away again when they leave, and an owner's own ops are never touched (granted-ops.txt remembers which ones),
- *  - get /sc (staff chat), /thvanish (hidden from players), /thinfo (server health) and /thstaff (help),
+ *  - get /thstaff (a menu: vanish, gamemode, server health, staff chat, players to teleport to, inventories, and
+ *    their own settings), /sc (staff chat), /thvanish and /thinfo,
+ *  - choose (in Account or the menu) whether they're announced ("#quiet=name" turns it off), whether a STAFF tag
+ *    floats over their head that they can see themselves in third person (1.19.4+, "#nobadge=name" turns it off),
+ *    and whether they're made operator; changes made in the menu go to prefs-out.txt for Tree Host to save,
  *  - have every command they run written to the console and plugins/TreeHostStaff/staff-actions.log, so the owner
  *    can see what staff did on their server.
  * Only on online-mode servers (or behind a proxy that checks accounts), so a name really belongs to its owner.
@@ -87,6 +105,13 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     private volatile Set<String> opStaff = Collections.emptySet(); // lower-case names whose role may be made operator
     private final Set<String> grantedOps = Collections.synchronizedSet(new HashSet<String>()); // ops this plugin gave
     private final Set<String> vanished = Collections.synchronizedSet(new HashSet<String>()); // lower-case names
+    private volatile Set<String> quietStaff = Collections.emptySet(); // no join announcement
+    private volatile Set<String> noBadgeStaff = Collections.emptySet(); // no floating tag
+    private final Set<String> staffChatMode = Collections.synchronizedSet(new HashSet<String>()); // chat goes to /sc
+    private final Map<UUID, Entity> badges = new ConcurrentHashMap<>(); // floating tags (text displays)
+    private Class<? extends Entity> textDisplay; // null before 1.19.4 (and on Folia): then no floating tag
+    private static final String BADGE_TAG = "th_badge";
+    private static final String FLOAT_TEAM = "th_staff_f";
     private File grantedFile;
     private File actionsFile;
     private volatile Map<String, Creator> creators = Collections.emptyMap(); // lower-case name -> label and perks
@@ -117,6 +142,7 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         reloadCreators();
         reloadMotd();
         getServer().getPluginManager().registerEvents(this, this);
+        setupBadges();
         timer = new Timer("TreeHostStaff", true);
         timer.scheduleAtFixedRate(new TimerTask() {
             @Override
@@ -136,6 +162,8 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     @Override
     public void onDisable() {
         if (timer != null) timer.cancel();
+        for (Entity e : badges.values()) removeEntity(e);
+        badges.clear();
         // Stopping: staff stop being operator (they get it back when they join again).
         for (String name : new HashSet<>(grantedOps)) deop(name);
     }
@@ -148,6 +176,8 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         lastModified = m;
         Map<String, String> next = new HashMap<>();
         Set<String> ops = new HashSet<>();
+        Set<String> quiet = new HashSet<>();
+        Set<String> nobadge = new HashSet<>();
         boolean trust = false;
         if (m >= 0) {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(staffFile), StandardCharsets.UTF_8))) {
@@ -156,6 +186,8 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
                     line = line.trim();
                     if (line.equals("#trust=proxy")) trust = true;
                     if (line.startsWith("#op=")) ops.add(line.substring(4).trim().toLowerCase(Locale.ROOT));
+                    if (line.startsWith("#quiet=")) quiet.add(line.substring(7).trim().toLowerCase(Locale.ROOT));
+                    if (line.startsWith("#nobadge=")) nobadge.add(line.substring(9).trim().toLowerCase(Locale.ROOT));
                     if (line.isEmpty() || line.startsWith("#")) continue;
                     String[] parts = line.split("\\|", 2);
                     String name = parts[0].trim();
@@ -168,6 +200,8 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         }
         staff = next;
         opStaff = ops;
+        quietStaff = quiet;
+        noBadgeStaff = nobadge;
         proxyTrusted = trust;
     }
 
@@ -401,27 +435,13 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             return;
         }
         grantOp(p);
-        p.sendMessage(PREFIX + ChatColor.GREEN + "Staff tools: " + ChatColor.WHITE + "/sc" + ChatColor.GRAY + " staff chat, "
-                + ChatColor.WHITE + "/thvanish" + ChatColor.GRAY + ", " + ChatColor.WHITE + "/thinfo" + ChatColor.GRAY + ", "
-                + ChatColor.WHITE + "/thstaff" + ChatColor.GRAY + "." + (p.isOp() ? " You're operator while you're here." : ""));
+        p.sendMessage(PREFIX + ChatColor.GREEN + "Staff tools: " + ChatColor.WHITE + "/thstaff" + ChatColor.GRAY + " opens the staff menu ("
+                + ChatColor.WHITE + "/sc" + ChatColor.GRAY + " staff chat, " + ChatColor.WHITE + "/thvanish" + ChatColor.GRAY + ", "
+                + ChatColor.WHITE + "/thinfo" + ChatColor.GRAY + ")." + (p.isOp() ? " You're operator while you're here." : ""));
+        boolean quiet = quietStaff.contains(p.getName().toLowerCase(Locale.ROOT));
+        staffTeam(p);
+        if (quiet) return; // their choice: a normal join message, no announcement
         e.setJoinMessage(BADGE + ChatColor.GOLD + p.getName() + ChatColor.YELLOW + " (" + role + ") joined the game");
-        try {
-            p.setPlayerListName(BADGE + ChatColor.GOLD + p.getName());
-        } catch (Throwable ignored) {
-        }
-        try {
-            Scoreboard board = getServer().getScoreboardManager().getMainScoreboard();
-            Team team = board.getTeam(TEAM);
-            if (team == null) team = board.registerNewTeam(TEAM);
-            team.setPrefix(BADGE);
-            try {
-                team.setColor(ChatColor.GOLD);
-            } catch (Throwable ignored) {
-            }
-            team.addEntry(p.getName());
-        } catch (Throwable ignored) {
-            // Folia has no scoreboards; the chat and player list badges still work.
-        }
         String text = PREFIX + ChatColor.GOLD + "" + ChatColor.BOLD + p.getName() + ChatColor.GOLD + " (" + role + ") joined. "
                 + ChatColor.GREEN + "A Tree Host " + role + " has joined your server.";
         for (Player other : getServer().getOnlinePlayers()) {
@@ -435,6 +455,127 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
             other.sendMessage(text);
         }
         getServer().getConsoleSender().sendMessage(ChatColor.stripColor(text));
+    }
+
+    /**
+     * The STAFF badge in the player list and above their head. With a floating tag (1.19.4+) the normal nametag is hidden
+     * (team th_staff_f) so the name isn't shown twice; without one, the nametag gets the badge as a prefix (team th_staff).
+     */
+    private void staffTeam(Player p) {
+        try {
+            p.setPlayerListName(BADGE + ChatColor.GOLD + p.getName());
+        } catch (Throwable ignored) {
+        }
+        try {
+            Scoreboard board = getServer().getScoreboardManager().getMainScoreboard();
+            boolean floating = wantsBadge(p);
+            Team team = board.getTeam(floating ? FLOAT_TEAM : TEAM);
+            if (team == null) team = board.registerNewTeam(floating ? FLOAT_TEAM : TEAM);
+            team.setPrefix(BADGE);
+            try {
+                team.setColor(ChatColor.GOLD);
+            } catch (Throwable ignored) {
+            }
+            try {
+                team.setOption(Team.Option.NAME_TAG_VISIBILITY, floating ? Team.OptionStatus.NEVER : Team.OptionStatus.ALWAYS);
+            } catch (Throwable ignored) {
+            }
+            team.addEntry(p.getName());
+        } catch (Throwable ignored) {
+            // Folia has no scoreboards; the chat and player list badges still work.
+        }
+    }
+
+    // ---------- the floating STAFF tag (a text display that follows them; they see it in third person) ----------
+
+    @SuppressWarnings("unchecked")
+    private void setupBadges() {
+        if (folia) return;
+        try {
+            textDisplay = (Class<? extends Entity>) Class.forName("org.bukkit.entity.TextDisplay");
+        } catch (Throwable t) {
+            textDisplay = null;
+            return;
+        }
+        // Tags left behind by a crash (they aren't saved, but be sure).
+        for (World w : getServer().getWorlds()) {
+            for (Entity e : w.getEntities()) if (e.getScoreboardTags().contains(BADGE_TAG)) e.remove();
+        }
+        getServer().getScheduler().runTaskTimer(this, this::moveBadges, 1L, 1L);
+    }
+
+    private boolean wantsBadge(Player p) {
+        String key = p.getName().toLowerCase(Locale.ROOT);
+        return textDisplay != null && roleOf(p.getName()) != null && !noBadgeStaff.contains(key);
+    }
+
+    /** Every tick: each tag sits over its player's head (made, moved to another world or removed as needed). */
+    private void moveBadges() {
+        for (Player p : getServer().getOnlinePlayers()) {
+            String key = p.getName().toLowerCase(Locale.ROOT);
+            Entity tag = badges.get(p.getUniqueId());
+            boolean want = wantsBadge(p) && !vanished.contains(key) && !p.isDead() && p.getGameMode() != GameMode.SPECTATOR;
+            if (!want) {
+                if (tag != null) {
+                    removeEntity(tag);
+                    badges.remove(p.getUniqueId());
+                    staffTeam(p);
+                }
+                continue;
+            }
+            Location at = p.getLocation().add(0, p.isSneaking() ? 1.85 : 2.15, 0);
+            if (tag == null || !tag.isValid() || tag.getWorld() != p.getWorld()) {
+                if (tag != null) removeEntity(tag);
+                tag = spawnBadge(p, at);
+                if (tag == null) continue;
+                badges.put(p.getUniqueId(), tag);
+                staffTeam(p);
+            } else {
+                tag.teleport(at);
+            }
+        }
+        for (UUID id : new HashSet<>(badges.keySet())) {
+            if (getServer().getPlayer(id) == null) removeEntity(badges.remove(id));
+        }
+    }
+
+    private Entity spawnBadge(Player p, Location at) {
+        try {
+            Entity e = p.getWorld().spawn(at, textDisplay);
+            call(e, "setText", String.class, BADGE + ChatColor.GOLD + p.getName());
+            Class<?> billboard = Class.forName("org.bukkit.entity.Display$Billboard");
+            call(e, "setBillboard", billboard, enumValue(billboard, "CENTER"));
+            try {
+                call(e, "setTeleportDuration", int.class, 1); // smooth movement (1.20.2+)
+            } catch (Throwable ignored) {
+            }
+            try {
+                call(e, "setPersistent", boolean.class, false);
+            } catch (Throwable ignored) {
+            }
+            e.addScoreboardTag(BADGE_TAG);
+            return e;
+        } catch (Throwable t) {
+            getLogger().warning("Could not show the floating STAFF tag: " + t);
+            textDisplay = null; // don't try every tick
+            return null;
+        }
+    }
+
+    private static void removeEntity(Entity e) {
+        try {
+            if (e != null) e.remove();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void call(Object target, String method, Class<?> type, Object value) throws Exception {
+        target.getClass().getMethod(method, type).invoke(target, value);
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static Object enumValue(Class<?> type, String name) {
+        return Enum.valueOf((Class) type, name);
     }
 
     /** A creator joins: their badge above their head and in the player list, and the announcement. */
@@ -482,13 +623,16 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     public void onQuit(PlayerQuitEvent e) {
         String name = e.getPlayer().getName();
         vanished.remove(name.toLowerCase(Locale.ROOT));
+        staffChatMode.remove(name.toLowerCase(Locale.ROOT));
+        removeEntity(badges.remove(e.getPlayer().getUniqueId()));
         if (grantedOps.contains(name.toLowerCase(Locale.ROOT))) deop(name);
-        String team = roleOf(name) != null ? TEAM : creatorOf(name) != null ? CREATOR_TEAM : null;
-        if (team == null) return;
-        try {
-            Team t = getServer().getScoreboardManager().getMainScoreboard().getTeam(team);
-            if (t != null) t.removeEntry(name);
-        } catch (Throwable ignored) {
+        String[] teams = roleOf(name) != null ? new String[] { TEAM, FLOAT_TEAM } : creatorOf(name) != null ? new String[] { CREATOR_TEAM } : new String[0];
+        for (String team : teams) {
+            try {
+                Team t = getServer().getScoreboardManager().getMainScoreboard().getTeam(team);
+                if (t != null) t.removeEntry(name);
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -497,6 +641,11 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
     public void onChat(AsyncPlayerChatEvent e) {
         Player p = e.getPlayer();
         String role = roleOf(p.getName());
+        if (role != null && staffChatMode.contains(p.getName().toLowerCase(Locale.ROOT))) {
+            e.setCancelled(true);
+            staffChat(p.getName(), e.getMessage());
+            return;
+        }
         if (role == null) {
             // Creators: the badge goes in front of whatever chat format the server uses (other chat plugins keep working).
             Creator c = creatorOf(p.getName());
@@ -616,48 +765,302 @@ public final class TreeHostStaff extends JavaPlugin implements Listener {
         switch (name) {
             case "thchat":
                 if (args.length == 0) {
-                    sender.sendMessage(PREFIX + ChatColor.YELLOW + "Usage: /sc <message>  (only Tree Host staff on this server see it)");
+                    if (sender instanceof Player) toggleStaffChat((Player) sender);
+                    else sender.sendMessage("Usage: sc <message>");
                     return true;
                 }
-                String msg = String.join(" ", args);
-                String line = ChatColor.GOLD + "" + ChatColor.BOLD + "[Staff] " + ChatColor.GOLD + sender.getName() + ChatColor.GRAY + ": " + ChatColor.AQUA + msg;
-                for (Player p : getServer().getOnlinePlayers()) if (roleOf(p.getName()) != null) p.sendMessage(line);
-                if (!(sender instanceof Player)) sender.sendMessage(line);
-                logAction("[staff chat] " + sender.getName() + ": " + msg);
+                staffChat(sender.getName(), String.join(" ", args));
+                if (!(sender instanceof Player)) sender.sendMessage("[Staff] " + sender.getName() + ": " + String.join(" ", args));
                 return true;
             case "thvanish":
                 if (!(sender instanceof Player)) {
                     sender.sendMessage("Only players can vanish.");
                     return true;
                 }
-                Player me = (Player) sender;
-                String key = me.getName().toLowerCase(Locale.ROOT);
-                boolean hide = !vanished.contains(key);
-                if (hide) vanished.add(key);
-                else vanished.remove(key);
-                for (Player other : getServer().getOnlinePlayers()) {
-                    if (other == me || roleOf(other.getName()) != null) continue;
-                    try {
-                        if (hide) other.hidePlayer(this, me);
-                        else other.showPlayer(this, me);
-                    } catch (Throwable ignored) {
-                    }
-                }
-                me.sendMessage(PREFIX + (hide ? ChatColor.GREEN + "You're vanished: players can't see you (staff still can). /thvanish again to show yourself."
-                        : ChatColor.YELLOW + "You're visible again."));
-                logAction(me.getName() + (hide ? " vanished." : " is visible again."));
+                toggleVanish((Player) sender);
                 return true;
             case "thinfo":
                 sendInfo(sender);
                 return true;
             default:
+                if (sender instanceof Player && !(args.length > 0 && args[0].equalsIgnoreCase("help"))) {
+                    openMain((Player) sender);
+                    return true;
+                }
                 sender.sendMessage(PREFIX + ChatColor.GREEN + "Official Tree Host staff tools" + ChatColor.GRAY + " (" + role + ")");
-                sender.sendMessage(ChatColor.WHITE + "  /sc <message>" + ChatColor.GRAY + "  chat with the other Tree Host staff on this server");
+                sender.sendMessage(ChatColor.WHITE + "  /thstaff" + ChatColor.GRAY + "  the staff menu (/thstaff help: this list)");
+                sender.sendMessage(ChatColor.WHITE + "  /sc <message>" + ChatColor.GRAY + "  chat with the other Tree Host staff on this server (/sc alone: all your chat goes there)");
                 sender.sendMessage(ChatColor.WHITE + "  /thvanish" + ChatColor.GRAY + "  hide from players while you look into a problem");
                 sender.sendMessage(ChatColor.WHITE + "  /thinfo" + ChatColor.GRAY + "  TPS, memory, players, plugins and version at a glance");
                 sender.sendMessage(ChatColor.GRAY + "  You " + (sender instanceof Player && ((Player) sender).isOp() ? "are" : "aren't") + " operator. Staff can't be kicked or banned."
                         + " Everything you run here is logged for the owner.");
                 return true;
+        }
+    }
+
+    // ---------- shared actions (commands and the menu) ----------
+
+    private void staffChat(String from, String msg) {
+        String line = ChatColor.GOLD + "" + ChatColor.BOLD + "[Staff] " + ChatColor.GOLD + from + ChatColor.GRAY + ": " + ChatColor.AQUA + msg;
+        for (Player p : getServer().getOnlinePlayers()) if (roleOf(p.getName()) != null) p.sendMessage(line);
+        logAction("[staff chat] " + from + ": " + msg);
+    }
+
+    private void toggleStaffChat(Player p) {
+        String key = p.getName().toLowerCase(Locale.ROOT);
+        boolean on = !staffChatMode.contains(key);
+        if (on) staffChatMode.add(key);
+        else staffChatMode.remove(key);
+        p.sendMessage(PREFIX + (on ? ChatColor.GREEN + "Staff chat mode on: everything you type goes to staff only. /sc again to turn it off."
+                : ChatColor.YELLOW + "Staff chat mode off: your chat is public again."));
+    }
+
+    private void toggleVanish(Player me) {
+        String key = me.getName().toLowerCase(Locale.ROOT);
+        boolean hide = !vanished.contains(key);
+        if (hide) vanished.add(key);
+        else vanished.remove(key);
+        for (Player other : getServer().getOnlinePlayers()) {
+            if (other == me || roleOf(other.getName()) != null) continue;
+            try {
+                if (hide) other.hidePlayer(this, me);
+                else other.showPlayer(this, me);
+            } catch (Throwable ignored) {
+            }
+        }
+        me.sendMessage(PREFIX + (hide ? ChatColor.GREEN + "You're vanished: players can't see you (staff still can). /thvanish again to show yourself."
+                : ChatColor.YELLOW + "You're visible again."));
+        logAction(me.getName() + (hide ? " vanished." : " is visible again."));
+    }
+
+    /** A setting the staff member changed in the menu: used here at once, and saved to their account by Tree Host. */
+    private void setPref(Player p, String pref, boolean on) {
+        String key = p.getName().toLowerCase(Locale.ROOT);
+        if (pref.equals("announce")) quietStaff = withOrWithout(quietStaff, key, !on);
+        if (pref.equals("badge")) noBadgeStaff = withOrWithout(noBadgeStaff, key, !on);
+        if (pref.equals("autoOp")) {
+            if (!on && grantedOps.contains(key)) deop(p.getName());
+            if (on && !opStaff.contains(key)) p.sendMessage(PREFIX + ChatColor.YELLOW + "Saved. You're made operator the next time you join, if your role allows it.");
+        }
+        try {
+            getDataFolder().mkdirs();
+            try (Writer w = new OutputStreamWriter(new FileOutputStream(new File(getDataFolder(), "prefs-out.txt"), true), StandardCharsets.UTF_8)) {
+                w.write(p.getName() + "|" + pref + "|" + (on ? "on" : "off") + "\n");
+            }
+        } catch (Exception e) {
+            getLogger().warning("Could not save the setting: " + e.getMessage());
+        }
+        if (pref.equals("badge")) staffTeam(p);
+    }
+
+    private static Set<String> withOrWithout(Set<String> set, String key, boolean add) {
+        Set<String> next = new HashSet<>(set);
+        if (add) next.add(key);
+        else next.remove(key);
+        return next;
+    }
+
+    // ---------- the staff menu (/thstaff) ----------
+
+    private static final class Menu implements InventoryHolder {
+        final String kind; // main | players | player
+        final String target; // the player a "player" menu is about
+        Inventory inventory;
+
+        Menu(String kind, String target) {
+            this.kind = kind;
+            this.target = target;
+        }
+
+        @Override
+        public Inventory getInventory() {
+            return inventory;
+        }
+    }
+
+    private static Material mat(String... names) {
+        for (String n : names) {
+            Material m = Material.matchMaterial(n);
+            if (m != null) return m;
+        }
+        return Material.PAPER;
+    }
+
+    private static ItemStack item(Material m, String name, String... lore) {
+        ItemStack it = new ItemStack(m);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.RESET + name);
+            java.util.List<String> lines = new java.util.ArrayList<>();
+            for (String l : lore) lines.add(ChatColor.GRAY + l);
+            meta.setLore(lines);
+            it.setItemMeta(meta);
+        }
+        return it;
+    }
+
+    private static String onOff(boolean on) {
+        return on ? ChatColor.GREEN + "On" : ChatColor.RED + "Off";
+    }
+
+    private Inventory menu(String kind, String target, int size, String title) {
+        Menu holder = new Menu(kind, target);
+        holder.inventory = getServer().createInventory(holder, size, title);
+        return holder.inventory;
+    }
+
+    private void openMain(Player p) {
+        String key = p.getName().toLowerCase(Locale.ROOT);
+        boolean op = mayOp(p.getName());
+        Inventory inv = menu("main", null, 27, ChatColor.DARK_GREEN + "Tree Host Staff");
+        inv.setItem(10, item(mat("ENDER_EYE"), ChatColor.AQUA + "Vanish: " + onOff(vanished.contains(key)), "Hide from players while you", "look into a problem. Staff still see you."));
+        inv.setItem(11, item(mat("GRASS_BLOCK", "GRASS"), ChatColor.AQUA + "Game mode: " + ChatColor.WHITE + p.getGameMode().name().toLowerCase(Locale.ROOT),
+                op ? "Click: survival → creative → spectator" : "Your role can't change game modes."));
+        inv.setItem(12, item(mat("CLOCK", "WATCH"), ChatColor.AQUA + "Server health", "TPS, memory, players and plugins"));
+        inv.setItem(13, item(mat("PLAYER_HEAD", "SKULL_ITEM"), ChatColor.AQUA + "Players (" + getServer().getOnlinePlayers().size() + ")", "Teleport to someone, see their", "inventory or ender chest, heal them"));
+        inv.setItem(14, item(mat("WRITABLE_BOOK", "BOOK_AND_QUILL"), ChatColor.AQUA + "Staff chat mode: " + onOff(staffChatMode.contains(key)), "On: everything you type", "goes to staff only (/sc)"));
+        inv.setItem(15, item(mat("BELL", "NOTE_BLOCK"), ChatColor.GOLD + "Announce me when I join: " + onOff(!quietStaff.contains(key)), "Your setting on every server", "(also in Account on the website)"));
+        inv.setItem(16, item(mat("NAME_TAG"), ChatColor.GOLD + "STAFF tag over my head: " + onOff(!noBadgeStaff.contains(key)),
+                textDisplay != null ? "Everyone sees it, and you see it" : "This server is too old for the floating", textDisplay != null ? "yourself in third person (F5)" : "tag (1.19.4+): your nametag has the badge"));
+        inv.setItem(17, item(mat("COMMAND_BLOCK", "COMMAND"), ChatColor.GOLD + "Operator while I'm here: " + onOff(op || grantedOps.contains(key)),
+                "Taken away when you leave.", "Only if your role may run commands."));
+        inv.setItem(22, item(mat("BARRIER"), ChatColor.RED + "Close"));
+        p.openInventory(inv);
+    }
+
+    private void openPlayers(Player p) {
+        Inventory inv = menu("players", null, 54, ChatColor.DARK_GREEN + "Players");
+        int slot = 0;
+        for (Player other : getServer().getOnlinePlayers()) {
+            if (slot >= 45) break;
+            ItemStack head = item(mat("PLAYER_HEAD", "SKULL_ITEM"), (roleOf(other.getName()) != null ? ChatColor.GOLD : ChatColor.WHITE) + other.getName(),
+                    "Game mode: " + other.getGameMode().name().toLowerCase(Locale.ROOT), "Health: " + Math.round(other.getHealth()) + " / 20", "Click for actions");
+            try {
+                SkullMeta meta = (SkullMeta) head.getItemMeta();
+                meta.setOwningPlayer(other);
+                head.setItemMeta(meta);
+            } catch (Throwable ignored) {
+            }
+            inv.setItem(slot++, head);
+        }
+        inv.setItem(49, item(mat("ARROW"), ChatColor.YELLOW + "Back"));
+        p.openInventory(inv);
+    }
+
+    private void openPlayer(Player p, Player target) {
+        boolean op = mayOp(p.getName());
+        Location l = target.getLocation();
+        Inventory inv = menu("player", target.getName(), 27, ChatColor.DARK_GREEN + target.getName());
+        inv.setItem(10, item(mat("ENDER_PEARL"), ChatColor.AQUA + "Teleport to " + target.getName(), l.getWorld().getName() + " " + l.getBlockX() + ", " + l.getBlockY() + ", " + l.getBlockZ()));
+        inv.setItem(11, item(mat("CHEST"), ChatColor.AQUA + "Open their inventory", op ? "You can move items" : "Your role can't do this"));
+        inv.setItem(12, item(mat("ENDER_CHEST"), ChatColor.AQUA + "Open their ender chest", op ? "You can move items" : "Your role can't do this"));
+        inv.setItem(13, item(mat("GOLDEN_APPLE"), ChatColor.AQUA + "Heal and feed", op ? "Full health and hunger" : "Your role can't do this"));
+        inv.setItem(14, item(mat("COMPASS"), ChatColor.AQUA + "Spectate", op ? "Spectator mode, at their side" : "Your role can't do this"));
+        inv.setItem(16, item(mat("PAPER"), ChatColor.WHITE + target.getName(), "Game mode: " + target.getGameMode().name().toLowerCase(Locale.ROOT),
+                "Health: " + Math.round(target.getHealth()) + " / 20, food " + target.getFoodLevel() + " / 20", "Operator: " + (target.isOp() ? "yes" : "no")));
+        inv.setItem(22, item(mat("ARROW"), ChatColor.YELLOW + "Back"));
+        p.openInventory(inv);
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onMenuDrag(InventoryDragEvent e) {
+        if (e.getInventory().getHolder() instanceof Menu) e.setCancelled(true);
+    }
+
+    @EventHandler
+    public void onMenuClick(InventoryClickEvent e) {
+        if (!(e.getInventory().getHolder() instanceof Menu) || !(e.getWhoClicked() instanceof Player)) return;
+        e.setCancelled(true);
+        Player p = (Player) e.getWhoClicked();
+        Menu m = (Menu) e.getInventory().getHolder();
+        if (roleOf(p.getName()) == null || e.getClickedInventory() != e.getInventory()) return;
+        int slot = e.getRawSlot();
+        String key = p.getName().toLowerCase(Locale.ROOT);
+        boolean op = mayOp(p.getName());
+        switch (m.kind) {
+            case "main":
+                if (slot == 10) {
+                    toggleVanish(p);
+                    openMain(p);
+                } else if (slot == 11 && op) {
+                    GameMode next = p.getGameMode() == GameMode.SURVIVAL ? GameMode.CREATIVE : p.getGameMode() == GameMode.CREATIVE ? GameMode.SPECTATOR : GameMode.SURVIVAL;
+                    p.setGameMode(next);
+                    logAction(p.getName() + " switched to " + next.name().toLowerCase(Locale.ROOT) + " mode (staff menu).");
+                    openMain(p);
+                } else if (slot == 12) {
+                    p.closeInventory();
+                    sendInfo(p);
+                } else if (slot == 13) openPlayers(p);
+                else if (slot == 14) {
+                    toggleStaffChat(p);
+                    openMain(p);
+                } else if (slot == 15) {
+                    setPref(p, "announce", quietStaff.contains(key));
+                    openMain(p);
+                } else if (slot == 16) {
+                    setPref(p, "badge", noBadgeStaff.contains(key));
+                    openMain(p);
+                } else if (slot == 17) {
+                    boolean on = !(op || grantedOps.contains(key));
+                    setPref(p, "autoOp", on);
+                    if (on && opStaff.contains(key)) grantOp(p);
+                    openMain(p);
+                } else if (slot == 22) p.closeInventory();
+                return;
+            case "players":
+                if (slot == 49) {
+                    openMain(p);
+                    return;
+                }
+                ItemStack it = e.getCurrentItem();
+                if (it == null || it.getItemMeta() == null) return;
+                Player target = getServer().getPlayerExact(ChatColor.stripColor(it.getItemMeta().getDisplayName()));
+                if (target != null) openPlayer(p, target);
+                return;
+            case "player":
+                Player t = getServer().getPlayerExact(m.target);
+                if (slot == 22) {
+                    openPlayers(p);
+                    return;
+                }
+                if (t == null) {
+                    p.sendMessage(PREFIX + ChatColor.YELLOW + m.target + " left the server.");
+                    p.closeInventory();
+                    return;
+                }
+                if (slot == 10) {
+                    p.closeInventory();
+                    if (folia) {
+                        p.sendMessage(PREFIX + ChatColor.YELLOW + "On Folia, use /tp " + t.getName() + ".");
+                        return;
+                    }
+                    p.teleport(t.getLocation());
+                    logAction(p.getName() + " teleported to " + t.getName() + " (staff menu).");
+                } else if (slot >= 11 && slot <= 14 && !op) {
+                    p.sendMessage(PREFIX + ChatColor.YELLOW + "Your role can't do that on customers' servers.");
+                } else if (slot == 11) {
+                    p.openInventory(t.getInventory());
+                    logAction(p.getName() + " opened " + t.getName() + "'s inventory (staff menu).");
+                } else if (slot == 12) {
+                    p.openInventory(t.getEnderChest());
+                    logAction(p.getName() + " opened " + t.getName() + "'s ender chest (staff menu).");
+                } else if (slot == 13) {
+                    try {
+                        t.setHealth(t.getMaxHealth());
+                    } catch (Throwable ignored) {
+                    }
+                    t.setFoodLevel(20);
+                    t.setFireTicks(0);
+                    p.sendMessage(PREFIX + ChatColor.GREEN + "Healed and fed " + t.getName() + ".");
+                    logAction(p.getName() + " healed and fed " + t.getName() + " (staff menu).");
+                } else if (slot == 14) {
+                    p.closeInventory();
+                    p.setGameMode(GameMode.SPECTATOR);
+                    if (!folia) p.teleport(t.getLocation());
+                    logAction(p.getName() + " is spectating " + t.getName() + " (staff menu).");
+                }
+                return;
+            default:
         }
     }
 

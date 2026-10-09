@@ -723,7 +723,7 @@ route(
     }
     return {
       teamMode: TEAM,
-      user: user ? { ...(user.local ? user : auth.publicUser(user)), ...(user.local ? {} : lifetimeOf(user)), roleLabel: rbac.role(user.role).label, ...(TEAM && !user.local && onTeamPage(user) ? { teamProfile: { show: true, title: '', bio: '', ...(user.teamProfile || {}) } } : {}), permissions: TEAM ? rbac.permissionsOf(user).filter((x) => can(user, x)) : PERMISSIONS.map((x) => x.id), ...(needs2fa(user) ? { needs2fa: true } : {}) } : null,
+      user: user ? { ...(user.local ? user : auth.publicUser(user)), ...(user.local ? {} : lifetimeOf(user)), roleLabel: rbac.role(user.role).label, ...(TEAM && !user.local && onTeamPage(user) ? { teamProfile: { show: true, title: '', bio: '', ...(user.teamProfile || {}) } } : {}), ...(TEAM && !user.local && rbac.isStaff(user) ? { staffPrefs: staffPrefsOf(user) } : {}), permissions: TEAM ? rbac.permissionsOf(user).filter((x) => can(user, x)) : PERMISSIONS.map((x) => x.id), ...(needs2fa(user) ? { needs2fa: true } : {}) } : null,
       publicUrl: publicUrl(),
       hosted: HOSTED,
       allowSignup: TEAM && auth.settings.allowSignup,
@@ -2410,6 +2410,13 @@ route('GET', '/api/team-page', () => {
       .map(({ level, ...m }) => m),
   };
 }, { public: true });
+route('PUT', '/api/account/staff-prefs', async (req) => {
+  if (!rbac.isStaff(req.user)) throw httpError(403, 'Only Tree Host staff have in-game staff settings.');
+  setStaffPrefs(req.user, await readJson(req));
+  await auth.save();
+  syncStaffListsSoon();
+  return staffPrefsOf(req.user);
+});
 route('PUT', '/api/account/team-profile', async (req) => {
   if (!onTeamPage(req.user)) throw httpError(403, 'Only Owners, Admins and Developers are on the team page.');
   const body = await readJson(req);
@@ -2448,12 +2455,55 @@ function staffListText() {
     .filter((u) => u.mcName && /^[A-Za-z0-9_]{3,16}$/.test(u.mcName) && !u.restriction && rbac.isStaff(u))
     .map((u) => `${u.mcName}|${rbac.role(u.role).label}`)
     .sort();
-  // Operator while they're on a server: staff whose role may run console commands on any server anyway.
-  const ops = auth.users
-    .filter((u) => u.mcName && /^[A-Za-z0-9_]{3,16}$/.test(u.mcName) && !u.restriction && rbac.isStaff(u) && rbac.can(u, 'servers.operate'))
-    .map((u) => `#op=${u.mcName}`)
-    .sort();
-  return `# Official Tree Host staff. Managed by Tree Host: changes here are undone.\n${lines.join('\n')}\n${ops.length ? `${ops.join('\n')}\n` : ''}`;
+  // Each staff member's choices (Account, or the in-game staff menu): operator while they're on a server (only when
+  // their role may run console commands on any server anyway), a join announcement, the badge floating over their head.
+  const flags = [];
+  for (const u of auth.users) {
+    if (!u.mcName || !/^[A-Za-z0-9_]{3,16}$/.test(u.mcName) || u.restriction || !rbac.isStaff(u)) continue;
+    const prefs = staffPrefsOf(u);
+    if (prefs.autoOp && prefs.canOp) flags.push(`#op=${u.mcName}`);
+    if (!prefs.announce) flags.push(`#quiet=${u.mcName}`);
+    if (!prefs.badge) flags.push(`#nobadge=${u.mcName}`);
+  }
+  flags.sort();
+  return `# Official Tree Host staff. Managed by Tree Host: changes here are undone.\n${lines.join('\n')}\n${flags.length ? `${flags.join('\n')}\n` : ''}`;
+}
+
+/** A staff member's in-game choices (everything on unless they turned it off). */
+function staffPrefsOf(u) {
+  const p = u.staffPrefs || {};
+  return { announce: p.announce !== false, badge: p.badge !== false, autoOp: p.autoOp !== false, canOp: rbac.can(u, 'servers.operate') };
+}
+
+const STAFF_PREF_KEYS = ['announce', 'badge', 'autoOp'];
+function setStaffPrefs(u, changes) {
+  const next = { ...(u.staffPrefs || {}) };
+  for (const k of STAFF_PREF_KEYS) if (changes[k] !== undefined) next[k] = !!changes[k];
+  u.staffPrefs = next;
+}
+
+/**
+ * Changes staff made in the in-game staff menu: the plugin writes "name|announce|off" lines to prefs-out.txt.
+ * Only these three choices can be changed this way, and "op" still needs the role's permission.
+ */
+async function readStaffPrefsOutbox(inst) {
+  const file = path.join(inst.dir, inst.pluginDirName, 'TreeHostStaff', 'prefs-out.txt');
+  const text = await fsp.readFile(file, 'utf8').catch(() => null);
+  if (text == null) return;
+  await fsp.rm(file, { force: true }).catch(() => {});
+  let changed = false;
+  for (const line of text.split(/\r?\n/)) {
+    const [name, key, value] = line.trim().split('|');
+    if (!name || !STAFF_PREF_KEYS.includes(key) || !['on', 'off'].includes(value)) continue;
+    const u = auth.users.find((x) => x.mcName && x.mcName.toLowerCase() === name.toLowerCase() && rbac.isStaff(x) && !x.restriction);
+    if (!u) continue;
+    setStaffPrefs(u, { [key]: value === 'on' });
+    changed = true;
+  }
+  if (changed) {
+    await auth.save();
+    syncStaffListsSoon();
+  }
 }
 const staffFileFor = (inst) => `${staffListText()}${manager.networkFor && manager.networkFor(inst) ? '#trust=proxy\n' : ''}`;
 
@@ -2476,6 +2526,7 @@ const syncStaffListsSoon = () => setTimeout(() => {
 /** Puts the plugin and the staff list in place (if missing or changed). Returns true if the plugin had to be restored. */
 async function syncStaffPlugin(inst) {
   if (!manager.protectedPlugin(inst)) return false;
+  await readStaffPrefsOutbox(inst).catch((e) => console.error(`[staff plugin] ${inst.cfg.id} prefs: ${e.message}`));
   const dir = path.join(inst.dir, inst.pluginDirName);
   const jar = path.join(dir, 'TreeHostStaff.jar');
   await fsp.mkdir(path.join(dir, 'TreeHostStaff'), { recursive: true });

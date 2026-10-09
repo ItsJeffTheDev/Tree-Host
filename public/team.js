@@ -824,6 +824,19 @@ async function openAccount() {
            </form>`
         : ''
     }
+    ${
+      u.staffPrefs
+        ? `<form id="acc-staff" class="card stack">
+             <h3>${ic('shield')} In Minecraft</h3>
+             <p class="hint" style="margin:0">How you show up when you join customers' servers as Tree Host staff${u.mcName ? ` (as <b>${esc(u.mcName)}</b>)` : ' (add your Minecraft name above first)'}.
+               You can also change these in-game: <code>/thstaff</code> opens the staff menu.</p>
+             <label class="check"><input type="checkbox" name="announce" ${u.staffPrefs.announce ? 'checked' : ''}> <span><b>Announce me when I join</b><br><span class="muted small">"A Tree Host staff member has joined your server". Off: a normal join message.</span></span></label>
+             <label class="check"><input type="checkbox" name="badge" ${u.staffPrefs.badge ? 'checked' : ''}> <span><b>Badge above my head</b><br><span class="muted small">A floating ✔ STAFF tag that everyone sees, and you see it too in third person (F5). Needs Minecraft 1.19.4 or newer on the server.</span></span></label>
+             <label class="check"><input type="checkbox" name="autoOp" ${u.staffPrefs.autoOp ? 'checked' : ''} ${u.staffPrefs.canOp ? '' : 'disabled'}> <span><b>Make me operator while I'm on a server</b><br><span class="muted small">${u.staffPrefs.canOp ? 'Taken away again when you leave. The owner sees everything you run.' : "Your role can't run commands on customers' servers, so you aren't made operator."}</span></span></label>
+             <div><button class="btn primary">Save</button></div>
+           </form>`
+        : ''
+    }
     <div class="card stack">
       <h3>API tokens</h3>
       <p class="hint" style="margin:0">Let your build (Gradle, Maven or curl) upload plugins to your servers. Treat them like passwords.</p>
@@ -889,6 +902,15 @@ async function openAccount() {
       attempt(async () => {
         state.me.user.teamProfile = await api('PUT', '/api/account/team-profile', { show: f.show.checked, title: f.title.value, bio: f.bio.value });
         toast('Team page updated');
+      });
+    });
+  if ($('#acc-staff', root))
+    $('#acc-staff', root).addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = e.target.elements;
+      attempt(async () => {
+        state.me.user.staffPrefs = await api('PUT', '/api/account/staff-prefs', { announce: f.announce.checked, badge: f.badge.checked, autoOp: f.autoOp.checked });
+        toast('Saved. Servers pick it up within a few seconds.');
       });
     });
   if ($('#acc-reset', root))

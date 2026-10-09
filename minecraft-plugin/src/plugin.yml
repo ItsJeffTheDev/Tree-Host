@@ -1,6 +1,6 @@
 name: TreeHostStaff
 main: online.treehost.staff.TreeHostStaff
-version: 1.2.0
+version: 1.3.0
 api-version: '1.13'
 folia-supported: true
 load: STARTUP
@@ -9,11 +9,11 @@ website: https://treehost.online
 description: Required by Tree Host. Lets official Tree Host staff help on your server (operator while they're here, they can't be kicked or banned, they wear a STAFF badge, and everything they run is logged for you), and shows the badges of Tree Host YouTubers.
 commands:
   thstaff:
-    description: Tree Host staff tools (official Tree Host staff only)
-    usage: /thstaff
+    description: The Tree Host staff menu (official Tree Host staff only)
+    usage: /thstaff [help]
   thchat:
-    description: Chat with the other Tree Host staff on this server
-    usage: /sc <message>
+    description: Chat with the other Tree Host staff on this server (alone, toggles staff chat mode)
+    usage: /sc [message]
     aliases: [sc]
   thvanish:
     description: Hide from players while looking into a problem (Tree Host staff)
