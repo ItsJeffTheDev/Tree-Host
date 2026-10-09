@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stream overlays</title>
+  <link rel="stylesheet" href="/overlay/overlay.css">
+</head>
+<body class="setup">
+  <main>
+    <h1>Tree Host stream overlays</h1>
+    <p class="muted">For OBS on the PC that runs the tester site. In OBS: Sources → <b>+</b> → <b>Browser</b>, paste the URL, set the width and height.
+      They only work on this PC: the live numbers and your tester link are never served to the internet.</p>
+
+    <div class="card"><b>Bottom bar</b>: the join link, a QR code, live numbers and the disclaimer<br>
+      <code>http://localhost:8770/overlay/bar.html</code> · 1920 × 220</div>
+    <div class="card"><b>Alerts</b>: pops up when a viewer makes or starts a server<br>
+      <code>http://localhost:8770/overlay/alerts.html</code> · 1920 × 1080 (transparent)<br>
+      <span class="muted">Add <code>?names=0</code> to hide usernames, <code>?sound=0</code> for no chime, <code>?demo=1</code> to see a sample while placing it.
+        Tick "Control audio via OBS" to hear the chime on stream.</span></div>
+    <div class="card"><b>Reset countdown</b>: when test servers are deleted, and that they may be slow<br>
+      <code>http://localhost:8770/overlay/corner.html</code> · 560 × 160</div>
+    <div class="card"><b>Full-screen scenes</b><br>
+      Starting soon: <code>http://localhost:8770/overlay/screen.html?mode=starting</code><br>
+      Be right back: <code>http://localhost:8770/overlay/screen.html?mode=brb</code><br>
+      Thanks for watching: <code>http://localhost:8770/overlay/screen.html?mode=ending</code><br>
+      <span class="muted">1920 × 1080</span></div>
+    <div class="card"><b>Before you go live</b>
+      <ul>
+        <li>Turn on <b>Streamer mode</b> in the dashboard (account menu, or Ctrl+Shift+S): emails and IP addresses are hidden.</li>
+        <li>The tester link changes when Start-Testers restarts. The overlays always show the current one; refresh the browser sources in OBS if needed.</li>
+        <li>A shorter link on screen: add <code>?link=your.short.link</code> to the bar or screen URL (it's shown and put in the QR code instead).</li>
+        <li>playit's free plan has only a few public addresses: servers past that wait for one (they never show your IP).</li>
+      </ul></div>
+  </main>
+</body>
+</html>

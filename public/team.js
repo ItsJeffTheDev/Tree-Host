@@ -591,12 +591,14 @@ function renderUserBox() {
       <button class="btn sm ${u.needs2fa ? 'needs-attention' : ''}" id="ub-security" title="Two-factor sign-in">${ic('lock')} Security${u.needs2fa ? ' <span class="nav-count">!</span>' : ''}</button>
       ${state.me.hosted ? '<button class="btn sm" id="ub-billing">' + ic('card') + ' Billing</button>' : ''}
       ${isTeam() && (hasPerm('console.access') || state.me.user.needs2fa) ? '<a class="btn sm" href="/admin">' + ic('tools') + ' Staff Console</a>' : ''}
+      <button class="btn sm" id="ub-streamer" title="Hide emails and IP addresses while you're live (Ctrl+Shift+S)">● Streamer mode</button>
       <button class="btn sm" id="ub-switch" title="Switch to another account or add one">⇄ Switch</button>
       <button class="btn sm" id="ub-logout">Sign out</button>
     </div>`;
   $('#ub-account').addEventListener('click', openAccount);
   $('#ub-security').addEventListener('click', openSecurity);
   $('#ub-switch').addEventListener('click', () => openAccountSwitcher().catch((e) => toast(e.message, 'error')));
+  $('#ub-streamer').addEventListener('click', () => window.streamerMode && window.streamerMode.toggle());
   if ($('#ub-billing')) $('#ub-billing').addEventListener('click', openBilling);
   $('#ub-logout').addEventListener('click', () => signOut(false));
   $$('[data-copy]', el).forEach((b) =>

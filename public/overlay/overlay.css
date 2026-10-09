@@ -1,0 +1,75 @@
+/* Tree Host stream overlays (OBS browser sources). Transparent pages; big, readable type. */
+@font-face { font-family: "Inter"; src: url("/fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+:root {
+  --green: #46c37b;
+  --green-hi: #7beaa6;
+  --gold: #f5c542;
+  --ink: #f2f7f3;
+  --ink-2: #b9c9bf;
+  --glass: rgba(9, 18, 13, 0.86);
+  --edge: rgba(123, 234, 166, 0.35);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: transparent; color: var(--ink); font-family: Inter, system-ui, "Segoe UI", sans-serif; overflow: hidden; }
+.logo { width: 1em; height: 1em; display: inline-block; vertical-align: -0.12em; }
+.glass { background: var(--glass); border: 2px solid var(--edge); border-radius: 22px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45); }
+.hidden { display: none !important; }
+
+/* ---- bottom bar (1920 x 220) ---- */
+.bar { position: absolute; left: 24px; right: 24px; bottom: 20px; height: 180px; display: flex; align-items: center; gap: 28px; padding: 0 22px 0 28px; }
+.bar .brand { display: flex; align-items: center; gap: 14px; font-size: 44px; font-weight: 900; letter-spacing: -0.5px; white-space: nowrap; }
+.bar .brand small { display: block; font-size: 16px; font-weight: 700; color: var(--green-hi); letter-spacing: 1.5px; text-transform: uppercase; }
+.bar .main { flex: 1; min-width: 0; }
+.bar .cta { font-size: 34px; font-weight: 850; line-height: 1.15; }
+.bar .cta b { color: var(--green-hi); }
+.bar .link { margin-top: 8px; font-size: 21px; font-weight: 700; color: var(--gold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar .fine { margin-top: 8px; font-size: 16px; color: var(--ink-2); }
+.stats { display: flex; gap: 12px; }
+.stat { min-width: 118px; text-align: center; padding: 10px 14px; border-radius: 16px; background: rgba(70, 195, 123, 0.12); border: 1px solid var(--edge); }
+.stat .n { font-size: 36px; font-weight: 900; line-height: 1; color: var(--green-hi); }
+.stat .l { margin-top: 6px; font-size: 14px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.8px; }
+.qr { background: #fff; padding: 8px; border-radius: 14px; line-height: 0; }
+.qr-cap { font-size: 13px; font-weight: 800; text-align: center; color: var(--ink-2); margin-top: 4px; letter-spacing: 0.5px; text-transform: uppercase; }
+
+/* ---- corner (560 x 150) ---- */
+.corner { position: absolute; left: 20px; top: 20px; width: 520px; padding: 18px 22px; }
+.corner .t { font-size: 15px; font-weight: 800; color: var(--green-hi); letter-spacing: 1.2px; text-transform: uppercase; }
+.corner .big { font-size: 34px; font-weight: 900; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.corner .fine { font-size: 15px; color: var(--ink-2); margin-top: 6px; }
+
+/* ---- alerts (1920 x 1080, transparent) ---- */
+.alerts { position: absolute; top: 36px; right: 36px; width: 640px; display: flex; flex-direction: column; gap: 16px; }
+.alert { display: flex; align-items: center; gap: 18px; padding: 20px 24px; animation: pop-in 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.alert.out { animation: pop-out 0.45s ease-in both; }
+.alert .icon { font-size: 54px; line-height: 1; }
+.alert .head { font-size: 30px; font-weight: 900; line-height: 1.15; }
+.alert .head b { color: var(--green-hi); }
+.alert .sub { font-size: 20px; color: var(--ink-2); margin-top: 4px; }
+@keyframes pop-in { from { opacity: 0; transform: translateX(120px) scale(0.9); } to { opacity: 1; transform: none; } }
+@keyframes pop-out { to { opacity: 0; transform: translateX(120px); } }
+
+/* ---- full screens (1920 x 1080): starting soon, be right back, thanks for watching ---- */
+.screen { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(1200px 700px at 20% 15%, #1c4a31 0%, transparent 60%), radial-gradient(1000px 700px at 85% 90%, #123826 0%, transparent 60%), #07100b; }
+.screen .blob { position: absolute; width: 520px; height: 520px; border-radius: 50%; filter: blur(70px); opacity: 0.35; background: var(--green); animation: drift 18s ease-in-out infinite alternate; }
+.screen .blob.b2 { background: #2b7fff; width: 420px; height: 420px; animation-duration: 23s; right: 8%; bottom: 10%; opacity: 0.22; }
+@keyframes drift { from { transform: translate(-80px, -40px); } to { transform: translate(260px, 160px); } }
+.screen .inner { position: relative; text-align: center; width: 1500px; }
+.screen .logo-big { font-size: 150px; }
+.screen h1 { font-size: 110px; font-weight: 950; margin: 10px 0 0; letter-spacing: -2px; }
+.screen .tag { font-size: 40px; font-weight: 700; color: var(--green-hi); margin-top: 6px; }
+.screen .join { margin: 54px auto 0; display: inline-flex; align-items: center; gap: 34px; padding: 26px 34px; text-align: left; }
+.screen .join .cta { font-size: 38px; font-weight: 850; }
+.screen .join .link { font-size: 24px; color: var(--gold); font-weight: 700; margin-top: 10px; max-width: 900px; overflow-wrap: anywhere; }
+.screen .stats { justify-content: center; margin-top: 36px; }
+.screen .fine { margin-top: 28px; font-size: 20px; color: var(--ink-2); }
+.dots::after { content: ""; animation: dots 1.6s steps(4) infinite; }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+
+/* ---- setup page ---- */
+.setup { background: #0b1410; color: var(--ink); overflow: auto; padding: 32px; font-size: 16px; line-height: 1.55; }
+.setup main { max-width: 900px; margin: 0 auto; }
+.setup h1 { font-size: 30px; margin: 0 0 6px; }
+.setup .card { background: #132019; border: 1px solid #23342a; border-radius: 14px; padding: 18px 20px; margin: 16px 0; }
+.setup code { background: #0b1410; border: 1px solid #23342a; padding: 2px 7px; border-radius: 6px; font-size: 14px; user-select: all; }
+.setup a { color: var(--green-hi); }
+.setup .muted { color: var(--ink-2); }

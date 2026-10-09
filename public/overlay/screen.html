@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tree Host overlay: full screen</title>
+  <link rel="stylesheet" href="/overlay/overlay.css">
+</head>
+<body>
+  <!-- OBS browser source: 1920 x 1080. ?mode=starting (default), brb or ending -->
+  <div class="screen">
+    <div class="blob"></div><div class="blob b2"></div>
+    <div class="inner">
+      <div class="logo-big" data-logo></div>
+      <h1 id="title">Starting soon</h1>
+      <div class="tag" id="tag">Live: making Minecraft servers on Tree Host<span class="dots"></span></div>
+      <div class="join glass">
+        <div class="qr" data-o="qr" data-size="210"></div>
+        <div>
+          <div class="cta">Make your own server, free, right now</div>
+          <div class="link" data-o="link">Loading…</div>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="n" data-o="servers">0</div><div class="l">servers</div></div>
+        <div class="stat"><div class="n" data-o="running">0</div><div class="l">online</div></div>
+        <div class="stat"><div class="n" data-o="players">0</div><div class="l">players</div></div>
+      </div>
+      <div class="fine">Test site on a home PC, so servers may be slow · Test servers reset in <b data-o="reset">…</b></div>
+    </div>
+  </div>
+  <script src="/qr.js"></script>
+  <script src="/overlay/overlay.js"></script>
+  <script src="/overlay/screen.js"></script>
+</body>
+</html>

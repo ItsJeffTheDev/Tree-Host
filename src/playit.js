@@ -101,6 +101,11 @@ class Playit {
         t = (await this.tunnels()).find((x) => x.id === id);
         if (t && (t.port_allocation_requests || []).some((a) => a.status === 'AccountPortLimitReached')) {
           await this.call('/tunnels/delete', { tunnel_id: id }).catch(() => {});
+          if (!inst.cfg.playitFull) {
+            inst.cfg.playitFull = true;
+            inst.manager.save();
+            inst.emitStatus();
+          }
           if (!this.limited.has(inst.cfg.id)) {
             this.limited.add(inst.cfg.id);
             inst.sysLog("No playit address for this server: the playit account's free addresses are all in use. Delete a server you don't need (or put this one behind a proxy) and it gets one within a few minutes.");
@@ -111,6 +116,7 @@ class Playit {
       if (!t || !Playit.addressOf(t)) throw new Error('playit made the tunnel but gave no address yet. It is tried again in a few minutes.');
     }
     this.limited.delete(inst.cfg.id);
+    if (inst.cfg.playitFull) delete inst.cfg.playitFull;
     const address = Playit.addressOf(t);
     const before = inst.cfg.playit && inst.cfg.playit.address;
     inst.cfg.playit = { tunnelId: t.id, address, port: inst.cfg.port };

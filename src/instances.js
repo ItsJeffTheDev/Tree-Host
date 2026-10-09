@@ -366,6 +366,7 @@ class Instance extends EventEmitter {
       listing: c.listing || null,
       manualAddress: c.publicAddress || '',
       autoAddress: c.autoAddress || '',
+      addressWaiting: !!c.playitFull, // a test site's playit account has no free address for it right now
       onlineMode: c.onlineMode !== false,
       client: this.client,
       clientsRunning: this.clientsRunning,
@@ -1720,6 +1721,8 @@ class Manager extends EventEmitter {
       this.instances.set(cfg.id, inst);
       if (cfg.lastPid && !this.docker) await this.cleanupOrphan(inst, cfg.lastPid);
       if (this.gameHost && !cfg.gateway) cfg.autoAddress = this.gameAddress(cfg.port);
+      // No game host (e.g. a test site that must not show its home IP): forget addresses saved under an old one.
+      else if (!cfg.gateway) cfg.autoAddress = '';
       // A playit.gg address (src/playit.js) wins while it still points at this port.
       if (cfg.playit && cfg.playit.port === cfg.port && cfg.playit.address) cfg.autoAddress = cfg.playit.address;
     }

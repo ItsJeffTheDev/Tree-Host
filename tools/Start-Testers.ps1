@@ -5,13 +5,17 @@
 #    agent's key is in <Data>\playit\playit.toml; without it, at this PC's public IP (forward the ports on the router).
 #  - Sign-up only works with the tester link (?code=...). Plans are free (demo billing). No Firebase, Stripe or email:
 #    accounts and servers stay in the data folder below.
+#  - Test site mode: a "may be slow, not dedicated hardware" notice, and testers' servers are deleted every
+#    $ResetHours hours (staff servers stay). Stream overlays for OBS: http://localhost:<Port>/overlay/index.html
+#  - With playit, this PC's public IP is never given to Tree Host, so it can't show up anywhere.
 # Run: Start-Testers.bat (or: powershell -ExecutionPolicy Bypass -File tools\Start-Testers.ps1). Ctrl+C stops it.
 param(
   [string]$Data = 'D:\tree-host-testers',
   [int]$Port = 8770,
   [string]$GamePorts = '26000-26019',
   [string]$Cloudflared = 'D:\cloudflared\cloudflared.exe',
-  [string]$Playitd = 'C:\Program Files\playit_gg\bin\playitd.exe'
+  [string]$Playitd = 'C:\Program Files\playit_gg\bin\playitd.exe',
+  [int]$ResetHours = 48
 )
 $ErrorActionPreference = 'Stop'
 $App = Split-Path $PSScriptRoot -Parent
@@ -38,7 +42,8 @@ if (-not (Test-Path $codeFile)) {
 $code = (Get-Content $codeFile -Raw).Trim()
 
 # ---- The address players type in Minecraft: this home connection's public IP ----
-$ip = (Invoke-RestMethod -TimeoutSec 15 https://api.ipify.org).Trim()
+$ip = $null
+if (-not ((Test-Path (Join-Path $Data 'playit\playit.toml')) -and (Test-Path $Playitd))) { $ip = (Invoke-RestMethod -TimeoutSec 15 https://api.ipify.org).Trim() }
 
 # ---- The public dashboard address (a new one every time the tunnel starts) ----
 $tunnelLog = Join-Path $Data 'tunnel.log'
@@ -67,7 +72,10 @@ $env:TREEHOST_PUBLIC_URL = $url
 $env:TREEHOST_PORT = "$Port"
 $env:TREEHOST_PORTS = $GamePorts
 $env:TREEHOST_DATA = $Data
-$env:TREEHOST_GAME_HOST = $ip
+# Players' address: playit's (so the home IP stays private), or this PC's public IP when there's no playit.
+if (-not $agent) { $env:TREEHOST_GAME_HOST = $ip }
+$env:TREEHOST_TEST_SITE = '1'
+$env:TREEHOST_RESET_HOURS = "$ResetHours"
 $env:TREEHOST_ISOLATION = 'docker'
 $env:TREEHOST_TRUST_CLOUDFLARE = '1'
 $env:TREEHOST_SIGNUP_CODE = $code
@@ -79,6 +87,8 @@ Tree Host tester site ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))
   Tester link (send this):  $url/dashboard?code=$code
   Players join at:          $(if ($agent) { 'the playit.gg address on each server''s page' } else { "$ip (each server shows its port, $GamePorts)" })
   The link changes every time this script restarts.
+  Stream overlays (OBS):    http://localhost:$Port/overlay/index.html
+  Testers' servers reset every $ResetHours hours.
 "@
 $links | Set-Content -Encoding utf8 (Join-Path $Data 'links.txt')
 Write-Host ''

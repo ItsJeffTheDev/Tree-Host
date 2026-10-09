@@ -27,6 +27,10 @@ const { Players } = require('./players');
 const lagdoctor = require('./lagdoctor');
 const pluginUpdates = require('./pluginupdates');
 const { Playit } = require('./playit');
+const { TestSite } = require('./testsite');
+// A test site on a home PC (tools/Start-Testers.ps1): resets every 48 hours, says it isn't dedicated hardware.
+const TEST_SITE = process.env.TREEHOST_TEST_SITE === '1';
+let testSite = null; // src/testsite.js (see main)
 const { Moderation, TYPES, REASONS } = require('./moderation');
 const MOTD = require('./motd');
 const backups = require('./backups');
@@ -733,6 +737,7 @@ route(
       firebase: TEAM ? firebase.publicConfig() : null,
       billingMode: billing.mode,
       staging: STAGING,
+      testSite: testSite ? testSite.info() : null,
       isolated: manager.docker,
       lanUrls: TEAM && !HOSTED && HOST !== '127.0.0.1' && user && can(user, 'system.view') ? lanUrls() : [],
     };
@@ -1598,9 +1603,10 @@ route(
     jurisdiction: env('JURISDICTION', ''),
     discord: env('DISCORD_INVITE', ''),
     // The machine customer servers run on (shown on the pricing page; people rightly ask).
-    cpu: env('CPU', 'AMD Ryzen 7 9700X'),
-    cpuDetail: env('CPU_DETAIL', '8 cores, 16 threads, up to 5.5 GHz'),
-    hardware: env('HARDWARE', 'OVH RISE-S dedicated server: DDR5 ECC memory, mirrored NVMe SSDs, anti-DDoS'),
+    cpu: TEST_SITE ? 'A home PC' : env('CPU', 'AMD Ryzen 7 9700X'),
+    cpuDetail: TEST_SITE ? 'Test site: not dedicated hardware, so servers may be slow' : env('CPU_DETAIL', '8 cores, 16 threads, up to 5.5 GHz'),
+    hardware: TEST_SITE ? 'A home PC running the Tree Host test site (not the real hosting machine)' : env('HARDWARE', 'OVH RISE-S dedicated server: DDR5 ECC memory, mirrored NVMe SSDs, anti-DDoS'),
+    testSite: testSite ? testSite.info() : null,
     location: env('LOCATION', ''),
     allowSignup: auth.settings.allowSignup,
     staging: STAGING,
@@ -1926,6 +1932,25 @@ route('GET', '/api/events', (req, res) => {
 });
 
 route('GET', '/api/health', () => ({ ok: true }), { public: true });
+
+// Stream overlays (public/overlay/*.html, added to OBS as browser sources on this PC). Only answers requests made on
+// this PC directly: anything through the Cloudflare tunnel carries CF-Connecting-IP and is refused, so the tester
+// code and the numbers aren't public.
+route('GET', '/api/overlay', (req, res, p, q) => {
+  if (!fromThisPc(req) || req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for']) throw httpError(404, 'Not found');
+  const servers = [...manager.instances.values()].filter((i) => i.isCustomer);
+  const since = Number(q.get('since')) || 0;
+  const code = env('SIGNUP_CODE', '');
+  return {
+    link: PUBLIC_URL ? `${PUBLIC_URL}/dashboard?${code ? `code=${encodeURIComponent(code)}` : 'signup'}` : null,
+    servers: servers.length,
+    running: servers.filter((i) => i.proc && i.status === 'running').length,
+    players: servers.reduce((n, i) => n + (i.proc ? i.players.size : 0), 0),
+    testSite: testSite ? testSite.info() : null,
+    feed: testSite ? testSite.feed.filter((e) => e.id > since) : [],
+    seq: testSite ? testSite.seq : 0,
+  };
+}, { public: true });
 route('GET', '/api/system', async (req) => (!can(req.user, 'system.view') ? { customer: true, lanIps: [] } : {
   platform: process.platform,
   totalMemMb: Math.floor(os.totalmem() / 1048576),
@@ -2164,6 +2189,7 @@ route('POST', '/api/servers', async (req) => {
   }
   inst.logActivity('server', who(req), `created ${inst.provider.label} ${inst.cfg.version} server "${inst.cfg.name}"`);
   if (playit) playit.ensure(inst).catch((e) => inst.sysLog(`Could not get a playit address yet (${e.message}). Tree Host tries again in a few minutes.`));
+  if (testSite) testSite.event('created', { user: req.user.username, server: inst.cfg.name });
   return inst.toJSON();
 });
 route('GET', '/api/servers/:id', (req, res, p) => getFor(req, p.id).toJSON());
@@ -4189,6 +4215,28 @@ async function main() {
   if (TEAM) await staffNotices.init();
   await manager.init();
   // playit.gg addresses for every server (the tester site on a PC without port forwarding: tools/Start-Testers.ps1).
+  if (TEST_SITE) {
+    testSite = new TestSite({
+      manager,
+      dataDir: DATA,
+      hours: env('RESET_HOURS', '48'),
+      // Kept: staff servers, team servers and demos. Everything testers made goes.
+      keep: (inst) => !!inst.cfg.isDemo || inst.cfg.space !== 'customer' || (() => {
+        const u = inst.cfg.owner && auth.userById(inst.cfg.owner);
+        return !!(u && rbac.isStaff(u));
+      })(),
+      onRemoved: (inst) => billing.detachServer(inst.cfg.id),
+    });
+    testSite.start();
+    manager.on('status', (inst) => {
+      if (inst.status === 'running' && inst._announcedRun !== inst.startedAt) {
+        inst._announcedRun = inst.startedAt;
+        if (inst.isCustomer) testSite.event('started', { user: manager.ownerName(inst.cfg.owner) || '', server: inst.cfg.name });
+      }
+    });
+    const left = Math.round((testSite.info().nextResetAt - Date.now()) / 3600000);
+    console.log(`  Test site: testers' servers are deleted every ${testSite.hours} hours (next reset in about ${left} h).`);
+  }
   if (env('PLAYIT_SECRET_PATH', '')) {
     try {
       // Behind a proxy, players come in through the proxy; demo servers are for the tour.

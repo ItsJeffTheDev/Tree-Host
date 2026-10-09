@@ -386,6 +386,10 @@ function renderHeader() {
             ? `<div class="addr-label">Join address <span class="muted">(click to copy)</span></div>
                <div class="addr-main copy" data-copy="${esc(s.publicAddress)}">${esc(s.publicAddress)}</div>
                ${lanGameLine(s)}`
+            : state.me?.testSite
+              ? `<div class="addr-label">Join address</div><div class="addr-lan">${s.addressWaiting
+                  ? 'All free public addresses are in use right now. This server gets one by itself as soon as one frees up.'
+                  : 'Getting a free public address… it shows up here in a few seconds.'}</div>`
             : state.me?.hosted
               ? `<div class="addr-label">Join address</div><div class="addr-lan">${hasPerm('system.view') ? 'Set TREEHOST_GAME_HOST on the server, or type an address in Settings.' : 'No address yet. Contact support.'}</div>`
               : `<div class="addr-label">Server address <span class="muted">(click to copy)</span></div>
