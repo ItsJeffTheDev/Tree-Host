@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tree Host stress test</title>
+<style>
+  /* OBS browser source: 1920 x 1080 (transparent). Real numbers from tools/stress/stress.js. */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; color: #f2f7f3; font-family: "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  .panel { position: absolute; right: 24px; top: 24px; width: 560px; background: rgba(9, 18, 13, .9); border: 2px solid rgba(123, 234, 166, .4);
+    border-radius: 22px; padding: 20px 22px; box-shadow: 0 14px 40px rgba(0, 0, 0, .5); }
+  .tag { display: inline-block; font-size: 13px; font-weight: 900; letter-spacing: 1.4px; color: #062a17; background: #7beaa6; padding: 4px 10px; border-radius: 999px; }
+  .tag.warn { background: #f5c542; color: #2a1d00; }
+  h1 { font-size: 22px; margin: 10px 0 2px; font-weight: 900; }
+  .sub { font-size: 14px; color: #b9c9bf; }
+  .big { display: flex; align-items: baseline; gap: 10px; margin-top: 14px; }
+  .big b { font-size: 84px; font-weight: 950; line-height: 1; font-variant-numeric: tabular-nums; color: #7beaa6; }
+  .big span { font-size: 22px; color: #b9c9bf; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .m { background: rgba(70, 195, 123, .1); border: 1px solid rgba(123, 234, 166, .25); border-radius: 14px; padding: 10px 12px; }
+  .m .n { font-size: 28px; font-weight: 900; font-variant-numeric: tabular-nums; }
+  .m .l { font-size: 12px; font-weight: 700; color: #b9c9bf; text-transform: uppercase; letter-spacing: .7px; margin-top: 2px; }
+  .bad { color: #ff7a7a; } .ok { color: #7beaa6; } .mid { color: #f5c542; }
+  canvas { width: 100%; height: 120px; display: block; margin-top: 14px; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: #b9c9bf; margin-top: 4px; }
+  .legend i { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 5px; }
+  .spec { margin-top: 12px; font-size: 12.5px; color: #b9c9bf; line-height: 1.5; }
+  .stop { margin-top: 10px; font-size: 14px; font-weight: 800; color: #f5c542; }
+</style>
+</head>
+<body>
+<div class="panel">
+  <span class="tag" id="phase">SIMULATED CLIENTS • PRE-LAUNCH TEST</span>
+  <h1>Tree Host stress test</h1>
+  <div class="sub" id="what">Protocol-level bots: they join and stay connected. No movement, chat or rendering.</div>
+  <div class="big"><b id="conn">0</b><span id="of">connected</span></div>
+  <div class="grid">
+    <div class="m"><div class="n" id="tps">–</div><div class="l">TPS (20 = perfect)</div></div>
+    <div class="m"><div class="n" id="mspt">–</div><div class="l">ms per tick</div></div>
+    <div class="m"><div class="n" id="time">0:00</div><div class="l">test time</div></div>
+    <div class="m"><div class="n" id="cpu">–</div><div class="l">server CPU</div></div>
+    <div class="m"><div class="n" id="ram">–</div><div class="l">server RAM</div></div>
+    <div class="m"><div class="n" id="lost">0</div><div class="l">failed / dropped</div></div>
+  </div>
+  <canvas id="g" width="1032" height="240"></canvas>
+  <div class="legend"><span><i style="background:#7beaa6"></i>clients connected</span><span><i style="background:#f5c542"></i>TPS</span><span><i style="background:#5ee7ff"></i>server CPU</span></div>
+  <div class="stop" id="stop"></div>
+  <div class="spec" id="spec"></div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtT = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+async function tick() {
+  try {
+    const d = await (await fetch('/stats', { cache: 'no-store' })).json();
+    const n = d.now || {};
+    $('conn').textContent = (n.connected || 0).toLocaleString();
+    $('of').textContent = d.target ? `/ ${d.target.toLocaleString()} connected` : 'connected';
+    $('phase').textContent = { starting: 'STARTING', baseline: 'BASELINE • NO CLIENTS', ramping: `RAMPING TO ${(d.target || 0).toLocaleString()}`, holding: `HOLDING ${(d.target || 0).toLocaleString()}`, leaving: 'DISCONNECTING CLIENTS', done: 'TEST FINISHED' }[d.phase] + ' • SIMULATED';
+    $('phase').className = d.phase === 'done' ? 'tag warn' : 'tag';
+    const tps = n.tps;
+    $('tps').textContent = tps == null ? '–' : tps.toFixed(1);
+    $('tps').className = 'n ' + (tps == null ? '' : tps >= 19 ? 'ok' : tps >= 15 ? 'mid' : 'bad');
+    $('mspt').textContent = n.mspt ? n.mspt.avg.toFixed(1) : '–';
+    $('time').textContent = fmtT(d.elapsed || 0);
+    const c = n.container;
+    $('cpu').textContent = c && !isNaN(c.cpuPct) ? `${Math.round(c.cpuPct)}%` : '–';
+    $('ram').textContent = c && c.memMb ? `${(c.memMb / 1024).toFixed(1)} GB` : '–';
+    $('lost').textContent = `${n.failed || 0} / ${n.dropped || 0}`;
+    $('stop').textContent = d.stopped ? `Stopped: ${d.stopped}` : '';
+    const s = d.spec || {};
+    $('spec').textContent = `${s.pcCpu || ''} (${s.pcCores || '?'} threads, ${Math.round((s.pcRamMb || 0) / 1024)} GB) • Paper ${s.minecraft || ''} • view ${s.viewDistance || '?'} / sim ${s.simulationDistance || '?'}`
+      + (c && c.memLimitMb ? ` • server limit ${(c.memLimitMb / 1024).toFixed(1)} GB` : '') + ` • ${new Date(s.date || Date.now()).toLocaleDateString()}`;
+    draw(d.history || []);
+  } catch {}
+  setTimeout(tick, 1000);
+}
+function draw(h) {
+  const cv = $('g'), g = cv.getContext('2d'), W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H);
+  if (h.length < 2) return;
+  const maxC = Math.max(10, ...h.map((x) => x.connected || 0));
+  const line = (vals, max, color) => {
+    g.strokeStyle = color; g.lineWidth = 4; g.beginPath();
+    vals.forEach((v, i) => { if (v == null) return; const x = (i / (vals.length - 1)) * W, y = H - (Math.min(v, max) / max) * (H - 8) - 4; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  };
+  line(h.map((x) => x.connected), maxC, '#7beaa6');
+  line(h.map((x) => x.tps), 20, '#f5c542');
+  line(h.map((x) => (x.container ? x.container.cpuPct : null)), Math.max(100, ...h.map((x) => (x.container ? x.container.cpuPct : 0))), '#5ee7ff');
+}
+tick();
+</script>
+</body>
+</html>
