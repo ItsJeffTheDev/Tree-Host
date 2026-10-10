@@ -187,7 +187,7 @@ function showNoticeToast(n) {
     location.hash = n.link;
     el.remove();
   });
-  $('#toasts').appendChild(el);
+  pageLayer('toasts', 'toasts').appendChild(el);
   setTimeout(() => el.remove(), n.urgent ? 12000 : 7000);
 }
 

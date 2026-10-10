@@ -44,7 +44,7 @@ function toast(msg, type = 'info') {
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = msg;
-  $('#toasts').appendChild(el);
+  pageLayer('toasts', 'toasts').appendChild(el);
   setTimeout(() => el.remove(), type === 'error' ? 7000 : 3500);
 }
 
@@ -2347,7 +2347,7 @@ async function fillBuildSelect(sel, type, version, keep) {
 
 async function openNewServer() {
   if (state.me && state.me.staging) return toast("This is the staging site: servers and plans open at launch. Everything else works, so look around!");
-  const root = $('#modal-root');
+  const root = pageLayer('modal-root');
   // Customers: a server needs an unused plan. No plan yet -> show the plans.
   let freePlans = [];
   const forCustomer = isTeam();

@@ -658,8 +658,23 @@ async function openAccountSwitcher() {
   if ($('#sw-all', root)) $('#sw-all', root).addEventListener('click', () => confirm('Sign out of every account on this browser?') && signOut(true));
 }
 
+/**
+ * The page-level container with this id (#modal-root, #toasts), created if it's missing. The sign-in screen replaces
+ * the whole <body>, which removes them; without this, the 2FA code prompt crashed and staff couldn't sign in.
+ */
+function pageLayer(id, className = '') {
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = id;
+    if (className) el.className = className;
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
 function openModal(html) {
-  const root = $('#modal-root');
+  const root = pageLayer('modal-root');
   root.innerHTML = `<div class="modal-bg" id="modal-bg"><div class="modal">${html}</div></div>`;
   const close = () => {
     root.innerHTML = '';
