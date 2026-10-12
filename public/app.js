@@ -96,6 +96,10 @@ const state = {
   history: JSON.parse(localStorage.getItem('mcpt.history') || '[]'),
   histIdx: -1,
   files: { path: '', open: null, dirty: false },
+  // GAP-3: the founding checkout banner (mockup G). A plan row + currency while the
+  // Founding Lifetime purchase is pending, 'gone' when the spots sold out meanwhile.
+  foundingBanner: null,
+  foundingCurrency: null,
 };
 
 // ---------- sidebar ----------
@@ -202,9 +206,49 @@ function current() {
   return state.servers.get(state.selected);
 }
 
+// ---------- founding checkout banner (GAP-3, mockup G) ----------
+
+/**
+ * The "Finish your Founding Lifetime purchase" banner above the dashboard content, for
+ * an account that just signed up from the donate page's founding CTA. state.foundingBanner
+ * holds the plan row (from /api/plans, fetched in init) or 'gone' when the spots sold out
+ * meanwhile. "Complete checkout →" opens the same confirmCheckout modal the plans grid uses;
+ * nothing is reserved server-side until that checkout actually starts.
+ */
+function renderFoundingBanner(main) {
+  const old = $('#founding-banner');
+  if (old) old.remove();
+  if (!state.foundingBanner || !main) return;
+  if (state.foundingBanner === 'gone') {
+    main.insertAdjacentHTML(
+      'afterbegin',
+      `<div class="warn-box" id="founding-banner" style="margin-bottom:14px">The founding spots are gone — they sold out while you were making your account. You can still pick any plan below, and the launch fund is open on the <a href="/donate" target="_blank">donate page</a>.</div>`,
+    );
+    return;
+  }
+  const p = state.foundingBanner;
+  main.insertAdjacentHTML(
+    'afterbegin',
+    `<div class="founding-banner" id="founding-banner">
+      <div class="founding-banner-icon">${ic('tree')}</div>
+      <div class="founding-banner-text"><b>Finish your Founding Lifetime purchase</b>
+        <span>Your $199 founding spot — ${p.unitsLeft} of ${p.capTotal} left — is saved while you check out. You won't be charged until you confirm.</span></div>
+      <button class="btn primary" id="founding-checkout">Complete checkout →</button>
+    </div>`,
+  );
+  $('#founding-checkout').addEventListener('click', () => {
+    // Drop the banner before the modal opens: in demo mode checkout activates without a
+    // page load, and after Stripe leaves the dashboard the banner has no reason to return.
+    state.foundingBanner = null;
+    $('#founding-banner')?.remove();
+    confirmCheckout(p, state.foundingCurrency || 'usd');
+  });
+}
+
 function renderMain() {
   const s = current();
   const main = $('#main');
+  renderFoundingBanner(main);
   if (!s && isTeam() && state.space !== 'all') {
     main.innerHTML = `
       <div class="welcome">
@@ -2714,6 +2758,21 @@ async function init() {
   initSupportChat();
   // Back from Stripe Checkout, from a billing email, or right after signing up.
   if (params.has('billing') || params.has('welcome')) history.replaceState(null, '', location.pathname);
+  // GAP-3: a founding signup lands here with ?welcome&plan=founding-lifetime. Re-fetch
+  // /api/plans for the live count — if the spots sold out while the account was being
+  // made, say so honestly and offer no checkout. The banner is kept out of the URL so a
+  // refresh doesn't nag; the account can always find the plan in the plans grid.
+  if (params.get('plan') === 'founding-lifetime') {
+    const row = await api('GET', '/api/plans')
+      .then((d) => {
+        state.foundingCurrency = d.currency;
+        return d.plans.find((p) => p.founding);
+      })
+      .catch(() => null);
+    if (row && !row.soldOut) state.foundingBanner = row;
+    else state.foundingBanner = 'gone';
+    renderFoundingBanner($('#main'));
+  }
   if (params.get('billing') === 'success') {
     // Ask Stripe right away instead of waiting for its webhook (a test site on localhost never gets one).
     const sessionId = params.get('session_id');

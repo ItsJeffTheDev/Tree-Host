@@ -761,3 +761,11 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .grow-funnel-nums { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .grow-facts { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: 13.5px; }
 @media (max-width: 700px) { .grow-funnel-row { grid-template-columns: 64px 1fr; } .grow-funnel-nums { grid-column: 2; } }
+
+/* Founding Lifetime checkout banner on the dashboard (GAP-3, mockup G) */
+.founding-banner { display: flex; align-items: center; gap: 14px; padding: 12px 14px; margin-bottom: 14px; border: 1px solid rgba(217,164,65,.45); border-radius: 10px; background: linear-gradient(90deg, rgba(217,164,65,.12), rgba(70,195,123,.06)); }
+.founding-banner-icon { width: 38px; height: 38px; flex: none; border-radius: 9px; display: grid; place-items: center; background: rgba(217,164,65,.15); color: var(--warn); }
+.founding-banner-icon .ic { width: 20px; height: 20px; }
+.founding-banner-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.founding-banner-text span { color: var(--muted); font-size: 13px; }
+@media (max-width: 700px) { .founding-banner { flex-direction: column; align-items: stretch; text-align: left; } }

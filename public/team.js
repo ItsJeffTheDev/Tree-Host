@@ -274,7 +274,8 @@ function showFirebaseAuth(forceMode) {
       localStorage.removeItem('th_onboarding_username');
       localStorage.removeItem('th_onboarding_birth_year');
     } catch {}
-    location.href = r.created ? '/dashboard?welcome' : invite ? `/dashboard?invite=${encodeURIComponent(invite)}` : '/dashboard';
+    // GAP-3: a founding signup lands straight on the purchase step (mockup G flow).
+    location.href = r.created && !invite && foundingIntent() ? '/dashboard?welcome&plan=founding-lifetime' : r.created ? '/dashboard?welcome' : invite ? `/dashboard?invite=${encodeURIComponent(invite)}` : '/dashboard';
   };
 
   $('#auth-form').addEventListener('submit', async (e) => {
@@ -378,6 +379,34 @@ async function sendResetEmail(email) {
 
 // ---------- sign in / sign up / setup / invite / password reset (without Firebase) ----------
 
+/**
+ * GAP-3: is a Founding Lifetime signup handoff in progress? The donate page sets
+ * th_founding_intent when a signed-out visitor clicks its CTA, and links to
+ * /dashboard?signup&plan=founding-lifetime. Either marker alone is enough.
+ */
+const foundingIntent = () => {
+  try {
+    return new URLSearchParams(location.search).get('plan') === 'founding-lifetime' || sessionStorage.getItem('th_founding_intent') === '1';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * GAP-3: live founding-spot count for the signup screen, from /api/plans.
+ * Returns the founding plan row, or null when it's gone (sold out, or the API failed —
+ * in both cases the signup falls back to its normal wording and the founding flow is dropped).
+ */
+async function foundingPlanRow() {
+  if (!foundingIntent()) return null;
+  try {
+    const row = (await api('GET', '/api/plans')).plans.find((p) => p.founding);
+    return row && !row.soldOut ? row : null;
+  } catch {
+    return null;
+  }
+}
+
 function showAuth(forceMode) {
   if (state.me?.firebase) return showFirebaseAuth(forceMode === 'reset' ? 'login' : forceMode);
   const params = new URLSearchParams(location.search);
@@ -387,10 +416,11 @@ function showAuth(forceMode) {
     forceMode ||
     (reset ? 'reset' : invite ? 'invite' : params.has('signup') && state.me?.allowSignup ? 'signup' : 'login');
   const inv = invite ? state.inviteInfo || {} : {};
+  const founding = mode === 'signup' && foundingIntent();
   const titles = {
     login: ['Sign in', invite && inv.customer ? 'Sign in to the account you want to use. You can accept the invite right after.' : 'Welcome back! Sign in to manage your servers.'],
     invite: inviteTitle(inv, 'Create your account.'),
-    signup: ['Create your account', 'Sign up, pick a plan and your Minecraft server is ready in about a minute.'],
+    signup: founding ? ['Create your account', 'Your Founding Lifetime spot is waiting.'] : ['Create your account', 'Sign up, pick a plan and your Minecraft server is ready in about a minute.'],
     forgot: ['Forgot your password?', "Enter your account's email and we'll send you a link to choose a new password."],
     reset: ['Choose a new password', 'Enter a new password for your account.'],
   };
@@ -405,7 +435,7 @@ function showAuth(forceMode) {
         <a href="/" class="brand" style="text-decoration:none;color:inherit"><div class="logo"></div><div><div class="brand-name">Tree Host</div><div class="brand-sub">Minecraft server hosting</div></div></a>
         ${addAccountBanner()}
         <h2>${esc(title)}</h2>
-        <p class="muted" style="margin:0">${esc(sub)}</p>
+        <p class="muted" style="margin:0" id="auth-sub">${esc(sub)}</p>
         ${invite ? invitePerksHtml(inv) : ''}
         ${
           mode === 'login'
@@ -433,8 +463,9 @@ function showAuth(forceMode) {
         <div id="auth-error" class="auth-error hidden"></div>
         <div id="auth-ok" class="auth-ok hidden"></div>
         <button class="btn primary block">${
-          { login: 'Sign in', signup: 'Create account', forgot: 'Send reset link', reset: 'Save new password', invite: 'Create account' }[mode]
+          { login: 'Sign in', signup: founding ? 'Create account & finish purchase' : 'Create account', forgot: 'Send reset link', reset: 'Save new password', invite: 'Create account' }[mode]
         }</button>
+        ${founding ? '<p class="small muted" style="margin:0;text-align:center" id="auth-founding-note">You\'ll confirm the $199 Founding Lifetime checkout on the next screen.</p>' : ''}
         ${mode === 'login' ? '<p class="small muted" style="margin:0;text-align:center"><a href="#" data-mode="forgot">Forgot your password?</a></p>' : ''}
         ${
           mode === 'login' && state.me?.allowSignup
@@ -448,6 +479,22 @@ function showAuth(forceMode) {
       </form>
     </div>
     <div id="toasts" class="toasts"></div>`;
+  // GAP-3: swap in the founding wording with the live spot count (mockup G). If the spots
+  // sold out (or the fetch failed) while the visitor was travelling, the normal wording stays.
+  if (founding) {
+    foundingPlanRow().then((row) => {
+      const sub = $('#auth-sub');
+      const note = $('#auth-founding-note');
+      if (!sub) return;
+      if (row) sub.textContent = `Your Founding Lifetime spot is waiting — ${row.unitsLeft} of ${row.capTotal} left.`;
+      else {
+        sub.textContent = 'Sign up, pick a plan and your Minecraft server is ready in about a minute.';
+        const go = $('#auth-form .btn.primary');
+        if (go) go.textContent = 'Create account';
+        if (note) note.remove();
+      }
+    });
+  }
   const showError = (msg) => {
     const box = $('#auth-error');
     box.textContent = msg;
@@ -503,7 +550,8 @@ function showAuth(forceMode) {
           localStorage.removeItem('th_onboarding_birth_year');
         } catch {}
       }
-      location.href = mode === 'signup' || mode === 'invite' ? '/dashboard?welcome' : invite ? `/dashboard?invite=${encodeURIComponent(invite)}` : '/dashboard';
+      // GAP-3: coming from the donate page's founding CTA, land straight on the purchase step.
+      location.href = mode === 'signup' || mode === 'invite' ? (mode === 'signup' && founding ? '/dashboard?welcome&plan=founding-lifetime' : '/dashboard?welcome') : invite ? `/dashboard?invite=${encodeURIComponent(invite)}` : '/dashboard';
     } catch (err) {
       noteTooYoung(err);
       showError(err.message);
