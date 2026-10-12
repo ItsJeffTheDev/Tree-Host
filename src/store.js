@@ -33,8 +33,11 @@ async function readLocal(name) {
 async function writeLocal(name, data) {
   await fsp.mkdir(DATA, { recursive: true });
   const file = localFile(name);
-  await fsp.writeFile(file + '.tmp', JSON.stringify(data, null, 2), { mode: 0o600 });
-  await fsp.rename(file + '.tmp', file);
+  // A unique tmp name per write: two flushes of the same collection (e.g. one racing
+  // shutdown) can never rename over each other's tmp file.
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+  await fsp.rename(tmp, file);
 }
 
 /**
@@ -85,6 +88,8 @@ async function flush(name, w) {
     while (w.pending !== null) {
       const data = w.pending;
       w.pending = null;
+      // Another flush may have taken this snapshot while we awaited: leave the writing to it.
+      if (data === null) break;
       await writeLocal(name, data);
       if (firebase.dbEnabled()) {
         for (let attempt = 1; ; attempt++) {
@@ -113,7 +118,9 @@ async function flush(name, w) {
 
 /** Waits for every pending write (used when Tree Host shuts down). */
 async function flushAll() {
-  await Promise.all([...writers.values()].map((w) => w.running).filter(Boolean));
+  // A failing writer (e.g. a tmp file already renamed away by a racing flush) must not
+  // reject shutdown — the Firebase copy is the source of truth and the next start re-reads it.
+  await Promise.allSettled([...writers.values()].map((w) => w.running).filter(Boolean));
 }
 
 module.exports = { load, save, flushAll };
