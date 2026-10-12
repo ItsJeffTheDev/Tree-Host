@@ -22,3 +22,6 @@ public/overlay/now-playing.json
 # Stream Deck: personal paths and state on this PC
 tools/stream-deck/deck-config.json
 tools/stream-deck/deck-state.json
+
+# Private settings (Stripe test keys, Resend, admin emails). Never commit.
+test-site.env
