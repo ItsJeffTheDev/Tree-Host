@@ -41,9 +41,9 @@
           <span class="founding-tag" id="founding-tag">FOUNDING PRE-SALE</span>
           <div class="founding-head">
             <h3>Founding Lifetime</h3>
-            <div class="founding-price"><b>$199</b><span> once</span></div>
+            <div class="founding-price"><b data-founding-price>$199</b><span> once</span></div>
           </div>
-          <p class="muted small" style="margin:0 0 10px">Everything in the Lifetime plan, at the founding price. Pay once, keep it forever.</p>
+          <p class="muted small" data-founding-lifetime-price style="margin:0 0 10px">Everything in the Lifetime plan, at the founding price. Pay once, keep it forever.</p>
           <ul class="founding-perks">
             <li><b>4 servers</b> of any type and version (4 GB each)</li>
             <li><b>2 proxies</b> (Velocity, BungeeCord, Waterfall)</li>
@@ -324,6 +324,15 @@
         go.textContent = `Get Founding Lifetime — ${money(p.priceCents)}`;
         go.disabled = false;
       }
+      // Anchor the deal to the real Lifetime price: the founding card shows what
+      // you save against the plan staff set in the Staff Console (billing → plans).
+      const lp = FOUNDING.lifetime || null;
+      const lpEl = $('[data-founding-lifetime-price]');
+      if (lpEl) {
+        lpEl.innerHTML = lp
+          ? `The ${esc(lp.name)} plan, at the founding price — ${money(lp.priceCents)} later. Pay once, keep it forever.`
+          : 'Everything in the Lifetime plan, at the founding price. Pay once, keep it forever.';
+      }
       card.hidden = false;
       card.classList.add('in'); // the scroll-reveal pass already ran by the time the data lands
       if (!FOUNDING.barDone) {
@@ -341,6 +350,7 @@
       .then((r) => { if (!r.ok) throw new Error('plans ' + r.status); return r.json(); })
       .then((data) => {
         FOUNDING.plan = (data.plans || []).find((p) => p.founding) || null;
+        FOUNDING.lifetime = (data.plans || []).find((p) => p.oneTime && !p.founding) || null;
         if (!FOUNDING.plan) return;
         if (data.mode === 'demo') FOUNDING.demo = true;
         foundingGo();
