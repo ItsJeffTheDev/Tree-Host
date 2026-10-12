@@ -36,6 +36,26 @@
   <section style="padding-top:12px">
     <div class="wrap donate-layout">
       <div class="stack-lg">
+        <!-- Founding Lifetime card: state comes from GET /api/plans (the founding row), never /api/donations -->
+        <div class="card fund-card founding-card reveal" id="founding-card" hidden>
+          <span class="founding-tag" id="founding-tag">FOUNDING PRE-SALE</span>
+          <div class="founding-head">
+            <h3>Founding Lifetime</h3>
+            <div class="founding-price"><b>$199</b><span> once</span></div>
+          </div>
+          <p class="muted small" style="margin:0 0 10px">Everything in the Lifetime plan, at the founding price. Pay once, keep it forever.</p>
+          <ul class="founding-perks">
+            <li><b>4 servers</b> of any type and version (4 GB each)</li>
+            <li><b>2 proxies</b> (Velocity, BungeeCord, Waterfall)</li>
+            <li><b>Priority support</b></li>
+            <li><b>FOUNDER</b> in-game badge on every Tree Host server</li>
+          </ul>
+          <div class="fund-bar founding-bar" role="progressbar" aria-label="Founding spots claimed" aria-valuemin="0" aria-valuemax="25" id="founding-bar-wrap"><div class="founding-fill" id="founding-fill"></div></div>
+          <p class="muted small" id="founding-count" style="margin:6px 0 12px"></p>
+          <button type="button" class="btn-cta block" id="founding-cta">Get Founding Lifetime — $199</button>
+          <p class="muted small" id="founding-foot" style="margin:10px 0 0" hidden></p>
+        </div>
+
         <div class="card fund-card reveal" id="fund">
           <div class="fund-top"><h3 id="fund-title">Launch fund</h3><span class="muted small" id="fund-count"></span></div>
           <div class="fund-amount"><b id="fund-raised">$0</b><span id="fund-target"></span></div>
@@ -91,6 +111,10 @@
     <div class="wrap">
       <div class="section-head reveal"><h2>What it costs to run Tree Host</h2>
         <p>No secrets: here's every bill, and how far the donations go toward them.</p></div>
+      <div class="faq" style="margin-bottom:34px">
+        <details class="reveal"><summary>What is the Founding Lifetime?</summary>
+          <p>The first 25 people can buy the whole Lifetime plan — 4 servers of any type and version (4 GB each), 2 proxies and priority support — for <b>$199 once</b> instead of the later Lifetime price. It never renews. You also get the FOUNDER in-game badge on every Tree Host server, and your name on the supporters wall below. When all 25 are claimed, the card above shows sold out and Lifetime returns at its regular price.</p></details>
+      </div>
       <div class="receipt reveal" id="receipt"><p class="muted">Loading...</p></div>
     </div>
   </section>
@@ -261,6 +285,143 @@
         }</div>
         <p class="r-foot">Payments for plans also go toward these costs. This list is kept up to date by the Tree Host team.</p>`;
     };
+    // ----- the Founding Lifetime card (state from GET /api/plans, never /api/donations) -----
+    // Signed-in visitors get a confirmCheckout-style flow here (same consent checkboxes the
+    // dashboard uses); signed-out visitors go to signup with the founding intent, which the
+    // dashboard picks up after signup. On any plans failure the card simply stays hidden.
+    const FOUNDING = { planId: 'founding-lifetime', plan: null, me: null, barDone: false };
+
+    fetch('/api/auth/me')
+      .then((r) => r.json())
+      .then((me) => { FOUNDING.me = me.user ? me : null; if (FOUNDING.fetched) renderFounding(); })
+      .catch(() => {});
+
+    const renderFounding = () => {
+      const p = FOUNDING.plan;
+      if (!p) return;
+      const card = $('#founding-card');
+      const sold = !!p.soldOut;
+      const left = Number(p.unitsLeft) || 0;
+      const cap = Number(p.capTotal) || 25;
+      const claimed = Math.max(0, Math.min(cap, cap - left));
+      const pct = cap ? Math.round((claimed / cap) * 100) : 0;
+      card.classList.toggle('sold-out', sold);
+      $('#founding-tag').textContent = sold ? 'SOLD OUT' : 'FOUNDING PRE-SALE';
+      $('#founding-bar-wrap').setAttribute('aria-valuemax', cap);
+      $('#founding-bar-wrap').setAttribute('aria-valuenow', claimed);
+      $('#founding-count').textContent = sold ? `${cap} of ${cap} claimed` : `${left} of ${cap} left at this price`;
+      const go = $('#founding-cta');
+      if (sold) {
+        go.textContent = 'Sold out — all 25 founding spots claimed';
+        go.disabled = true;
+        go.classList.remove('btn-cta');
+        go.classList.add('btn-ghost');
+        const foot = $('#founding-foot');
+        foot.hidden = false;
+        foot.innerHTML = 'All 25 founding spots are gone. Thank you! You can still back the <a href="#fund">launch fund</a> below'
+          + (window.TH_DISCORD ? `, or join the <a data-discord href="${esc(window.TH_DISCORD)}" target="_blank" rel="noopener">Discord</a> to hear when more Lifetime spots open.` : '.');
+      } else {
+        go.textContent = `Get Founding Lifetime — ${money(p.priceCents)}`;
+        go.disabled = false;
+      }
+      card.hidden = false;
+      card.classList.add('in'); // the scroll-reveal pass already ran by the time the data lands
+      if (!FOUNDING.barDone) {
+        FOUNDING.barDone = true;
+        requestAnimationFrame(() => ($('#founding-fill').style.width = `${Math.max(pct, claimed ? 2 : 0)}%`));
+      } else $('#founding-fill').style.width = `${pct}%`;
+    };
+
+    // The card renders when both answers are in; either one failing leaves it hidden.
+    const foundingGo = () => {
+      FOUNDING.fetched = true;
+      renderFounding();
+    };
+    fetch('/api/plans')
+      .then((r) => { if (!r.ok) throw new Error('plans ' + r.status); return r.json(); })
+      .then((data) => {
+        FOUNDING.plan = (data.plans || []).find((p) => p.founding) || null;
+        if (!FOUNDING.plan) return;
+        if (data.mode === 'demo') FOUNDING.demo = true;
+        foundingGo();
+      })
+      .catch(() => {}); // card stays hidden; the launch fund and donation form are unaffected
+
+    $('#founding-cta').addEventListener('click', async () => {
+      const p = FOUNDING.plan;
+      if (!p || p.soldOut) return;
+      if (!FOUNDING.me) {
+        try { sessionStorage.setItem('th_founding_intent', '1'); } catch {}
+        location.href = '/dashboard?signup&plan=founding-lifetime';
+        return;
+      }
+      // Same confirmation the dashboard's checkout uses: one-time terms + the consent checkboxes.
+      const card = $('#founding-card');
+      const modal = document.createElement('div');
+      modal.className = 'vmodal founding-modal';
+      modal.innerHTML = `<div class="founding-check">
+          <h3>${esc(p.name)}</h3>
+          <div class="founding-check-price"><b>${money(p.priceCents)}</b><span> once</span></div>
+          <p class="muted small" style="margin:6px 0 0">A single payment. It never renews and you are never charged again for this plan.</p>
+          ${FOUNDING.demo ? '<p class="muted small" style="margin:6px 0 0">Demo mode: no real payment is taken — the plan activates instantly.</p>' : ''}
+          <form class="stack" id="founding-form" style="margin-top:12px">
+            <label class="founding-agree"><input type="checkbox" name="adult" required> <span>I am 18 or older, or my parent or guardian agrees and is paying.</span></label>
+            <label class="founding-agree"><input type="checkbox" name="withdrawal" required> <span>Start my server right away. If I live in the EU or UK, I understand I lose my 14-day right to cancel once it starts.</span></label>
+            <p class="small muted" style="margin:0">By paying you agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>, including the <a href="/terms#refunds" target="_blank" rel="noopener">refund policy</a>.</p>
+            <div class="founding-actions"><button type="button" class="btn-ghost" data-cancel>Back</button><button class="btn-cta" id="founding-go">Pay ${money(p.priceCents)}</button></div>
+            <p class="d-error" id="founding-error" hidden></p>
+          </form>
+        </div>`;
+      const close = () => modal.remove();
+      modal.addEventListener('mousedown', (e) => e.target === modal && close());
+      modal.querySelector('[data-cancel]').addEventListener('click', close);
+      document.addEventListener('keydown', function key(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', key); } });
+      document.body.appendChild(modal);
+      const err = (msg) => {
+        const box = modal.querySelector('#founding-error');
+        box.textContent = msg;
+        box.hidden = !msg;
+      };
+      modal.querySelector('#founding-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const go = modal.querySelector('#founding-go');
+        const label = go.textContent;
+        err('');
+        go.disabled = true;
+        go.textContent = 'Opening checkout...';
+        try {
+          const r = await fetch('/api/billing/checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              planId: FOUNDING.planId,
+              consent: { renewal: false, adult: e.target.adult.checked, withdrawal: e.target.withdrawal.checked },
+            }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.message || d.error || 'Something went wrong. Please try again.');
+          close();
+          if (d.demo) {
+            // Demo mode: the plan is active already. Show the buyer's own thank-you on
+            // the card (it flips to sold-out styling, like mockup E but personal) and
+            // refresh the launch fund so the new founder counts toward it.
+            card.classList.add('sold-out');
+            $('#founding-tag').textContent = 'FOUNDER';
+            $('#founding-count').textContent = 'Thank you — you are one of the founding 25!';
+            go.textContent = 'Sold out — all 25 founding spots claimed';
+            go.disabled = true;
+            $('#founding-foot').hidden = false;
+            $('#founding-foot').innerHTML = 'Welcome aboard, founder! Your FOUNDER badge is on its way — see your servers in the <a href="/dashboard">dashboard</a>.';
+            load();
+          } else location.href = d.url;
+        } catch (e2) {
+          err(e2.message);
+          go.disabled = false;
+          go.textContent = label;
+        }
+      });
+    });
+
     const load = () => fetch('/api/donations').then((r) => r.json()).then(render).catch(() => {});
 
     $('#donate-form').addEventListener('submit', async (e) => {

@@ -418,6 +418,7 @@ a.costs-teaser .ic { width: 26px; height: 26px; flex: none; color: var(--accent2
 .hw-strip[hidden] { display: none; }
 .hw-label { font-size: 12px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
 .plan-cpu { display: block; color: var(--muted); font-size: 13px; font-weight: 400; }
+
 /* ---------- pricing recommender ---------- */
 .recommender { max-width: 760px; margin: 0 auto; background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 30px 30px 20px; }
 .recommender[hidden] { display: none; }
@@ -439,3 +440,35 @@ a.costs-teaser .ic { width: 26px; height: 26px; flex: none; color: var(--accent2
   .reco-opt { padding: 8px 16px; font-size: 14px; }
 }
 
+/* ---------- donate page: Founding Lifetime card (TASK-004-008) ---------- */
+/* Available state (mockup D): orange tag, green CTA. Sold out (mockup E): gray tag,
+   filled bar, disabled gray CTA + footer pointing at the launch fund and Discord. */
+.founding-card { border-color: rgba(245, 181, 10, .35); position: relative; }
+.founding-card.sold-out { border-color: var(--border); }
+.founding-tag { display: inline-block; background: var(--warn); color: #2a1d00; font-size: 11.5px; font-weight: 800; letter-spacing: 1.2px; padding: 4px 12px; border-radius: 99px; margin-bottom: 10px; }
+.founding-card.sold-out .founding-tag { background: rgba(147, 163, 152, .25); color: var(--muted); }
+.founding-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.founding-head h3 { margin: 0; font-size: 21px; color: var(--accent2); }
+.founding-price { font-size: 34px; font-weight: 800; color: var(--accent2); letter-spacing: -1px; white-space: nowrap; }
+.founding-price span { font-size: 14px; color: var(--muted); font-weight: 500; letter-spacing: 0; }
+.founding-perks { list-style: none; padding: 0; margin: 0 0 14px; }
+.founding-perks li { padding: 6px 0; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 14.5px; }
+.founding-perks li::before { content: "✓ "; color: var(--accent); font-weight: 700; }
+.founding-perks b { color: var(--text); }
+.founding-bar { height: 10px; }
+.founding-fill { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--warn), #e8c27a); transition: width 1.2s cubic-bezier(.2, .8, .2, 1); }
+.founding-card.sold-out .founding-fill { background: var(--muted); }
+#founding-cta[disabled] { opacity: .55; pointer-events: none; transform: none; box-shadow: none; background: rgba(20, 32, 25, .7); color: var(--muted) !important; border: 1px solid var(--border); cursor: default; }
+#founding-foot a { color: var(--accent2); }
+/* the confirmCheckout-style modal (borrowed vmodal, dashboard modal styling spirit) */
+.founding-modal .founding-check { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; width: min(460px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; padding: 22px 24px; }
+.founding-check h3 { margin: 0 0 8px; color: var(--accent2); }
+.founding-check-price { font-size: 30px; font-weight: 800; color: var(--accent2); letter-spacing: -1px; }
+.founding-check-price span { font-size: 14px; color: var(--muted); font-weight: 500; }
+.founding-agree { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--text); margin-bottom: 10px; cursor: pointer; }
+.founding-agree input { margin-top: 3px; }
+.founding-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+@media (max-width: 600px) {
+  .founding-price { font-size: 28px; }
+  .founding-check { padding: 18px 16px; }
+}

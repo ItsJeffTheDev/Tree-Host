@@ -149,6 +149,7 @@
         if (d) d.innerHTML = `<a href="${esc(site.discord)}" target="_blank" rel="noopener">Discord</a>`;
         document.querySelectorAll('[data-discord]').forEach((el) => (el.href = site.discord));
         document.querySelectorAll('[data-discord-wrap]').forEach((el) => (el.hidden = false));
+        window.TH_DISCORD = site.discord; // pages without data-discord markup (donate founding card footer)
       }
       const fill = (key, value) => {
         if (!value) return;
@@ -410,6 +411,35 @@
     };
     if (io) new IntersectionObserver((e, o) => e[0].isIntersecting && (run(), o.disconnect()), { threshold: 0.3 }).observe(consoleEl);
     else run();
+  }
+
+  // ---------- donate page: Founding Lifetime card (TASK-004-008) ----------
+  // State comes from GET /api/plans (the founding row), never /api/donations. On any
+  // failure the card markup in donate.html simply stays hidden. The CTA is
+  // context-aware: signed in → POST /api/billing/checkout with the same consent the
+  // dashboard's checkout collects; signed out → the signup handoff
+  // (/dashboard?signup&plan=founding-lifetime, per plan D10 / GAP-3).
+  if (page === 'donate' && !document.getElementById('founding-card')) {
+    const fc = document.createElement('div');
+    fc.className = 'card fund-card founding-card reveal';
+    fc.id = 'founding-card';
+    fc.hidden = true;
+    fc.innerHTML = `
+      <span class="founding-tag">FOUNDING PRE-SALE</span>
+      <div class="founding-head"><h3>Founding Lifetime</h3><div class="founding-price"><b>$199</b><span> once</span></div></div>
+      <p class="muted small" style="margin:0 0 10px">Everything in the Lifetime plan, at the founding price. Pay once, keep it forever.</p>
+      <ul class="founding-perks">
+        <li><b>4 servers</b> of any type and version (4 GB each)</li>
+        <li><b>2 proxies</b> (Velocity, BungeeCord, Waterfall)</li>
+        <li><b>Priority support</b></li>
+        <li><b>FOUNDER</b> in-game badge on every Tree Host server</li>
+      </ul>
+      <div class="fund-bar founding-bar" role="progressbar" aria-label="Founding spots claimed" aria-valuemin="0" aria-valuemax="25"><div class="founding-fill"></div></div>
+      <p class="muted small" data-founding-count style="margin:6px 0 12px"></p>
+      <button type="button" class="btn-cta block" data-founding-cta>Get Founding Lifetime — $199</button>
+      <p class="muted small" data-founding-foot style="margin:10px 0 0" hidden></p>`;
+    const fundCard = document.getElementById('fund');
+    if (fundCard && fundCard.parentNode) fundCard.parentNode.insertBefore(fc, fundCard);
   }
 
   // ---------- product video ----------
