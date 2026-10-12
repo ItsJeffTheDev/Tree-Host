@@ -2756,8 +2756,10 @@ async function init() {
   await refreshSystem();
   connectEvents();
   initSupportChat();
-  // Back from Stripe Checkout, from a billing email, or right after signing up.
-  if (params.has('billing') || params.has('welcome')) history.replaceState(null, '', location.pathname);
+  // Back from Stripe Checkout or a billing email, the URL is cleaned. After a founding
+  // signup (?welcome&plan=founding-lifetime) the plan marker stays until the banner has
+  // rendered — line 2762 reads it — so only strip it when it isn't a founding landing.
+  if (params.has('billing') || (params.has('welcome') && params.get('plan') !== 'founding-lifetime')) history.replaceState(null, '', location.pathname);
   // GAP-3: a founding signup lands here with ?welcome&plan=founding-lifetime. Re-fetch
   // /api/plans for the live count — if the spots sold out while the account was being
   // made, say so honestly and offer no checkout. The banner is kept out of the URL so a
