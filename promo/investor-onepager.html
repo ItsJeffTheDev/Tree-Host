@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invest in Tree Host — One-Pager</title>
+<style>
+  /* Tree Host theme, pulled from public/site.css tokens */
+  @font-face { font-family: "Inter"; src: url("http://localhost:8766/fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; }
+  :root {
+    --bg: #0b110d; --bg2: #101913; --panel: #142019; --panel2: #18261d;
+    --border: #23342a; --text: #e8efe9; --muted: #93a398;
+    --accent: #46c37b; --accent2: #7beaa6; --warn: #f5b50a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  @page { size: A4; margin: 0; }
+  html, body { background: var(--bg); color: var(--text); font-family: "Inter", system-ui, sans-serif; }
+  .page { width: 210mm; min-height: 297mm; padding: 14mm 13mm; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+
+  /* ---------- header ---------- */
+  .brandbar { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .brandbar .logo { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: grid; place-items: center; font-size: 22px; }
+  .brandbar h1 { font-size: 21px; letter-spacing: -.3px; }
+  .brandbar .tag { margin-left: auto; font-size: 10.5px; color: var(--muted); text-align: right; line-height: 1.45; }
+  .brandbar .tag b { color: var(--text); }
+
+  /* ---------- hero ---------- */
+  .hero { background: linear-gradient(135deg, rgba(70,195,123,.14), rgba(123,234,166,.05) 55%, transparent); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; margin-bottom: 14px; }
+  .hero h2 { font-size: 25px; line-height: 1.2; letter-spacing: -.5px; margin-bottom: 8px; }
+  .hero h2 em { font-style: normal; color: var(--accent2); }
+  .hero p { color: var(--muted); font-size: 12.5px; line-height: 1.55; max-width: 165mm; }
+  .hero .chips { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .chip { font-size: 10.5px; font-weight: 600; padding: 4px 11px; border-radius: 99px; border: 1px solid rgba(70,195,123,.4); color: var(--accent2); background: rgba(70,195,123,.08); }
+
+  /* ---------- stats row ---------- */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 20px; color: var(--accent2); letter-spacing: -.4px; }
+  .stat span { color: var(--muted); font-size: 10px; line-height: 1.35; display: block; margin-top: 2px; }
+
+  /* ---------- two-column body ---------- */
+  .cols { display: grid; grid-template-columns: 1.15fr 1fr; gap: 12px; flex: 1; }
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 15px 17px; }
+  .card h3 { font-size: 13px; margin-bottom: 9px; display: flex; align-items: center; gap: 7px; }
+  .card h3 .dot { width: 8px; height: 8px; border-radius: 99px; background: var(--accent); flex: none; }
+  .card p, .card li { color: var(--muted); font-size: 11px; line-height: 1.5; }
+  .card ul { list-style: none; }
+  .card li { padding-left: 14px; position: relative; margin-bottom: 5px; }
+  .card li::before { content: "▸"; position: absolute; left: 0; color: var(--accent); font-size: 9px; top: 1.5px; }
+  .card b { color: var(--text); font-weight: 600; }
+
+  /* pricing table */
+  table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+  th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  td.us { background: rgba(70,195,123,.07); font-weight: 700; color: var(--text); }
+  td.them { color: var(--muted); }
+  .note { font-size: 9px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
+
+  /* ask box */
+  .ask { background: linear-gradient(135deg, rgba(245,181,10,.12), rgba(70,195,123,.08)); border: 1px solid rgba(245,181,10,.4); border-radius: 12px; padding: 15px 17px; }
+  .ask h3 { font-size: 13px; margin-bottom: 7px; color: var(--warn); }
+  .ask p { color: var(--text); font-size: 11px; line-height: 1.55; }
+  .ask .math { display: flex; gap: 10px; margin-top: 10px; }
+  .ask .math div { flex: 1; background: rgba(11,17,13,.5); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; }
+  .ask .math b { display: block; font-size: 14px; color: var(--accent2); }
+  .ask .math span { font-size: 9px; color: var(--muted); line-height: 1.3; display: block; margin-top: 2px; }
+
+  /* roadmap steps */
+  .steps3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 2px; }
+  .step { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
+  .step b { font-size: 10.5px; color: var(--accent2); display: block; margin-bottom: 3px; }
+  .step span { font-size: 9.5px; color: var(--muted); line-height: 1.4; display: block; }
+
+  /* footer */
+  .foot { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 9.5px; color: var(--muted); }
+  .foot .links a { color: var(--accent2); text-decoration: none; margin-left: 10px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="brandbar">
+    <div class="logo">🌳</div>
+    <div>
+      <h1>Tree Host</h1>
+      <div style="font-size:10.5px;color:var(--muted)">Minecraft server hosting, built from scratch</div>
+    </div>
+    <div class="tag"><b>Investor one-pager</b><br>treehost.online · demo.treehost.online<br>October 2026</div>
+  </div>
+
+  <div class="hero">
+    <h2>The Minecraft host that sells the <em>same RAM for less</em> — because its servers sleep.</h2>
+    <p>Every competitor runs idle servers 24/7 and bills for the waste. Tree Host's servers hibernate when
+    empty and start the instant a player joins — so the same machine sells far more server-slots. That is a
+    structural cost advantage, not a discount: lower prices than Apex or Shockbyte with better margin per gigabyte.
+    The product is built and working: try it at demo.treehost.online in under a minute.</p>
+    <div class="chips">
+      <span class="chip">Working product</span>
+      <span class="chip">Payments live (Stripe)</span>
+      <span class="chip">Zero-dependency codebase</span>
+      <span class="chip">Built-in growth flywheel</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b>$5</b><span>entry price/month — Sapling 2GB (competitors: $7–10)</span></div>
+    <div class="stat"><b>~1 min</b><span>signup to playing — the simplest flow in the market</span></div>
+    <div class="stat"><b>25</b><span>founding Lifetime spots at $199 — pre-sale now live</span></div>
+    <div class="stat"><b>$2,000</b><span>launch fund: first production server + 12 months runway</span></div>
+  </div>
+
+  <div class="cols">
+    <div class="col">
+
+      <div class="card">
+        <h3><span class="dot"></span>The model: sell sleeping capacity</h3>
+        <table>
+          <tr><th>Plan</th><th>Tree Host</th><th>Typical host</th></tr>
+          <tr><td>2 GB</td><td class="us">$5.00</td><td class="them">$7.99–9.99</td></tr>
+          <tr><td>4 GB</td><td class="us">$9.00</td><td class="them">$14.99–19.99</td></tr>
+          <tr><td>8 GB</td><td class="us">$16.00</td><td class="them">$29.99–39.99</td></tr>
+          <tr><td>Lifetime</td><td class="us">$750 once</td><td class="them">rarely offered</td></tr>
+        </table>
+        <p class="note">Competitor prices from public plan pages, 2026. Tree Host's per-GB price is 35–60% lower
+        while utilization stays high: a sleeping server holds a reservation but costs almost nothing to run,
+        and the instant it wakes it earns. One 64 GB machine ≈ 60 Sapling-size servers ≈ <b>$300+/mo recurring</b>
+        from ~$74/mo hardware.</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="dot"></span>The product moat</h3>
+        <ul>
+          <li><b>Crash doctor &amp; lag doctor</b> — the server reads its own logs and explains failures in plain English with one-click fixes. Nobody else has this.</li>
+          <li><b>Zero-dependency platform</b> — the entire stack runs with no npm packages: fewer supply-chain risks, trivial to audit, cheap to run.</li>
+          <li><b>Built-in server list flywheel</b> — every customer server is listed publicly; players discover Tree Host from inside the game.</li>
+          <li><b>One-click everything</b> — Modrinth plugins/modpacks, proxy networks, Bedrock crossplay, animated MOTDs, auto-backups. Setup friction is the #1 churn driver in this market.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3><span class="dot"></span>Traction &amp; proof</h3>
+        <ul>
+          <li>Full platform shipped: accounts (Firebase), billing (Stripe), Docker-isolated servers, dashboard, staff console.</li>
+          <li>Live funnel metrics: visitor → demo → signup → paid, counted server-side and visible to the team in real time.</li>
+          <li>Community building in public: YouTube devlogs and an active Discord — the founding pre-sale is funded by the audience that watched it get built.</li>
+          <li>Every claim on this page is verifiable in the public repo and on the live demo.</li>
+        </ul>
+      </div>
+
+    </div>
+    <div class="col">
+
+      <div class="ask">
+        <h3>◈ The ask — $2,000 launch fund</h3>
+        <p>Tree Host is pre-revenue by choice: the code is done, the hardware isn't rented yet. $2,000 turns the working product into a selling company.</p>
+        <div class="math">
+          <div><b>$74/mo</b><span>first production server (dedicated, 64 GB)</span></div>
+          <div><b>~60</b><span>Sapling-size servers it can sell = capacity</span></div>
+          <div><b>~$300+/mo</b><span>recurring revenue at modest uptake</span></div>
+        </div>
+        <p style="margin-top:10px;font-size:10px;color:var(--muted)">Milestone-based: fund the machine → first paying customer → fund scales with revenue. Founding Lifetime pre-sale ($199 × 25 = up to $4,975) covers the ask on its own.</p>
+      </div>
+
+      <div class="card">
+        <h3><span class="dot"></span>Roadmap — next 12 months</h3>
+        <div class="steps3">
+          <div class="step"><b>1 · Launch</b><span>First production server live, first paying customers, founding pre-sale completes.</span></div>
+          <div class="step"><b>2 · Grow</b><b style="margin-top:6px"></b><span>Server templates, Discord-account linking, status page, second node when capacity demands it.</span></div>
+          <div class="step"><b>3 · Scale</b><span>Multi-node scheduling (already architected), more regions, community marketplace.</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3><span class="dot"></span>Why this team</h3>
+        <p>Builders who run servers themselves, shipping in public with a zero-dependency codebase that a small team
+        can actually maintain. Small burn, working product, distribution through its own player-facing server list —
+        the cheap kind of startup where the first $2,000 visibly changes the trajectory.</p>
+      </div>
+
+      <div class="card" style="border-color:rgba(70,195,123,.45)">
+        <h3><span class="dot"></span>See it yourself</h3>
+        <ul>
+          <li><b>Demo:</b> demo.treehost.online — full product, no signup</li>
+          <li><b>Live site:</b> treehost.online</li>
+          <li><b>Code:</b> github.com/ItsJeffTheDev/Tree-Host</li>
+          <li><b>Community:</b> discord.gg/a37pbwajKd</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="foot">
+    <span>Tree Host · Minecraft server hosting · Investment information — not an offer of securities</span>
+    <span class="links"><a href="https://treehost.online">treehost.online</a><a href="mailto:support@treehost.online">support@treehost.online</a></span>
+  </div>
+
+</div>
+</body>
+</html>
