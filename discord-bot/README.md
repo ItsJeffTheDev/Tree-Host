@@ -13,7 +13,7 @@ Builds the whole Tree Host Discord server and keeps its interactive parts runnin
   | `/help` | everyone | Lists commands |
   | `/announce`, `/say` | admins | Post an announcement embed / any message |
   | `/status` | admins | Online · maintenance · problems · outage · pre-launch in #status (with ping) |
-  | `/goal` | admins | Launch fund progress bar ("$15 of $50") |
+  | `/goal` | admins | Launch fund progress bar ("$15 of $2,000") |
   | `/supporter` | admins | Supporter 💚 role + thank-you |
   | `/youtube-check`, `/youtube-post` | admins | Check for / post a video embed now |
   | `/setup` | admins | Re-run the server setup from Discord |
