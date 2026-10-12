@@ -4106,8 +4106,13 @@ const server = http.createServer(async (req, res) => {
     }
   }
   // Block cross-site requests: a browser request that changes something must come from our own page.
+  // Behind a preview/deployment proxy the public host differs from the upstream host, so the
+  // public URL's hostname is allowed too (TREEHOST_PUBLIC_URL). The proxy forwards its own Host
+  // header, so a direct attack can't forge this — it must actually be our configured public host.
   const origin = req.headers.origin;
-  if (req.method !== 'GET' && origin && origin.replace(/^https?:\/\//, '') !== host) {
+  const originHost = origin && origin.replace(/^https?:\/\//, '');
+  const publicHost = PUBLIC_URL ? new URL(PUBLIC_URL).host : '';
+  if (req.method !== 'GET' && origin && originHost !== host && originHost !== publicHost) {
     res.writeHead(403).end('Forbidden');
     return;
   }
