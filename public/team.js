@@ -239,11 +239,15 @@ function showFirebaseAuth(forceMode) {
   };
   const extra = () => {
     const f = $('#auth-form').elements;
+    // Attribution: where the visitor came from (?ref=, kept in sessionStorage by site.js).
+    let ref = null;
+    try { ref = sessionStorage.getItem('th_ref'); } catch {}
     return {
       username: f.username ? f.username.value.trim() : undefined,
       acceptTerms: f.acceptTerms ? f.acceptTerms.checked : undefined,
       birthYear: f.birthYear ? Number(f.birthYear.value) : undefined,
       invite: invite || undefined,
+      ...(ref ? { ref } : {}),
     };
   };
   /** Hands the Firebase sign-in to Tree Host, which answers with a session (or asks for a username). */
@@ -462,6 +466,13 @@ function showAuth(forceMode) {
     if (invite) body.invite = invite;
     if (reset) body.token = reset;
     if (mode === 'signup') body.signupCode = testerCode();
+    // Attribution: where the visitor came from (?ref=, kept in sessionStorage by site.js).
+    if (mode === 'signup') {
+      try {
+        const ref = sessionStorage.getItem('th_ref');
+        if (ref) body.ref = ref;
+      } catch {}
+    }
     const url = {
       login: '/api/auth/login',
       invite: '/api/auth/accept-invite',

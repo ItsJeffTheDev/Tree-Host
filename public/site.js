@@ -76,6 +76,39 @@
     })
     .catch(() => {});
 
+  // ---------- attribution: ?ref= capture + page-view beacon ----------
+  // Session-scoped marker only (sessionStorage, dies with the tab — never a cookie). The
+  // ref value is validated against the same allowlist the server uses; anything else that
+  // was supplied counts as 'other', nothing is stored when absent.
+
+  const REFS = ['discord', 'youtube', 'reddit', 'serverlist'];
+  const refFromUrl = () => {
+    const raw = new URLSearchParams(location.search).get('ref');
+    if (!raw) return null;
+    const v = String(raw).trim().toLowerCase();
+    if (!v) return null;
+    return REFS.includes(v) ? v : 'other';
+  };
+  try {
+    const ref = refFromUrl();
+    if (ref) sessionStorage.setItem('th_ref', ref);
+  } catch {}
+
+  // The server already counted this page view in serveStatic(); the beacon only carries
+  // attribution (referrer host + ref) and is deduped server-side. Fire-and-forget: it must
+  // never delay or break the page.
+  fetch('/api/metrics/event', {
+    method: 'POST',
+    keepalive: true,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'pageview',
+      path: location.pathname,
+      referrerHost: (() => { try { return new URL(document.referrer).host || null; } catch { return null; } })(),
+      ref: (() => { try { return sessionStorage.getItem('th_ref'); } catch { return null; } })(),
+    }),
+  }).catch(() => {});
+
   // ---------- business details ----------
 
   fetch('/api/site')

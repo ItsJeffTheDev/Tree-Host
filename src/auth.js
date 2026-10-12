@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { DATA } = require('./paths');
 const store = require('./store');
+const { refValue } = require('./metrics'); // ref allowlist (discord/youtube/reddit/serverlist); shared with the page-view beacon
 const firebase = require('./firebase');
 const totp = require('./totp');
 
@@ -167,6 +168,7 @@ class Auth {
       lastLogin: u.lastLogin || null,
       emailVerified: u.firebaseUid ? !!u.emailVerified : true,
       twoFactor: !!(u.mfa && u.mfa.on),
+      ref: u.ref || null,
       // An Owner email that isn't verified yet: it becomes Owner as soon as the email is verified.
       ownerPending: !!u.email && this.adminEmails.has(u.email) && u.role !== 'owner',
     };
@@ -233,6 +235,9 @@ class Auth {
     const first = !this.hasOwner();
     const user = await this.createUser(body, first && this.allowFirstAdmin ? 'owner' : 'customer');
     user.birthYear = birthYear;
+    // Where the visitor came from (?ref=discord etc.), sanitized against the allowlist. A bad
+    // or missing ref never fails the signup: refValue returns 'other' for junk, null for absent.
+    user.ref = refValue(body.ref);
     await this.save();
     return { user, token: await this.createSession(user) };
   }
@@ -418,6 +423,7 @@ class Auth {
     }
     const user = await this.createUser(body, invite.role);
     if (birthYear) user.birthYear = birthYear;
+    user.ref = refValue(body.ref);
     this.invites = this.invites.filter((i) => i !== invite);
     await this.save();
     return { token: await this.createSession(user), user, invite };
@@ -660,6 +666,7 @@ class Auth {
       createdAt: Date.now(),
       lastLogin: Date.now(),
       hasDemoServer: false,
+      ref: refValue(body.ref),
     };
     this.users.push(user);
     if (invite) this.invites = this.invites.filter((i) => i !== invite);
