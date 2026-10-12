@@ -210,7 +210,7 @@ function llmsTxt(base, { site = {}, plans = {}, prelaunch = false, slash = false
   const usd = (c) => `$${(c / 100).toFixed(c % 100 ? 2 : 0)}`;
   const planLines = (plans.plans || []).map((p) =>
     p.oneTime
-      ? `- ${p.name}: ${usd(p.priceCents)} once (no renewals): ${p.slots ? `${p.slots.servers} servers of ${+(p.ramMb / 1024).toFixed(1)} GB, ${p.slots.proxies} proxies` : `${+(p.ramMb / 1024).toFixed(1)} GB`}${p.prioritySupport ? ', priority support' : ''}.`
+      ? `- ${p.name}: ${usd(p.priceCents)} once (no renewals): ${p.slots ? `${p.slots.servers} servers of ${+(p.ramMb / 1024).toFixed(1)} GB, ${p.slots.proxies} proxies` : `${+(p.ramMb / 1024).toFixed(1)} GB`}${p.prioritySupport ? ', priority support' : ''}${p.founding && p.capTotal ? `, first ${p.capTotal} only` : ''}.`
       : `- ${p.name}: ${usd(p.priceCents)}/month: ${+(p.ramMb / 1024).toFixed(1)} GB RAM, ${p.cpus} CPU, ${p.diskGb} GB disk, unlimited servers on the plan.`,
   );
   const link = (p) => `- [${p.title.replace('{from}', '').split(/[:|]/)[0].trim()}](${addr(base, p.path, slash)}): ${p.description}`;

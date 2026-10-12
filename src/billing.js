@@ -30,6 +30,14 @@ const LIFETIME_PLAN = {
   description: 'Pay once, keep it forever: 4 servers of any type and version (4 GB each), 2 proxies and priority support.', active: true,
 };
 DEFAULT_PLANS.push(LIFETIME_PLAN);
+// The launch pre-sale: the Lifetime perks at a founding price, hard-capped to the first buyers (the cap is a code
+// constant; TREEHOST_FOUNDING_CAP overrides it for tests only).
+const FOUNDING_PLAN = {
+  id: 'founding-lifetime', name: 'Founding Lifetime', oneTime: true, ramMb: 4096, proxyRamMb: 1024, cpus: 2, diskGb: 30,
+  slots: { servers: 4, proxies: 2 }, prioritySupport: true, priceCents: 19900, founding: true, capTotal: 25,
+  description: 'Founding price, pay once, keep it forever: 4 servers of any type and version (4 GB each), 2 proxies and priority support. First 25 only.', active: true,
+};
+DEFAULT_PLANS.push(FOUNDING_PLAN);
 
 /** Memory a plan (or subscription) holds on the machine: one server, or all the servers and proxies of a bundle. */
 function reserveMb(p) {
@@ -164,7 +172,7 @@ class Billing {
   constructor() {
     this.plans = DEFAULT_PLANS;
     this.subs = [];
-    this.settings = { capacityMb: null };
+    this.settings = { capacityMb: null, foundingCredits: [] };
     this.promos = [];
     this.donations = [];
     this.hooks = {
@@ -190,6 +198,13 @@ class Billing {
       this.settings.lifetimeAdded = true;
       if (plans.length) await this.savePlans();
     }
+    // Same for the founding plan: deployments whose saved plans predate it get it exactly once.
+    if (plans.length && !this.settings.foundingAdded && !this.plans.some((p) => p.founding)) this.plans.push({ ...FOUNDING_PLAN });
+    if (!this.settings.foundingAdded) {
+      this.settings.foundingAdded = true;
+      if (plans.length) await this.savePlans();
+    }
+    if (!Array.isArray(this.settings.foundingCredits)) this.settings.foundingCredits = [];
     this.subs = Object.values((await store.load('subscriptions')) || {});
     this.promos = Object.values((await store.load('promos')) || {});
     this.donations = Object.values((await store.load('donations')) || {});
@@ -223,7 +238,8 @@ class Billing {
         .map((p) => ({
           id: p.id, name: p.name, ramMb: p.ramMb, cpus: p.cpus, diskGb: p.diskGb, priceCents: p.priceCents, description: p.description,
           ...bundleFields(p),
-          soldOut: free < reserveMb(p) || (!!p.oneTime && this.lifetimeFull()),
+          ...(p.founding ? { founding: true, unitsLeft: this.foundingUnitsLeft(), capTotal: this.foundingCap() } : {}),
+          soldOut: p.founding ? this.foundingUnitsLeft() <= 0 : free < reserveMb(p) || (!!p.oneTime && this.lifetimeFull()),
         })),
     };
   }
@@ -273,7 +289,23 @@ class Billing {
   lifetimeFull() {
     if (this.testSite && (this.settings.lifetimePerNode === null || this.settings.lifetimePerNode === undefined)) return false;
     const cap = this.lifetimePerNode();
-    return cap > 0 && this.subs.filter((s) => s.oneTime && holdsMemory(s)).length >= cap;
+    // Founding purchases have their own cap (foundingCap), so they never count toward lifetimePerNode.
+    return cap > 0 && this.subs.filter((s) => s.oneTime && s.planId !== 'founding-lifetime' && holdsMemory(s)).length >= cap;
+  }
+
+  /** How many Founding Lifetime plans can be sold (the code constant, TREEHOST_FOUNDING_CAP overrides it for tests). */
+  foundingCap() {
+    const env = Number(process.env.TREEHOST_FOUNDING_CAP);
+    return env > 0 ? Math.floor(env) : (this.plan('founding-lifetime') || FOUNDING_PLAN).capTotal;
+  }
+
+  /** Founding units taken: active, past-due and pending (a checkout in progress holds its spot) purchases. */
+  foundingSold() {
+    return this.subs.filter((s) => s.planId === 'founding-lifetime' && holdsMemory(s)).length;
+  }
+
+  foundingUnitsLeft() {
+    return Math.max(0, this.foundingCap() - this.foundingSold());
   }
 
   soldMb() {
@@ -391,6 +423,9 @@ class Billing {
     const plan = this.plan(planId);
     if (!plan || !plan.active) throw httpError(404, 'That plan is not available.');
     if (this.freeMb() < reserveMb(plan)) throw httpError(409, `${plan.name} is sold out right now. Try a smaller plan or check back soon.`, 'SOLD_OUT');
+    if (plan.founding && this.foundingSold() >= this.foundingCap()) {
+      throw httpError(409, 'Every Founding Lifetime spot is taken. The launch fund and monthly plans are still open.', 'SOLD_OUT');
+    }
     if (plan.oneTime && this.lifetimeFull()) throw httpError(409, `Every ${plan.name} spot on this machine is taken. Join the Discord to hear when more open.`, 'SOLD_OUT');
     if (this.mode === 'off') throw httpError(400, 'Payments are not set up yet. Please check back soon.');
     const c = consent || {};
@@ -489,6 +524,11 @@ class Billing {
     if (was === 'pending') {
       this.hooks.notify('billing', s, `bought a ${s.planName} server`);
       if (this.hooks.sendEmail) this.hooks.sendEmail('planActive', this.hooks.userById(s.userId), s).catch(() => {});
+    }
+    if (s.planId === 'founding-lifetime' && (was === 'pending' || !this.settings.foundingCredits.some((c) => c.subId === s.id))) {
+      // A founder badge for a founding purchase: a credit line the founders() totals read like a donation.
+      this.settings.foundingCredits.push({ userId: s.userId, amountCents: s.priceCents, planId: s.planId, subId: s.id, at: Date.now() });
+      this.savePlans().catch(() => {});
     }
     if (was === 'past_due' && this.serversOf(s).length) this.hooks.unsuspend(s);
   }
@@ -713,7 +753,21 @@ class Billing {
       p.public = p.public || (d.public && !d.hidden);
       people.set(key, p);
     }
-    return [...people.values()].map((p) => ({ ...p, tier: this.tierFor(p.totalCents) })).filter((p) => p.tier);
+    // Founding Lifetime purchases count toward the same totals, so a $199 founding buyer lands in the founder tier
+    // (their badge is FOUNDER by definition — a founding buyer is a founder, whatever else they donated).
+    for (const c of this.settings.foundingCredits || []) {
+      if (!c.userId || !c.amountCents) continue;
+      const user = userById(c.userId);
+      const p = people.get(`u:${c.userId}`) || { mcName: (user && user.mcName) || '', name: (user && user.username) || '', totalCents: 0, since: c.at, public: false };
+      p.totalCents += c.amountCents;
+      p.mcName = p.mcName || ((user && user.mcName) || '');
+      p.name = p.name || ((user && user.username) || '');
+      p.since = Math.min(p.since || c.at, c.at);
+      p.founding = true;
+      people.set(`u:${c.userId}`, p);
+    }
+    const founderTier = () => this.founderTiers().find((t) => t.id === 'founder') || null;
+    return [...people.values()].map((p) => ({ ...p, tier: p.founding ? founderTier() : this.tierFor(p.totalCents) })).filter((p) => p.tier);
   }
 
   saveDonations() {
@@ -946,6 +1000,10 @@ class Billing {
         const s = o.payment_intent ? this.subs.find((x) => x.paymentIntent === o.payment_intent) : null;
         if (s && o.refunded && s.status !== 'canceled') {
           this.markCanceled(s);
+          // A refunded founding purchase takes the buyer's founder credit back with it.
+          const before = this.settings.foundingCredits.length;
+          this.settings.foundingCredits = this.settings.foundingCredits.filter((c) => c.subId !== s.id);
+          if (this.settings.foundingCredits.length !== before) this.savePlans().catch(() => {});
           this.hooks.notify('billing', s, `${s.planName} purchase was refunded, so the plan ended`);
         }
         break;
@@ -1030,7 +1088,7 @@ class Billing {
       pastDueCount: active.filter((s) => s.status === 'past_due').length,
       mrr,
       oneTime,
-      lifetimeCount: active.filter((s) => s.oneTime).length,
+      lifetimeCount: active.filter((s) => s.oneTime && s.planId !== 'founding-lifetime').length,
       graceDays: GRACE_DAYS,
       deleteAfterDays: DELETE_AFTER_DAYS,
       webhookReady: !!WEBHOOK_SECRET,
