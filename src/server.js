@@ -35,6 +35,7 @@ const { Moderation, TYPES, REASONS } = require('./moderation');
 const MOTD = require('./motd');
 const backups = require('./backups');
 const modrinth = require('./modrinth');
+const { Metrics } = require('./metrics');
 
 const env = (name, fallback) => process.env[`TREEHOST_${name}`] ?? process.env[`MCPT_${name}`] ?? fallback;
 // Production: the public website address (e.g. https://treehost.online). Turns on accounts, billing and the landing page.
@@ -77,6 +78,7 @@ const activity = new Activity();
 const staffNotices = new StaffNotices();
 const players = new Players();
 const moderation = new Moderation();
+const metrics = new Metrics();
 manager.teamMode = TEAM;
 // A test site on this PC (http://localhost...) may run customer servers without Docker; the real site never does.
 if (HOSTED && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/')) manager.allowUnsafe = true;
@@ -189,6 +191,7 @@ billing.hooks.deleteServer = async (id) => {
   await manager.remove(id);
 };
 billing.hooks.userById = (id) => auth.userById(id);
+billing.hooks.metric = (type, extra) => { try { metrics.count(type, extra); } catch {} };
 billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || sub.donorName || 'A customer', text);
 billing.hooks.email = (user, subject, paragraphs) => {
   const baseUrl = PUBLIC_URL || auth.settings.baseUrl;
@@ -807,6 +810,7 @@ route(
     const body = await readJson(req);
     const { user, token } = await auth.signup(body, clientIp(req));
     activity.log('people', user.username, 'signed up');
+    try { metrics.count('signup', { ref: body && body.ref }); } catch {}
     if (user.email && mail.enabled()) welcomeEmail(req, user).catch((e) => console.error(`[mail] welcome email failed: ${e.message}`));
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': await signInCookies(req, token) });
     return HANDLED;
@@ -2014,6 +2018,7 @@ route('POST', '/api/servers/demo', async () => {
     await setUpDemoServer(demo);
     activity.log('server', 'Tree Host', `created the shared demo server "${demo.cfg.name}"`);
   }
+  try { metrics.count('demoLaunched'); } catch {}
   return demo.toJSON();
 });
 
@@ -2206,6 +2211,7 @@ route('POST', '/api/servers', async (req) => {
   inst.logActivity('server', who(req), `created ${inst.provider.label} ${inst.cfg.version} server "${inst.cfg.name}"`);
   if (playit) playit.ensure(inst).catch((e) => inst.sysLog(`Could not get a playit address yet (${e.message}). Tree Host tries again in a few minutes.`));
   if (testSite) testSite.event('created', { user: req.user.username, server: inst.cfg.name });
+  try { metrics.count('serverCreated', { ref: body && body.ref }); } catch {}
   return inst.toJSON();
 });
 route('GET', '/api/servers/:id', (req, res, p) => getFor(req, p.id).toJSON());
@@ -2294,11 +2300,67 @@ route(
     auth.recordFailure([`donate:${ip}`]);
     const body = await readJson(req);
     const user = optionalUser(req);
+    try { metrics.count('donationStarted', { ref: body && body.ref }); } catch {}
     return billing.donate({ ...body, userId: user && !user.local ? user.id : null }, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req));
   },
   { public: true },
 );
 route('POST', '/api/donations/confirm', async (req) => billing.confirmDonation((await readJson(req)).sessionId), { public: true });
+
+// ---------- page-view beacon + public metrics ----------
+// Cookie-free, no IP stored: the beacon is attribution only (the server count in serveStatic is
+// authoritative). Bots are dropped, rate-limited per IP (in-memory, ~30/min), and every failure
+// answers a silent 204 — the beacon can never break a page or leak an error.
+const BEACON_BOTS = ['bot', 'crawl', 'spider', 'slurp', 'headless', 'phantom', 'lighthouse', 'curl/', 'wget', 'python-requests', 'node-fetch', 'monitor', 'preview', 'facebookexternalhit', 'embedly', 'pinterest'];
+const beaconBuckets = new Map(); // ip -> { tokens, at } (token bucket, ~30 per minute)
+
+function beaconAllowed(ip) {
+  const CAP = 30, REFILL_PER_SEC = 0.5, now = Date.now();
+  const b = beaconBuckets.get(ip) || { tokens: CAP, at: now };
+  b.tokens = Math.min(CAP, b.tokens + ((now - b.at) / 1000) * REFILL_PER_SEC);
+  b.at = now;
+  if (b.tokens < 1) {
+    beaconBuckets.set(ip, b);
+    return false;
+  }
+  b.tokens -= 1;
+  beaconBuckets.set(ip, b);
+  if (beaconBuckets.size > 10000) beaconBuckets.clear(); // never grows unbounded
+  return true;
+}
+
+route('POST', '/api/metrics/event', async (req, res) => {
+  const ip = clientIp(req);
+  const ua = String(req.headers['user-agent'] || '');
+  // Bots, health checkers and link-preview fetchers are dropped here — never counted, never stored.
+  if (BEACON_BOTS.some((s) => ua.toLowerCase().includes(s))) { res.writeHead(204); res.end(); return HANDLED; }
+  if (!beaconAllowed(ip)) { res.writeHead(204); res.end(); return HANDLED; }
+  try {
+    const body = await readJson(req, 2048);
+    // Malformed body → 400. metrics.count() further validates (strips the query, caps the path,
+    // drops implausible referrer hosts, allowlists ref) and drops what doesn't qualify.
+    if (!body || body.type !== 'pageview' || typeof body.path !== 'string' || !body.path.startsWith('/')) {
+      if (!res.headersSent) sendJson(res, 400, { error: 'Bad request' });
+      return HANDLED;
+    }
+    metrics.count('pageview', { path: body.path, referrerHost: body.referrerHost, ref: body.ref, host: req.headers.host, beacon: true });
+    if (!res.headersSent) { res.writeHead(204); res.end(); }
+  } catch {
+    // A bad JSON body → 400; anything else silent. The beacon can never produce a 5xx.
+    if (!res.headersSent) sendJson(res, 400, { error: 'Bad request' });
+  }
+  return HANDLED;
+}, { public: true });
+
+route('GET', '/api/metrics/social', () => metrics.social({
+  foundingUnitsLeft: billing.foundingUnitsLeft ? billing.foundingUnitsLeft() : null,
+  foundingCapTotal: billing.foundingCap ? billing.foundingCap() : null,
+}), { public: true });
+
+route('GET', '/api/admin/metrics', () => ({
+  ...metrics.adminSummary({ founding: billing.foundingUnitsLeft ? { sold: billing.foundingSold ? billing.foundingSold() : 0, capTotal: billing.foundingCap(), unitsLeft: billing.foundingUnitsLeft() } : null }),
+}), { perm: 'console.access' });
+
 route('GET', '/api/admin/donations', () => ({
   ...billing.donationSummary(),
   goal: billing.settings.donationGoal || {},
@@ -3674,7 +3736,10 @@ route('GET', '/api/servers/:id/log', (req, res, p, q) => {
   return { lines: since ? logs.filter((l) => l.s > since) : logs };
 });
 route('POST', '/api/servers/:id/command', async (req, res, p) => {
-  getFor(req, p.id, 'command').command((await readJson(req)).command);
+  const inst = getFor(req, p.id, 'command');
+  inst.command((await readJson(req)).command);
+  // Demo funnel: a command run inside the shared demo server means the visitor is really trying it.
+  if (inst.cfg.isDemo) { try { metrics.count('demoCommand'); } catch {} }
   return { ok: true };
 });
 
@@ -3962,16 +4027,24 @@ async function serveStatic(req, res, pathname) {
     if (seoPage) data = Buffer.from(seo.injectSeo(data.toString('utf8'), { base: PUBLIC_URL, path: seoPage.path, site: seoSite(), plans: billing.publicPlans() }));
     const noindex = file.endsWith('dashboard.html') || file.endsWith('404.html');
     const csp = file.endsWith('.html') ? { 'Content-Security-Policy': pageCsp(data, req) } : {};
+    // Public pages let the browser send origin-only referrers (cross-origin: origin only, no paths) so
+    // the page-view beacon can attribute traffic; the dashboard keeps the stricter no-referrer.
+    const referrerPolicy = file.endsWith('.html') && !noindex ? 'strict-origin-when-cross-origin' : 'no-referrer';
     res.writeHead(200, {
       ...(noindex ? { 'X-Robots-Tag': 'noindex' } : {}),
       'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
       'Cache-Control': file.endsWith('.woff2') ? 'public, max-age=604800' : 'no-cache', // fonts hardly ever change
       'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
-      'Referrer-Policy': 'no-referrer',
+      'Referrer-Policy': referrerPolicy,
       ...csp,
       ...(isHttps(req) ? { 'Strict-Transport-Security': 'max-age=31536000; includeSubDomains' } : {}),
     });
+    // One page view per successful HTML response. Fire-and-forget: a broken counter store
+    // must never stop the page from being served.
+    if (file.endsWith('.html')) {
+      try { metrics.count('pageview', { path: pathname, host: req.headers.host }); } catch {}
+    }
     res.end(data);
   } catch {
     // Pages get the friendly 404 page; missing files (images, scripts) a plain 404.
@@ -4246,6 +4319,7 @@ async function main() {
     manager.defaultOwner = () => (auth.firstAdmin() || {}).id || null;
   }
   await activity.init();
+  await metrics.init();
   if (TEAM) await staffNotices.init();
   await manager.init();
   // playit.gg addresses for every server (the tester site on a PC without port forwarding: tools/Start-Testers.ps1).
