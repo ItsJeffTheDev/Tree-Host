@@ -91,6 +91,16 @@ section { padding: 88px 0; position: relative; }
 .hero-note { font-size: 14px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
 .hero-note span::before { content: "✓ "; color: var(--accent); font-weight: 700; }
 
+/* ---------- social-proof strip ---------- */
+.social-strip { margin: 44px auto 0; padding: 18px 28px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: rgba(20, 32, 25, .6); backdrop-filter: blur(8px); max-width: 760px; position: relative; }
+.social-strip-inner { display: flex; justify-content: center; gap: 48px; flex-wrap: wrap; }
+.social-stat { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.social-num { font-size: 26px; font-weight: 800; color: var(--accent2); font-variant-numeric: tabular-nums; }
+.social-label { font-size: 13px; color: var(--muted); }
+.social-footnote { margin: 12px 0 0; text-align: center; font-size: 12.5px; color: var(--muted); }
+@media (max-width: 700px) { .social-strip-inner { gap: 22px; } .social-num { font-size: 22px; } }
+
 /* the growing tree next to the title */
 .hero-tree { width: 74px; height: 74px; display: inline-block; vertical-align: -10px; margin-left: 6px; }
 .hero-tree .trunk { stroke-dasharray: 120; stroke-dashoffset: 120; animation: draw 1.1s .2s ease-out forwards; }

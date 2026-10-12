@@ -109,6 +109,26 @@
     }),
   }).catch(() => {});
 
+  // ---------- social-proof strip (homepage only) ----------
+  // Honest numbers from GET /api/metrics/social, used exactly as returned (already
+  // rounded server-side). On ANY error the strip stays hidden — it must never break
+  // the page or show made-up numbers.
+  const strip = document.getElementById('social-strip');
+  if (strip) {
+    fetch('/api/metrics/social')
+      .then((r) => { if (!r.ok) throw new Error('social ' + r.status); return r.json(); })
+      .then((m) => {
+        if (!m || typeof m !== 'object') throw new Error('bad social payload');
+        let filled = 0;
+        strip.querySelectorAll('[data-social]').forEach((el) => {
+          const v = m[el.dataset.social];
+          if (typeof v === 'number' && Number.isFinite(v)) { el.textContent = String(v); filled++; }
+        });
+        if (filled) strip.hidden = false;
+      })
+      .catch(() => {}); // strip stays hidden
+  }
+
   // ---------- business details ----------
 
   fetch('/api/site')

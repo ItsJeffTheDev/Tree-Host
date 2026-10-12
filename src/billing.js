@@ -178,6 +178,7 @@ class Billing {
     this.hooks = {
       notify: () => {}, email: async () => {}, suspend: () => {}, unsuspend: () => {}, deleteServer: async () => {},
       userById: () => null,
+      metric: () => {}, // funnel counters (set by server.js; fire-and-forget)
       serversOf: () => [], // [{ id, name, kind }] of the servers using a subscription (set by server.js)
       borrowedMb: () => 0, // memory used by running extra servers beyond what their plans reserve (set by server.js)
     };
@@ -448,10 +449,12 @@ class Billing {
       withdrawalWaived: true,
     };
     if (this.mode === 'demo') {
+      this.hooks.metric('checkoutStarted');
       this.activate(s, plan.oneTime ? {} : { periodEnd: Date.now() + 30 * 86400000 });
       await this.save();
       return { url: `${origin}/dashboard?billing=success`, demo: true };
     }
+    this.hooks.metric('checkoutStarted');
     if (plan.oneTime) {
       // Paid once: a normal payment, not a subscription.
       const session = await stripe('POST', '/checkout/sessions', {
@@ -522,6 +525,10 @@ class Billing {
     s.pastDueSince = null;
     if (pe) s.periodEnd = pe;
     if (was === 'pending') {
+      // Counted only here, on the one transition into active: the Stripe webhook, the browser-side
+      // confirm fallback, invoice.paid and demo mode all funnel through activate(), so a webhook
+      // retry or a double-confirm can never count twice.
+      this.hooks.metric('checkoutCompleted');
       this.hooks.notify('billing', s, `bought a ${s.planName} server`);
       if (this.hooks.sendEmail) this.hooks.sendEmail('planActive', this.hooks.userById(s.userId), s).catch(() => {});
     }
