@@ -3992,6 +3992,7 @@ const PAGES = {
   '/pricing': 'pricing.html',
   '/support': 'support.html',
   '/about': 'about.html',
+  '/investors': 'investors.html',
   '/terms': 'terms.html',
   '/privacy': 'privacy.html',
 };

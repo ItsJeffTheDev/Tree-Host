@@ -46,6 +46,12 @@ const PAGES = [
     keywords: ['tree host', 'about tree host', 'minecraft hosting company'],
   },
   {
+    path: '/investors', file: 'investors.html', priority: '0.5', changefreq: 'monthly',
+    title: 'Invest in Tree Host',
+    description: 'The investment case for Tree Host: Minecraft server hosting built on sleep-when-empty economics, so the same machine sells more of its RAM and prices stay structurally lower than 24/7 hosts. Live traction numbers and the $2,000 launch fund.',
+    keywords: ['invest in minecraft hosting', 'minecraft hosting startup', 'minecraft hosting investment', 'invest in tree host', 'minecraft hosting company funding'],
+  },
+  {
     path: '/team', file: 'team.html', priority: '0.5', changefreq: 'monthly',
     title: 'Meet the Team | Tree Host',
     description: 'The people who build and run Tree Host Minecraft server hosting.',

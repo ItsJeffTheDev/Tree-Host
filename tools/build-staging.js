@@ -40,6 +40,7 @@ const PAGES = {
   pricing: 'pricing.html',
   support: 'support.html',
   about: 'about.html',
+  investors: 'investors.html',
   team: 'team.html',
   donate: 'donate.html',
   terms: 'terms.html',

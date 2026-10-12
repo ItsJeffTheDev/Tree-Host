@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Invest in Tree Host</title>
+  <meta name="description" content="Tree Host is Minecraft server hosting built on sleep-when-empty economics: higher hardware utilization, structurally lower prices. The one-page investment story and the $2,000 launch fund.">
+  <link rel="icon" href="/brand/tree-host-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <style>
+    .inv-model { display: grid; grid-template-columns: 1.15fr .85fr; gap: 22px; align-items: start; }
+    .inv-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+    table.inv { width: 100%; border-collapse: collapse; min-width: 560px; }
+    .inv th, .inv td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14.5px; }
+    .inv tr:last-child td { border-bottom: 0; }
+    .inv thead th { font-size: 12.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); background: var(--bg2); }
+    .inv td.us { background: rgba(70, 195, 123, .07); font-weight: 700; color: var(--accent2); white-space: nowrap; }
+    .inv td small { display: block; color: var(--muted); font-weight: 400; }
+    .inv-side { display: flex; flex-direction: column; gap: 14px; }
+    .inv-point { display: flex; gap: 12px; align-items: flex-start; }
+    .inv-point .ic { width: 22px; height: 22px; color: var(--accent2); flex: none; margin-top: 3px; }
+    .inv-point p { margin: 0; color: var(--muted); font-size: 15px; }
+    .inv-point b { color: var(--text); }
+    .inv-math { background: var(--panel2); border: 1px dashed var(--border); border-radius: var(--radius); padding: 16px 18px; font-size: 14px; color: var(--muted); }
+    .inv-math b { color: var(--accent2); }
+    @media (max-width: 960px) { .inv-model { grid-template-columns: 1fr; } .inv-model > * { min-width: 0; } }
+  </style>
+</head>
+<body data-page="investors">
+  <header id="site-header"></header>
+
+  <div class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow reveal">For investors &amp; backers</span>
+      <h1 class="reveal d1">The Minecraft host built to sell the same RAM for <span class="green">less</span></h1>
+      <p class="reveal d2">Every other paid host keeps your server running 24/7, whether anyone is playing or not.
+        Tree Host's servers sleep when empty and wake when someone joins — so the same machine sells far more
+        of its memory every month, and we pass that on as lower prices.</p>
+    </div>
+  </div>
+
+  <section style="padding-top:12px">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Traction</span><h2>The numbers, live and unrounded-ish</h2>
+        <p>These are Tree Host's own cookie-free counters, exactly as the site reports them. Early days —
+          small numbers are shown small, never dressed up.</p></div>
+      <div class="social-strip reveal" style="max-width:860px">
+        <div class="social-strip-inner">
+          <div class="social-stat"><span class="social-num" data-inv="signupsThisWeek">0</span><span class="social-label">signups this week</span></div>
+          <div class="social-stat"><span class="social-num" data-inv="serversLaunched">0</span><span class="social-label">servers launched</span></div>
+          <div class="social-stat"><span class="social-num" data-inv="supporters">0</span><span class="social-label">supporters</span></div>
+          <div class="social-stat"><span class="social-num" data-inv="foundingUnitsLeft">25</span><span class="social-label">founding spots left</span></div>
+        </div>
+        <p class="social-footnote">Live from <b>/api/metrics/social</b> — the same numbers on the homepage. No estimates, no projections.</p>
+      </div>
+      <p class="muted small reveal" style="text-align:center;max-width:640px;margin:18px auto 0">
+        Want to try the product before investing? The <a href="/dashboard?signup&demo=1" data-signed-in-href="/dashboard?demo=1">demo server</a>
+        boots a real Minecraft server on the real dashboard in about a minute — no account needed to look.</p>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">The model</span><h2>Why sleep-when-empty means structurally lower prices</h2>
+        <p>A 24/7 host must charge enough that busy-hour memory covers the whole machine. A host whose servers
+          sleep sells the same memory several times over — the math below uses Tree Host's real plan prices.</p></div>
+      <div class="inv-model">
+        <div class="reveal">
+          <div class="inv-table-wrap">
+            <table class="inv">
+              <thead><tr><th>Plan</th><th>What you get</th><th>Tree Host</th><th>Typical paid host</th></tr></thead>
+              <tbody>
+                <tr><td><b>Sapling</b></td><td>2 GB RAM, 1 CPU<small>small survival worlds, 1–5 players</small></td><td class="us">$5/mo</td><td>$5.18 – $7.99/mo</td></tr>
+                <tr><td><b>Oak</b></td><td>4 GB RAM, 2 CPUs<small>friends servers, light modpacks</small></td><td class="us">$9/mo</td><td>$10.36 – $15.99/mo</td></tr>
+                <tr><td><b>Redwood</b></td><td>8 GB RAM, 3 CPUs<small>communities, bigger modpacks</small></td><td class="us">$16/mo</td><td>$20.72 – $31.99/mo</td></tr>
+                <tr><td><b>Lifetime</b></td><td>4 servers (4 GB) + 2 proxies, once</td><td class="us">$750 once</td><td>monthly only</td></tr>
+                <tr><td><b>Founding Lifetime</b></td><td>Same, first 25 buyers only</td><td class="us">$199 once</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="muted small" style="margin-top:12px">Competitor range: regular monthly prices for the same memory from
+            Shockbyte, Apex Hosting and Sparked Host (public pricing pages, checked October 2026 — the Why page
+            shows the live comparison and its sources).</p>
+        </div>
+        <div class="inv-side reveal d2">
+          <div class="inv-point"><svg class="ic" aria-hidden="true"><use href="/icons.svg#moon"/></svg>
+            <p><b>Sleep, don't idle.</b> An empty Tree Host server uses no memory and no CPU; the port keeps answering
+              and the server wakes when a player joins (~30 seconds).</p></div>
+          <div class="inv-point"><svg class="ic" aria-hidden="true"><use href="/icons.svg#cpu"/></svg>
+            <p><b>Sell the same RAM more than once.</b> Player populations overlap only partially — servers are empty
+              much of the day and night. Oversubscribing sleeping capacity is how one machine serves many more
+              customers than a 24/7 host can.</p></div>
+          <div class="inv-point"><svg class="ic" aria-hidden="true"><use href="/icons.svg#chart"/></svg>
+            <p><b>Lower prices are structural, not promotional.</b> Competitors discount the first month to win signups;
+              our price holds because the cost base is genuinely smaller. Every plan also includes unlimited servers,
+              backups, and every feature — no tier games.</p></div>
+          <div class="inv-point"><svg class="ic" aria-hidden="true"><use href="/icons.svg#infinity"/></svg>
+            <p><b>One-time revenue up front.</b> Lifetime ($750) and the $199 Founding pre-sale fund hardware before
+              launch, so growth doesn't wait on outside capital.</p></div>
+          <div class="inv-math">One launch machine (Ryzen 7 9700X, 64 GB) has ~58 GB usable. At Sapling's
+            2 GB + overhead that's roughly <b>24 concurrent Sapling customers</b> ≈ <b>$120/mo</b> per machine —
+            before any sleep-based oversubscription, which is where the margin actually comes from.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Product moat</span><h2>Things players can't get elsewhere</h2>
+        <p>Price gets a signup; these keep a customer — and each one makes the next customer cheaper to win.</p></div>
+      <div class="grid">
+        <div class="card reveal d1"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#refresh"/></svg></div><h3>Crash doctor</h3><p>When a plugin crashes the server, Tree Host restarts it by itself and explains the error in plain words — the support ticket that never needs writing.</p></div>
+        <div class="card reveal d2"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#pulse"/></svg></div><h3>Lag doctor</h3><p>Checks a running server's TPS, tick times and entities on demand, then names the likely cause. Players feel lag before they can describe it; the doctor closes that gap.</p></div>
+        <div class="card reveal d3"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#shield"/></svg></div><h3>Verified staff badges</h3><p>Tree Host staff wear a gold STAFF badge in chat that can't be faked, so players learn to trust the name on every server we host.</p></div>
+        <div class="card reveal d1"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#globe"/></svg></div><h3>Built-in server list flywheel</h3><p>Every customer can list their server publicly. Each server advertised to its players is a free Tree Host billboard — customer acquisition built into the product.</p></div>
+        <div class="card reveal d2"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#puzzle"/></svg></div><h3>Modrinth integration</h3><p>One-click plugins, mods and full Fabric modpacks, with versions checked against the server's type before install. The catalog maintenance competitors do by hand is automatic here.</p></div>
+        <div class="card reveal d3"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#tree"/></svg></div><h3>Built for the long tail</h3><p>Unlimited servers per plan, Bedrock crossplay in one click, and a Lifetime option no monthly-only competitor matches — players stay because leaving costs them their setup.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Roadmap</span><h2>What the next quarters look like</h2>
+        <p>From the public roadmap — sized to a tiny team with a real product already working.</p></div>
+      <div class="steps">
+        <div class="step reveal d1"><div class="step-num">1</div><h3>Launch</h3><p>The $2,000 launch fund buys the first dedicated server, live keys and the launch itself. First paying customer.</p></div>
+        <div class="step reveal d2"><div class="step-num">2</div><h3>Templates &amp; status page</h3><p>Ready-made server setups (SMP with essential plugins, minigames, modpacks) and a public status page so uptime is provable.</p></div>
+        <div class="step reveal d3"><div class="step-num">3</div><h3>Multi-node</h3><p>Customer servers spread over more than one machine as utilization approaches capacity — the model scales without changing the price story.</p></div>
+      </div>
+      <p style="text-align:center;margin-top:26px" class="reveal"><a href="/docs/ROADMAP.md" style="text-decoration:underline">Read the full roadmap →</a></p>
+    </div>
+  </section>
+
+  <section class="cta-band">
+    <div class="wrap reveal">
+      <span class="eyebrow">The ask</span>
+      <h2>$2,000 to put the first machine online</h2>
+      <p>The launch fund pays for the first dedicated server (a Ryzen 7 9700X with 64 GB — about $77/month plus a
+        one-time setup fee), which is capacity for roughly 60 Sapling-size servers of 2 GB each. At Sapling prices
+        that machine pays for itself at around 16 monthly customers; the $2,000 covers it and the launch run-rate
+        until subscription revenue takes over. Founding Lifetime pre-sales ($199, first 25 only) count toward the
+        same fund and bring in customers before launch day.</p>
+      <div class="cta-row">
+        <a href="/donate" class="btn-cta">Back the launch fund</a>
+        <a href="/dashboard?signup&demo=1" class="btn-ghost" data-signed-in-href="/dashboard?demo=1">Try the demo server</a>
+      </div>
+      <p class="muted small" style="margin-top:18px">Every dollar is tracked receipt-style on the <a href="/donate">donate page</a> —
+        line items, what's paid, what's not.</p>
+    </div>
+  </section>
+
+  <section style="padding-top:60px">
+    <div class="wrap">
+      <div class="section-head reveal"><h2>Talk to us</h2>
+        <p>Questions about the model, the numbers or the fund? Ask anything — the answers are the same ones we give customers.</p></div>
+      <div class="contact-cards">
+        <div class="card reveal d1" data-discord-wrap hidden><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#chat"/></svg></div><h3>Discord</h3><p>The fastest way to reach the team — and to watch the product being built in the open.</p>
+          <p style="margin-top:14px"><a data-discord href="#" target="_blank" rel="noopener" class="btn-ghost btn-sm">Join our Discord</a></p></div>
+        <div class="card reveal d2"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#mail"/></svg></div><h3>Email</h3><p>Write to us directly and we'll reply — usually the same day.</p>
+          <p style="margin-top:14px"><a data-email href="#" class="btn-ghost btn-sm">Email support</a></p></div>
+        <div class="card reveal d3"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#receipt"/></svg></div><h3>Where the money goes</h3><p>The complete cost list for running Tree Host, updated by the team, with how far donations have got.</p>
+          <p style="margin-top:14px"><a href="/donate#costs" class="btn-ghost btn-sm">See the receipts</a></p></div>
+      </div>
+    </div>
+  </section>
+
+  <footer id="site-footer"></footer>
+  <script src="/icons.js"></script>
+  <script src="/site.js"></script>
+  <script>
+  (() => {
+    // Traction counters: the same live /api/metrics/social numbers as the homepage strip,
+    // counted up on first view. On any failure the "0" placeholders stay — honest beats
+    // impressive, and nothing here is invented.
+    const els = [...document.querySelectorAll('[data-inv]')];
+    const set = (el, v) => {
+      const fmt = (x) => String(x);
+      if (window.TH_COUNT_UP) window.TH_COUNT_UP(el, v, fmt);
+      else el.textContent = fmt(v);
+    };
+    fetch('/api/metrics/social')
+      .then((r) => { if (!r.ok) throw new Error('social ' + r.status); return r.json(); })
+      .then((m) => {
+        if (!m || typeof m !== 'object') return;
+        for (const el of els) {
+          const k = el.dataset.inv;
+          let v = typeof m[k] === 'number' && Number.isFinite(m[k]) ? m[k] : k === 'foundingUnitsLeft' ? 25 : 0;
+          // The strip counts "founding spots left"; for investors, sold is the better story.
+          if (k === 'foundingUnitsLeft' && typeof m.foundingCapTotal === 'number') {
+            v = Math.max(0, m.foundingCapTotal - v);
+            el.nextElementSibling.textContent = 'founding spots sold';
+          }
+          set(el, v);
+        }
+        const strip = document.querySelector('.social-strip');
+        if (strip) requestAnimationFrame(() => strip.classList.add('in'));
+      })
+      .catch(() => {});
+  })();
+  </script>
+</body>
+</html>
