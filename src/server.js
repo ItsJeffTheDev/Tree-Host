@@ -152,7 +152,7 @@ function borrowedMb(except) {
 }
 billing.hooks.borrowedMb = () => borrowedMb(null);
 // The test site on this PC (Start.bat): sells without memory limits unless capacity is set in the Staff Console.
-billing.testSite = !!PUBLIC_URL && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/');
+billing.testSite = (TEST_SITE || (!!PUBLIC_URL && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/')));
 function nodeFullFor(inst, sub) {
   if (sub.slots || billing.unlimited()) return null;
   const others = serversOnSub(sub).filter((i) => i !== inst && isUp(i));
