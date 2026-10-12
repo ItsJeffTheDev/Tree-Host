@@ -910,6 +910,7 @@ class Billing {
     d.status = 'paid';
     d.paidAt = Date.now();
     d.paymentIntent = o.payment_intent || null;
+    this.hooks.metric('donationCompleted');
     this.hooks.notify('billing', { userId: d.userId, donorName: d.name || 'Someone' }, `donated ${money(d.amountCents)}${d.name ? ` (as ${d.name})` : ''} to the launch fund`);
     if (this.hooks.donated) this.hooks.donated(d); // badges on servers, stream alert
   }
