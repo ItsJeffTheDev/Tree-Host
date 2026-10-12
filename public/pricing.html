@@ -38,8 +38,28 @@
 
   <section>
     <div class="wrap">
-      <div class="section-head reveal"><h2>Which plan do I need?</h2><p>Memory (RAM) matters most. When in doubt, start small: you can move up later.</p></div>
-      <div class="grid">
+      <div class="section-head reveal"><h2>Which plan do I need?</h2><p>Two questions. One clear answer. Memory (RAM) matters most.</p></div>
+      <div id="recommender" class="recommender reveal" hidden>
+        <div class="reco-q">
+          <h3><span>1.</span> How many players will join?</h3>
+          <div class="reco-opts" role="group" aria-label="How many players will join?">
+            <button type="button" class="reco-opt" data-q="players" data-v="friends" aria-pressed="false">A few friends</button>
+            <button type="button" class="reco-opt" data-q="players" data-v="mid" aria-pressed="false">5–20 players</button>
+            <button type="button" class="reco-opt" data-q="players" data-v="big" aria-pressed="false">A big community</button>
+          </div>
+        </div>
+        <div class="reco-q">
+          <h3><span>2.</span> Vanilla or a modpack?</h3>
+          <div class="reco-opts" role="group" aria-label="Vanilla or a modpack?">
+            <button type="button" class="reco-opt" data-q="workload" data-v="vanilla" aria-pressed="false">Vanilla / plugins</button>
+            <button type="button" class="reco-opt" data-q="workload" data-v="modpack" aria-pressed="false">A modpack</button>
+          </div>
+        </div>
+        <p class="reco-sub" id="reco-sub" hidden></p>
+        <p class="reco-hint" id="reco-hint" hidden>Your plan lights up in the grid below ↓</p>
+        <p class="reco-note">Start small — you can move up any time without losing your world.</p>
+      </div>
+      <div class="grid" id="plan-guide">
         <div class="card reveal d1"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#sprout"/></svg></div><h3>Just friends</h3><p>A survival world for a few friends with some plugins: <b>2 GB</b> is plenty.</p></div>
         <div class="card reveal d2"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#tree"/></svg></div><h3>Growing community</h3><p>5-20 players, more plugins or a light modpack: go for <b>4 GB</b>.</p></div>
         <div class="card reveal d3"><div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#tree"/></svg></div><h3>Big modpacks &amp; networks</h3><p>Many players or heavy Fabric modpacks: <b>8 GB</b> or more.</p></div>

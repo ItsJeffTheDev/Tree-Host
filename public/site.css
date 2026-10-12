@@ -418,3 +418,24 @@ a.costs-teaser .ic { width: 26px; height: 26px; flex: none; color: var(--accent2
 .hw-strip[hidden] { display: none; }
 .hw-label { font-size: 12px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
 .plan-cpu { display: block; color: var(--muted); font-size: 13px; font-weight: 400; }
+/* ---------- pricing recommender ---------- */
+.recommender { max-width: 760px; margin: 0 auto; background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 30px 30px 20px; }
+.recommender[hidden] { display: none; }
+.reco-q h3 { font-size: 17px; color: var(--text); margin: 0 0 10px; }
+.reco-q h3 span { color: var(--accent); margin-right: 6px; }
+.reco-opts { display: flex; flex-wrap: wrap; gap: 10px; }
+.reco-opt { font: inherit; font-size: 15px; font-weight: 600; color: var(--text); background: rgba(20, 32, 25, .7); border: 1px solid var(--border); border-radius: 99px; padding: 9px 20px; cursor: pointer; transition: border-color .2s, background .2s, transform .2s; }
+.reco-opt:hover { border-color: var(--accent); transform: translateY(-1px); }
+.reco-opt:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+.reco-opt.picked { background: linear-gradient(180deg, var(--accent2), var(--accent)); border-color: var(--accent); color: var(--dark); box-shadow: 0 6px 24px rgba(70, 195, 123, .25); }
+.reco-sub { margin: 18px 0 0; font-size: 15px; color: var(--accent2); font-weight: 600; }
+.reco-hint { margin: 6px 0 0; font-size: 14.5px; color: var(--muted); }
+.reco-note { margin: 14px 0 0; font-size: 13px; color: var(--muted); text-align: center; border-top: 1px solid var(--border); padding-top: 14px; }
+.plan.recommended { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 20px 50px rgba(70, 195, 123, .18); }
+.plan .reco-tag { background: var(--accent2); color: var(--dark); letter-spacing: 1px; text-transform: uppercase; }
+@media (max-width: 600px) {
+  .recommender { padding: 22px 18px 16px; }
+  .reco-opts { gap: 8px; }
+  .reco-opt { padding: 8px 16px; font-size: 14px; }
+}
+
