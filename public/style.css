@@ -759,6 +759,12 @@ details.menu > summary::-webkit-details-marker { display: none; }
 .grow-funnel-fill.deep { background: #2a7a4b; }
 .grow-funnel-fill.gold { background: #d9a441; }
 .grow-funnel-nums { color: var(--muted); font-size: 12px; white-space: nowrap; }
+/* bars grow from 0 on first render with a per-row stagger (console.js sets --fd). */
+.grow-funnel-fill { transform-origin: left; transform: scaleX(0); transition: transform 1s cubic-bezier(.2, .8, .2, 1); }
+.grow-funnel.in .grow-funnel-fill { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .grow-funnel-fill { transform: none; transition: none; }
+}
 .grow-facts { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: 13.5px; }
 @media (max-width: 700px) { .grow-funnel-row { grid-template-columns: 64px 1fr; } .grow-funnel-nums { grid-column: 2; } }
 

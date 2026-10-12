@@ -45,11 +45,17 @@ section { padding: 88px 0; position: relative; }
 }
 .btn-cta { background: linear-gradient(180deg, var(--accent2), var(--accent)); color: var(--dark) !important; box-shadow: 0 6px 24px rgba(70, 195, 123, .25); }
 .btn-cta:hover { transform: translateY(-2px); box-shadow: 0 10px 34px rgba(70, 195, 123, .4); }
+.btn-cta:active, .btn-ghost:active { transform: scale(.98); }
 .btn-ghost { border: 1px solid var(--border); color: var(--text) !important; background: rgba(20, 32, 25, .7); }
-.btn-ghost:hover { border-color: var(--accent); transform: translateY(-2px); }
+.btn-ghost:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 26px rgba(0, 0, 0, .35); }
 .btn-sm { padding: 8px 16px; font-size: 14px; border-radius: 9px; }
 .block { display: flex; width: 100%; }
 .disabled { opacity: .5; pointer-events: none; }
+/* the demo CTA pulses gently every ~8s to draw the eye; stops for good after the first
+   hover (site.js adds .seen), and is disabled under reduced motion */
+.btn-pulse { animation: ctaPulse 2.5s ease 8s 3; }
+.btn-pulse:hover, .btn-pulse.seen { animation: none; }
+@keyframes ctaPulse { 0%, 100% { transform: none; } 50% { transform: translateY(-3px) scale(1.02); box-shadow: 0 10px 34px rgba(70, 195, 123, .5); } }
 
 /* ---------- header ---------- */
 .site-header { position: sticky; top: 0; z-index: 50; transition: background .25s, border-color .25s, backdrop-filter .25s; border-bottom: 1px solid transparent; }
@@ -90,6 +96,13 @@ section { padding: 88px 0; position: relative; }
 .hero-cta { display: flex; gap: 12px; margin: 28px 0 14px; flex-wrap: wrap; }
 .hero-note { font-size: 14px; color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
 .hero-note span::before { content: "✓ "; color: var(--accent); font-weight: 700; }
+/* hero load-in: fade + rise once, staggered 80ms per element (site.js adds .hero-anim to
+   the hero before the first paint it can influence, then .ready when it starts — so the
+   page is fully visible with JavaScript off). Never re-triggers; reduced motion skips it. */
+.hero.hero-anim .hero-grid > div { opacity: 0; transform: translateY(14px); transition: opacity .5s ease, transform .5s cubic-bezier(.2, .8, .2, 1); }
+.hero.hero-anim.ready .hero-grid > div { opacity: 1; transform: none; }
+.hero.hero-anim.ready .hero-grid > div:nth-child(2) { transition-delay: 80ms; }
+.hero.hero-anim.ready .hero-grid > div:nth-child(3) { transition-delay: 160ms; }
 
 /* ---------- social-proof strip ---------- */
 .social-strip { margin: 44px auto 0; padding: 18px 28px; border: 1px solid var(--border); border-radius: var(--radius);
@@ -99,6 +112,9 @@ section { padding: 88px 0; position: relative; }
 .social-num { font-size: 26px; font-weight: 800; color: var(--accent2); font-variant-numeric: tabular-nums; }
 .social-label { font-size: 13px; color: var(--muted); }
 .social-footnote { margin: 12px 0 0; text-align: center; font-size: 12.5px; color: var(--muted); }
+/* strip stats rise in with a slight stagger (site.js staggers their transition-delay) */
+.social-strip .social-stat { opacity: 0; transform: translateY(10px); transition: opacity .5s ease, transform .5s cubic-bezier(.2, .8, .2, 1); }
+.social-strip.in .social-stat { opacity: 1; transform: none; }
 @media (max-width: 700px) { .social-strip-inner { gap: 22px; } .social-num { font-size: 22px; } }
 
 /* the growing tree next to the title */
@@ -173,8 +189,10 @@ section { padding: 88px 0; position: relative; }
 
 /* ---------- pricing ---------- */
 .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; align-items: stretch; }
-.plan { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 28px; display: flex; flex-direction: column; position: relative; transition: transform .25s, box-shadow .25s; }
-.plan:hover { transform: translateY(-6px); box-shadow: 0 24px 60px rgba(0, 0, 0, .4); }
+.plan { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 28px; display: flex; flex-direction: column; position: relative; transition: transform .25s, box-shadow .25s, border-color .25s; }
+.plan:hover { transform: translateY(-4px); box-shadow: 0 24px 60px rgba(0, 0, 0, .4); }
+.plan.popular:hover { border-color: var(--accent); animation: planGlow 2.5s ease infinite; }
+@keyframes planGlow { 0%, 100% { box-shadow: 0 0 0 1px var(--accent), 0 20px 50px rgba(70, 195, 123, .14); } 50% { box-shadow: 0 0 0 1px var(--accent), 0 20px 60px rgba(70, 195, 123, .38); } }
 .plan.popular { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 20px 50px rgba(70, 195, 123, .14); }
 .plan.sold-out { opacity: .6; }
 .plan .tag { position: absolute; top: -13px; left: 50%; transform: translateX(-50%); background: var(--accent); color: var(--dark); font-size: 12px; font-weight: 800; padding: 4px 14px; border-radius: 99px; white-space: nowrap; }
@@ -227,7 +245,7 @@ section { padding: 88px 0; position: relative; }
 .reveal { opacity: 0; transform: translateY(26px); transition: opacity .7s ease, transform .7s cubic-bezier(.2, .8, .2, 1); }
 .reveal.in { opacity: 1; transform: none; }
 .reveal.d1 { transition-delay: .08s; } .reveal.d2 { transition-delay: .16s; } .reveal.d3 { transition-delay: .24s; }
-.reveal.d4 { transition-delay: .32s; } .reveal.d5 { transition-delay: .4s; }
+.reveal.d4 { transition-delay: .32s; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 960px) {
@@ -265,6 +283,10 @@ section { padding: 88px 0; position: relative; }
   .hero-tree .leaf { transform: none; }
   .leaves { display: none; }
   .browser { transform: none; }
+  .hero.hero-anim .hero-grid > div, .social-strip .social-stat { opacity: 1; transform: none; }
+  .btn-pulse { animation: none; }
+  .plan.popular:hover { animation: none; box-shadow: 0 0 0 1px var(--accent), 0 20px 50px rgba(70, 195, 123, .14); }
+  .founding-fill::after { display: none; }
 }
 
 /* ---------- proportional scaling on big screens (same steps as the dashboard) ---------- */
@@ -288,7 +310,8 @@ section { padding: 88px 0; position: relative; }
 .small { font-size: 13.5px; }
 .stack-lg { display: flex; flex-direction: column; gap: 18px; }
 .donate-layout { display: grid; grid-template-columns: 1.1fr .9fr; gap: 22px; align-items: start; }
-.card.fund-card:hover, .card.donate-form:hover { transform: none; }
+.card.fund-card, .card.donate-form { transform: none; }
+.card.fund-card:hover { transform: translateY(-4px); box-shadow: 0 16px 40px rgba(0, 0, 0, .35); }
 .fund-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .fund-amount { margin: 6px 0 14px; color: var(--muted); }
 .fund-amount b { font-size: 40px; color: var(--text); letter-spacing: -1px; margin-right: 6px; }
@@ -456,8 +479,12 @@ a.costs-teaser .ic { width: 26px; height: 26px; flex: none; color: var(--accent2
 .founding-perks li::before { content: "✓ "; color: var(--accent); font-weight: 700; }
 .founding-perks b { color: var(--text); }
 .founding-bar { height: 10px; }
-.founding-fill { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--warn), #e8c27a); transition: width 1.2s cubic-bezier(.2, .8, .2, 1); }
+.founding-fill { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--warn), #e8c27a); transition: width 1.2s cubic-bezier(.2, .8, .2, 1); position: relative; overflow: hidden; }
+/* a soft shine sweeps the fill once it's wider than the bar (site.css-only, no JS) */
+.founding-fill::after { content: ""; position: absolute; inset: 0; width: 40%; transform: translateX(-120%); background: linear-gradient(105deg, transparent, rgba(255, 255, 255, .45), transparent); animation: barShine 2.8s ease-in-out 1.4s infinite; }
 .founding-card.sold-out .founding-fill { background: var(--muted); }
+.founding-card.sold-out .founding-fill::after { animation: none; }
+@keyframes barShine { 0% { transform: translateX(-120%); } 60%, 100% { transform: translateX(320%); } }
 #founding-cta[disabled] { opacity: .55; pointer-events: none; transform: none; box-shadow: none; background: rgba(20, 32, 25, .7); color: var(--muted) !important; border: 1px solid var(--border); cursor: default; }
 #founding-foot a { color: var(--accent2); }
 /* the confirmCheckout-style modal (borrowed vmodal, dashboard modal styling spirit) */

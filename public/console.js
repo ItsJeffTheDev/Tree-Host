@@ -283,6 +283,10 @@ async function consoleOverview(body) {
     ${d.billing && d.billing.mode === 'demo' ? '<div class="warn-box">Demo mode: plans activate without payment. Turn it off before going live.</div>' : ''}
     <div class="card"><h3 style="margin-bottom:8px">Recent activity</h3>
       ${d.activity.length ? d.activity.map((e) => activityItem(e)).join('') : '<div class="muted">Nothing yet.</div>'}</div>`;
+  // The funnel bars grow from 0 with a stagger: the fill starts at scaleX(0) (style.css)
+  // and flipping to .in one frame later animates them in.
+  const funnel = body.querySelector('.grow-funnel[data-animate]');
+  if (funnel) requestAnimationFrame(() => requestAnimationFrame(() => funnel.classList.add('in')));
 }
 
 // ---------- growth funnel card (read-only) ----------
@@ -308,12 +312,12 @@ function growthCard(m, plans) {
     ['Paid', m.funnel.paid, 'gold'],
   ];
   const top = Math.max(1, ...stages.map(([, v]) => (v && v.total) || 0));
-  const bars = stages.map(([label, v, cls]) => {
+  const bars = stages.map(([label, v, cls], i) => {
     const total = (v && v.total) || 0;
     const week = (v && v.week) || 0;
     return `<div class="grow-funnel-row">
       <span class="grow-funnel-label">${label}</span>
-      <span class="grow-funnel-bar"><span class="grow-funnel-fill ${cls}" style="width:${Math.round((total / top) * 100)}%"></span></span>
+      <span class="grow-funnel-bar"><span class="grow-funnel-fill ${cls}" style="width:${Math.round((total / top) * 100)}%; transition-delay:${i * 90}ms"></span></span>
       <span class="grow-funnel-nums">${week} this week · ${total} all-time</span>
     </div>`;
   }).join('');
@@ -330,7 +334,7 @@ function growthCard(m, plans) {
     : `<div><b>Founding:</b> ${founding.sold || 0} of ${founding.capTotal || 25} sold${founding.unitsLeft === 0 ? ' · sold out' : ''}</div>`;
   return `<div class="card" id="growth-card"><h3 style="margin-bottom:4px">${ic('chart')} Growth funnel</h3>
     <p class="muted small" style="margin:0 0 10px">visitors → demos → signups → paid</p>
-    <div class="grow-funnel">${bars}</div>
+    <div class="grow-funnel" data-animate>${bars}</div>
     <div class="grow-facts">
       <div><b>Signups by source:</b> ${refLine}</div>
       ${foundingRow}

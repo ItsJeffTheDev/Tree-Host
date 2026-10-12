@@ -6,6 +6,51 @@
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const page = document.body.dataset.page || '';
 
+  // ---------- shared animation helpers ----------
+  // countUp: 0 → value with an ease-out over ~1.2s, gated on the element actually being
+  // in view (the social strip on the homepage, the traction numbers on /investors, the
+  // donate figures). Under reduced motion it jumps straight to the final value.
+  // Pages without site.js helpers fall back to instant text (see donate.html).
+  const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+  const countUp = (el, to, fmt = (v) => String(v), dur = 1200) => {
+    const done = () => { el.textContent = fmt(to); };
+    if (reduceMotion || !Number.isFinite(to)) return done();
+    const run = () => {
+      const t0 = performance.now();
+      const tick = (t) => {
+        const p = Math.min(1, (t - t0) / dur);
+        el.textContent = fmt(p < 1 ? Math.round(to * easeOut(p)) : to);
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+    if ('IntersectionObserver' in window) {
+      const cio = new IntersectionObserver((es, o) => {
+        if (es.some((e) => e.isIntersecting)) { o.disconnect(); run(); }
+      }, { threshold: 0.4 });
+      cio.observe(el);
+    } else run();
+  };
+  window.TH_COUNT_UP = countUp;
+  // TH_REVEAL_BAR: run set() the first time the bar scrolls into view (donate page's
+  // founding progress bar animates when seen, not on load). Reduced motion: immediate.
+  window.TH_REVEAL_BAR = (el, set) => {
+    if (reduceMotion || !('IntersectionObserver' in window)) return set();
+    const bio = new IntersectionObserver((es, o) => {
+      if (es.some((e) => e.isIntersecting)) { o.disconnect(); requestAnimationFrame(set); }
+    }, { threshold: 0.4 });
+    bio.observe(el);
+  };
+  // stagger: index-based transition-delay for reveal siblings in a grid (capped at
+  // 420ms), cleared again once the element has revealed so hover transforms stay snappy.
+  const stagger = (els) => {
+    if (!io) return;
+    [...els].forEach((el, i) => {
+      el.style.transitionDelay = `${Math.min(i * 70, 420)}ms`;
+      el.addEventListener('transitionend', () => { el.style.transitionDelay = ''; }, { once: true });
+    });
+  };
+
   // ---------- header & footer ----------
 
   const NAV = [
@@ -53,7 +98,7 @@
           <div class="footer-col"><h4>Help</h4>
             <a href="/help.html">Guides</a><a href="/support">Contact &amp; FAQ</a><a href="/help.html?doc=billing">Billing help</a><span id="ft-discord"></span></div>
           <div class="footer-col"><h4>Company</h4>
-            <a href="/about">About</a><a href="/team">Meet the team</a><a href="/donate">Donate</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/dmca">Copyright</a></div>
+            <a href="/about">About</a><a href="/team">Meet the team</a><a href="/donate">Donate</a><a href="/investors">Invest</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/dmca">Copyright</a></div>
         </div>
         <div class="footer-bottom">
           <span>© ${new Date().getFullYear()} <span data-company>Tree Host</span>. All rights reserved.</span>
@@ -122,9 +167,12 @@
         let filled = 0;
         strip.querySelectorAll('[data-social]').forEach((el) => {
           const v = m[el.dataset.social];
-          if (typeof v === 'number' && Number.isFinite(v)) { el.textContent = String(v); filled++; }
+          if (typeof v === 'number' && Number.isFinite(v)) { countUp(el, v); filled++; }
         });
-        if (filled) strip.hidden = false;
+        if (filled) {
+          strip.hidden = false;
+          requestAnimationFrame(() => strip.classList.add('in'));
+        }
       })
       .catch(() => {}); // strip stays hidden
   }
@@ -330,8 +378,24 @@
     for (const el of list) io ? io.observe(el) : el.classList.add('in');
   }
   observe(document.querySelectorAll('.reveal, .steps'));
+  // Automatic stagger inside the card grids (why-grid, plans, the feature grid): each
+  // sibling gets a slightly longer transition-delay, capped at 420ms.
+  for (const grid of document.querySelectorAll('.why-grid, .plans, .grid')) stagger(grid.querySelectorAll(':scope > .reveal'));
 
-  // ---------- hero: rotating words and falling leaves ----------
+  // ---------- hero: load-in, rotating words and falling leaves ----------
+
+  // One-time fade/rise of the hero columns once the page has settled. Only on the
+  // homepage hero (a .hero section with a .hero-grid inside); reduced motion skips it.
+  const hero = document.querySelector('.hero .hero-grid')?.closest('.hero');
+  if (hero) {
+    if (!reduceMotion) {
+      // Hide first (double rAF so the hidden style is committed), then reveal.
+      requestAnimationFrame(() => {
+        hero.classList.add('hero-anim');
+        requestAnimationFrame(() => requestAnimationFrame(() => hero.classList.add('ready')));
+      });
+    } else hero.classList.add('hero-anim', 'ready');
+  }
 
   const rot = document.querySelector('.rotate[data-words]');
   if (rot && !reduceMotion) {
@@ -443,6 +507,15 @@
   }
 
   // ---------- product video ----------
+
+  // The demo CTA gets a gentle attention pulse (CSS .btn-pulse); after the visitor has
+  // hovered it once it stops for good (.seen), and reduced motion never starts it.
+  const demoCta = document.querySelector('.hero-cta a[href*="demo=1"]');
+  if (demoCta && !reduceMotion) {
+    demoCta.classList.add('btn-pulse');
+    demoCta.addEventListener('mouseenter', () => demoCta.classList.add('seen'), { once: true });
+    demoCta.addEventListener('focus', () => demoCta.classList.add('seen'), { once: true });
+  }
 
   const heroVideo = document.querySelector('video[data-autoplay]');
   if (heroVideo) {
