@@ -241,7 +241,11 @@ function renderDesktopToggle() {
 
 // ---------- overview ----------
 async function consoleOverview(body) {
-  const d = await api('GET', '/api/admin/overview');
+  const [d, growth, plans] = await Promise.all([
+    api('GET', '/api/admin/overview'),
+    api('GET', '/api/admin/metrics').catch(() => null), // the growth card is additive: the rest of the overview still renders without it
+    api('GET', '/api/plans').catch(() => null), // founding row supplies the price for the "X of 25 sold · $Y" line
+  ]);
   const stat = (num, label, extra = '') => `<div class="stat"><div class="stat-num">${num}</div><div class="stat-label">${label}</div>${extra}</div>`;
   const cards = [
     stat(d.servers.total, 'servers'),
@@ -275,9 +279,65 @@ async function consoleOverview(body) {
     <p class="muted" style="margin-top:0">Signed in as <b>${esc(me.username)}</b> · <span class="badge ${ROLE_BADGE[me.role] || ''}">${esc(me.roleLabel)}</span>
       · you see the parts of the console your role allows (<a href="#roles">what can each role do?</a>).</p>
     <div class="stat-row">${cards.join('')}</div>
+    ${growthCard(growth, plans)}
     ${d.billing && d.billing.mode === 'demo' ? '<div class="warn-box">Demo mode: plans activate without payment. Turn it off before going live.</div>' : ''}
     <div class="card"><h3 style="margin-bottom:8px">Recent activity</h3>
       ${d.activity.length ? d.activity.map((e) => activityItem(e)).join('') : '<div class="muted">Nothing yet.</div>'}</div>`;
+}
+
+// ---------- growth funnel card (read-only) ----------
+// Fed by GET /api/admin/metrics (perm console.access — src/metrics.js adminSummary()). Everything on it is a count or
+// a price; no buttons, no actions, no personal data. Returns '' when the API is unavailable so the rest of the
+// overview is untouched. Anonymous cookie-free counters: page path + referrer host only (src/metrics.js header).
+function growthCard(m, plans) {
+  if (!m || !m.funnel) return '';
+  const money = (cents) => {
+    const currency = ((plans && plans.currency) || 'usd').toUpperCase();
+    const dollars = (cents || 0) / 100;
+    const dp = Number.isInteger(dollars) ? 0 : 2; // founding prices are whole dollars: "$398", not "$398.00"
+    try {
+      return new Intl.NumberFormat(undefined, { style: 'currency', currency, minimumFractionDigits: dp, maximumFractionDigits: 2 }).format(dollars);
+    } catch {
+      return `$${dollars.toFixed(dp)}`;
+    }
+  };
+  const stages = [
+    ['Visitors', m.funnel.visitors, ''],
+    ['Demos', m.funnel.demos, 'green'],
+    ['Signups', m.funnel.signups, 'deep'],
+    ['Paid', m.funnel.paid, 'gold'],
+  ];
+  const top = Math.max(1, ...stages.map(([, v]) => (v && v.total) || 0));
+  const bars = stages.map(([label, v, cls]) => {
+    const total = (v && v.total) || 0;
+    const week = (v && v.week) || 0;
+    return `<div class="grow-funnel-row">
+      <span class="grow-funnel-label">${label}</span>
+      <span class="grow-funnel-bar"><span class="grow-funnel-fill ${cls}" style="width:${Math.round((total / top) * 100)}%"></span></span>
+      <span class="grow-funnel-nums">${week} this week · ${total} all-time</span>
+    </div>`;
+  }).join('');
+  const refNames = { discord: 'Discord', youtube: 'YouTube', reddit: 'Reddit', serverlist: 'Serverlist', other: 'Other' };
+  const refs = Object.entries(m.refs || {}).sort((a, b) => b[1] - a[1]);
+  const refLine = refs.length
+    ? refs.map(([k, n]) => `${refNames[k] || esc(k)} (${n})`).join(', ')
+    : '<span class="muted">no attributed signups yet</span>';
+  const founding = m.founding || {};
+  const foundingRow = plans && plans.plans && plans.plans.some((p) => p.founding)
+    ? plans.plans.filter((p) => p.founding)
+        .map((p) => `<div><b>Founding:</b> ${founding.sold || 0} of ${founding.capTotal || p.capTotal || 25} sold · ${money((founding.sold || 0) * p.priceCents)}${founding.unitsLeft === 0 ? ' · sold out' : ''}</div>`)
+        .join('')
+    : `<div><b>Founding:</b> ${founding.sold || 0} of ${founding.capTotal || 25} sold${founding.unitsLeft === 0 ? ' · sold out' : ''}</div>`;
+  return `<div class="card" id="growth-card"><h3 style="margin-bottom:4px">${ic('chart')} Growth funnel</h3>
+    <p class="muted small" style="margin:0 0 10px">visitors → demos → signups → paid</p>
+    <div class="grow-funnel">${bars}</div>
+    <div class="grow-facts">
+      <div><b>Signups by source:</b> ${refLine}</div>
+      ${foundingRow}
+      <div><b>Donations:</b> ${(m.donations && m.donations.started) || 0} started · ${(m.donations && m.donations.completed) || 0} completed</div>
+    </div>
+    <p class="muted small" style="margin:8px 0 0">Read-only · cookie-free counters (page path + referrer host only, no IPs, no personal data)</p>
+  </div>`;
 }
 
 // ---------- every server (support's main tool) ----------

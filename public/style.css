@@ -748,3 +748,16 @@ details.menu > summary::-webkit-details-marker { display: none; }
 /* Backup browser */
 .bb-crumbs { font-size: 13.5px; margin-bottom: 8px; overflow-wrap: anywhere; }
 .bb-list { max-height: 55vh; overflow-y: auto; }
+
+/* Growth funnel card (Staff Console overview, fed by GET /api/admin/metrics) */
+.grow-funnel { display: flex; flex-direction: column; gap: 8px; }
+.grow-funnel-row { display: grid; grid-template-columns: 84px 1fr auto; gap: 10px; align-items: center; }
+.grow-funnel-label { font-weight: 600; font-size: 13.5px; }
+.grow-funnel-bar { height: 14px; border-radius: 7px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.grow-funnel-fill { display: block; height: 100%; border-radius: 7px; background: rgba(255, 255, 255, 0.28); }
+.grow-funnel-fill.green { background: rgba(70, 195, 123, 0.75); }
+.grow-funnel-fill.deep { background: #2a7a4b; }
+.grow-funnel-fill.gold { background: #d9a441; }
+.grow-funnel-nums { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.grow-facts { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; font-size: 13.5px; }
+@media (max-width: 700px) { .grow-funnel-row { grid-template-columns: 64px 1fr; } .grow-funnel-nums { grid-column: 2; } }
