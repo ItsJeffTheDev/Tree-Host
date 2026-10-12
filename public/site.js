@@ -191,14 +191,17 @@
         const hp = document.getElementById('hero-price');
         if (hp && cheapest) hp.textContent = `From ${money(cheapest.priceCents, data.currency)}/month`;
         if (!plansEl) return;
+        // Pricing page: the plans failed → bring the static guide cards back as fallback.
+        const guide = document.getElementById('plan-guide');
         if (!all.length) {
           plansEl.innerHTML = '<div class="loading">Plans are coming soon.</div>';
+          if (guide) guide.hidden = false;
           return;
         }
         const popular = plans.length >= 3 ? plans[1].id : null;
         plansEl.innerHTML = plans
           .map(
-            (p, i) => `<div class="plan reveal d${i + 1} ${p.id === popular ? 'popular' : ''} ${p.soldOut ? 'sold-out' : ''}">
+            (p, i) => `<div class="plan reveal d${i + 1} ${p.id === popular ? 'popular' : ''} ${p.soldOut ? 'sold-out' : ''}" data-ram-mb="${p.ramMb}" data-plan-id="${esc(p.id)}">
               ${p.id === popular ? '<div class="tag">Most popular</div>' : ''}
               <h3>${esc(p.name)}</h3>
               <div class="price">${money(p.priceCents, data.currency)}<span>/month</span></div>
@@ -237,7 +240,79 @@
           .join('');
         observe(plansEl.querySelectorAll('.reveal'));
       })
-      .catch(() => plansEl && (plansEl.innerHTML = '<div class="loading">Could not load plans. Please refresh.</div>'));
+      .catch(() => {
+        if (plansEl) plansEl.innerHTML = '<div class="loading">Could not load plans. Please refresh.</div>';
+        // Pricing page: plans failed → the static guide cards come back as the fallback.
+        const guide = document.getElementById('plan-guide');
+        if (guide) guide.hidden = false;
+      });
+  }
+
+  // ---------- pricing recommender (pricing page only) ----------
+
+  const recoEl = document.getElementById('recommender');
+  if (recoEl && page === 'pricing') {
+    const answers = { players: null, workload: null };
+    const sub = document.getElementById('reco-sub');
+    const hint = document.getElementById('reco-hint');
+    // Recommendation in RAM terms: friends→2 GB, 5–20→4 GB, big→8 GB. A modpack
+    // bumps one tier minimum — its floor is Oak's 4 GB (a modpack on a friends-size
+    // server moves up from Sapling; 5–20 players is already Oak; a big community
+    // stays Redwood). Pure RAM math, so it also matches custom plan sets — the
+    // match is by ramMb.
+    const needMb = (players, workload) => {
+      const base = { friends: 2048, mid: 4096, big: 8192 }[players];
+      return workload === 'modpack' ? Math.max(base, 4096) : base;
+    };
+    recoEl.hidden = false;
+    // The static three-card guide below is the no-JS fallback: once the
+    // recommender is live it takes over (the plans-API failure path un-hides it).
+    const guide = document.getElementById('plan-guide');
+    if (guide) guide.hidden = true;
+    recoEl.querySelectorAll('.reco-opt').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        answers[btn.dataset.q] = btn.dataset.v;
+        recoEl.querySelectorAll(`.reco-opt[data-q="${btn.dataset.q}"]`).forEach((b) => {
+          b.classList.toggle('picked', b === btn);
+          b.setAttribute('aria-pressed', String(b === btn));
+        });
+        const both = answers.players && answers.workload;
+        const needed = both ? needMb(answers.players, answers.workload) : null;
+        const show = () => {
+          // Exactly one card lights up: the smallest available plan whose memory
+          // covers the answer (a modpack bumps one tier minimum via needMb).
+          const candidates = [...document.querySelectorAll('#plans .plan')]
+            .filter((el) => Number(el.dataset.ramMb) >= needed && !el.classList.contains('sold-out'))
+            .sort((a, b) => Number(a.dataset.ramMb) - Number(b.dataset.ramMb));
+          const target = both ? candidates[0] : null;
+          document.querySelectorAll('#plans .plan').forEach((el) => {
+            const hit = el === target;
+            el.classList.toggle('recommended', hit);
+            el.querySelectorAll('.reco-tag').forEach((t) => t.remove());
+            if (hit) el.querySelector('h3').insertAdjacentHTML('beforebegin', '<div class="tag reco-tag">Recommended for you</div>');
+          });
+          if (target) {
+            hint.textContent = `Recommended: ${target.querySelector('h3').textContent} — highlighted in the grid below.`;
+            hint.hidden = false;
+          } else {
+            hint.hidden = true;
+          }
+        };
+        show();
+        if (both) {
+          const bits = [];
+          if (answers.players === 'friends') bits.push('a few friends');
+          if (answers.players === 'mid') bits.push('5–20 players');
+          if (answers.players === 'big') bits.push('a big community');
+          bits.push(answers.workload === 'modpack' ? 'a modpack' : 'vanilla / plugins');
+          sub.textContent = bits.join(' · ');
+          sub.hidden = false;
+        } else {
+          sub.hidden = true;
+          hint.hidden = true;
+        }
+      }),
+    );
   }
 
   // ---------- scroll reveal ----------
