@@ -14,7 +14,7 @@ You cannot improve what you don't count. No analytics exists today.
 6. Add a live social-proof strip under the hero: servers launched, players hosted, uptime % — fed by the Phase 1 counters (even "0 servers" becomes honest once real).
 7. Pricing page: add a "Which plan do I need?" interactive — answer 2 questions (how many players, vanilla or modpack) → recommended plan with a highlighted CTA. Copy already half-exists in the FAQ.
 8. Donate page (funding engine):
-   - Add a **Founding Lifetime pre-sale** tier at the top: one payment, full Lifetime plan, launch price, limited to the first 50. Needs a capped one-time SKU in `src/billing.js` (pattern exists in `LIFETIME_PLAN`).
+   - Add a **Founding Lifetime pre-sale** tier at the top: one payment, full Lifetime plan, launch price, limited to the first 25 (launch price $199). Needs a capped one-time SKU in `src/billing.js` (pattern exists in `LIFETIME_PLAN`).
    - Make the goal bar concrete: named line items from `this.receipt` (machine model, RAM, monthly cost) + stretch goals ("$1,000 → second node").
    - Lead with the tour video, not text: "Back something real."
    - Perks ladder per tier: Supporter = wall + Discord role; Founder = Founding Lifetime + in-game badge (founders.txt already exists); Legend = + name in MOTD.
@@ -24,7 +24,7 @@ You cannot improve what you don't count. No analytics exists today.
 10. YouTube: the 1-minute tour is the ad. Cut 3 Shorts from it (demo launch in 15s, crash doctor explaining a crash, sleep/wake on join). Each ends on demo.treehost.online. Post 2–3 devlog shorts/week — the build-in-public audience is the donor pool.
 11. Discord: `/goal` bot command exists — pin the fund progress in #announcements; add the donate link to the bot's `/help` and rotating status (config already supports `{goal}`).
 12. Reddit/communities: r/admincraft "I built a host where servers sleep when empty" style posts; Minecraft server-list ads once revenue exists. The built-in server list is the flywheel — every customer's server advertises Tree Host to its players; make sure it links back to treehost.online.
-13. Launch-day kit: status page (roadmap item), "first 50 founding members" counter on donate page, YouTube premiere for the first real server going live.
+13. Launch-day kit: status page (roadmap item), "first 25 founding members" counter on donate page, YouTube premiere for the first real server going live.
 
 ## Phase 4 — Investor/funder one-pager (~1 day, after Phase 1 data)
 14. One page: what it is → demo link → traction numbers (from Phase 1) → the unit-economics story (sleep/wake = higher hardware utilization = structurally cheaper than 24/7 hosts) → roadmap (multi-node, templates) → the ask ($2,000 launch fund → how many customers that buys → revenue plan).
