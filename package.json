@@ -7,6 +7,9 @@
   "scripts": {
     "start": "node src/server.js",
     "check": "node -e \"for (const d of ['src','public']) for (const f of require('fs').readdirSync(d)) if (f.endsWith('.js')) require('child_process').execFileSync(process.execPath, ['--check', d + '/' + f], { stdio: 'inherit' })\"",
+    "test:unit": "node --test test/",
+    "test:growth": "node test/growth.e2e.js",
+    "test:browser": "node test/growth.browser.js",
     "test:rbac": "node test/rbac.e2e.js"
   },
   "engines": {
