@@ -49,7 +49,7 @@ const PAGES = {
 };
 // Files linked as-is (the guides use relative paths, so they stay at the top level).
 const EXTRA_PAGES = ['help.html', '404.html'];
-const ASSETS = ['site.css', 'site.js', 'icons.js', 'icons.svg', 'help.js', 'style.css', 'brand', 'media', 'docs'];
+const ASSETS = ['site.css', 'site.js', 'icons.js', 'icons.svg', 'help.js', 'style.css', 'brand', 'media', 'docs', 'investor-onepager.pdf'];
 
 async function get(p) {
   const r = await fetch(FROM + p).catch(() => null);

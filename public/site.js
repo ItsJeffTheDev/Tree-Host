@@ -60,6 +60,7 @@
     ['pricing', '/pricing', 'Pricing'],
     ['support', '/support', 'Support'],
     ['about', '/about', 'About'],
+    ['investors', '/investors', 'Invest'],
     ['donate', '/donate', 'Donate'],
   ];
   const header = document.getElementById('site-header');
