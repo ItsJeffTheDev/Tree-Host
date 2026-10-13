@@ -2020,165 +2020,60 @@ function creatorTierBadge(tier) {
   return `<span class="badge ${tier.id === 'gold' ? 'yellow' : tier.id === 'silver' ? 'blue' : ''}">${esc(tier.label)} ${tier.percent}%</span>`;
 }
 
-async function adminCreators(body, sub) {
-  if (sub) return creatorLedger(body, sub);
-  const [d, apps] = await Promise.all([api('GET', '/api/admin/creators'), api('GET', '/api/admin/creators/applications').catch(() => ({ pending: [], reviewed: [] }))]);
+/** Applications review: its own console page (filter tabs pending / approved / denied / all). */
+async function adminApplications(body, filter) {
+  filter = ['pending', 'approved', 'denied'].includes(filter) ? filter : 'pending';
+  const apps = await api('GET', '/api/admin/creators/applications').catch(() => ({ pending: [], reviewed: [] }));
+  const all = [...apps.pending.map((a) => ({ ...a, outcome: 'pending' })), ...apps.reviewed.map((a) => ({ ...a, outcome: a.accepted ? 'approved' : 'denied' }))];
+  const counts = { pending: apps.pending.length, approved: all.filter((a) => a.outcome === 'approved').length, denied: all.filter((a) => a.outcome === 'denied').length, all: all.length };
+  const shown = filter === 'all' ? all : all.filter((a) => a.outcome === filter);
+  const tab = (id, label) => `<a href="#apps/${id}" class="btn sm ${filter === id ? 'primary' : ''}" style="text-decoration:none">${label}${counts[id] !== undefined ? ` · ${counts[id]}` : ''}</a>`;
   body.innerHTML = `
-    <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
-      <p class="muted" style="margin:0 0 10px;max-width:620px">The creator (affiliate) program. A creator shares their personal link — <code>${esc((state.me.publicUrl || location.origin).replace(/^https?:\/\//, ''))}/CODE</code> — and earns a % of every referred customer's first payment. An optional viewer discount code gives their audience % off at checkout.</p>
-      <button class="btn primary" id="cr-add">+ Add creator</button>
+    <div class="row" style="gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+      ${tab('pending', 'Pending')}${tab('approved', 'Approved')}${tab('denied', 'Denied')}${tab('all', 'All')}
+      <span class="small muted" style="margin-left:auto">Applications arrive from the public /creators page.</span>
     </div>
-    <div class="card" style="margin-bottom:12px" id="cr-apps">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <b>Applications</b>
-        <span class="small muted">${apps.pending.length} pending${apps.reviewed.length ? ` · <a href="#" id="cr-apps-toggle">${apps.reviewed.length} reviewed</a>` : ''}</span>
-      </div>
-      ${apps.pending.length ? apps.pending.map((a) => `
-        <div class="row" style="gap:10px;align-items:flex-start;border-top:1px solid rgba(128,128,128,.2);padding:8px 0;flex-wrap:wrap">
-          <div style="flex:1;min-width:220px">
-            <b>${esc(a.name)}</b> ${a.handle ? `<span class="muted">${esc(a.handle)}</span>` : ''}${a.platform ? ` <span class="badge">${esc(a.platform)}</span>` : ''}${a.handle ? ` <a class="small" href="${socialUrl(a)}" target="_blank" rel="noopener">view channel ↗</a>` : ''}
-            <div class="small" style="margin-top:2px">${esc(a.message)}</div>
-            <div class="small muted">applied ${new Date(a.at).toLocaleDateString()} · suggested code <code class="copy" data-copy="${esc(a.suggestedCode)}">${esc(a.suggestedCode)}</code></div>
-          </div>
-          <div class="actions-cell" style="white-space:nowrap">
-            <button class="btn sm primary" data-app-accept="${esc(a.id)}">Accept</button>
-            <button class="btn sm" data-app-deny="${esc(a.id)}">Deny</button>
-          </div>
-        </div>`).join('') : '<p class="muted small" style="margin:6px 0 0">No pending applications. New ones arrive from the public /creators page and show up here.</p>'}
-      <div id="cr-apps-reviewed" style="display:none">
-        ${apps.reviewed.map((a) => `
-          <div class="row small" style="gap:8px;border-top:1px solid rgba(128,128,128,.2);padding:6px 0;align-items:center;flex-wrap:wrap">
-            <span class="badge ${a.accepted ? 'green' : 'red'}">${a.accepted ? 'accepted' : 'denied'}</span>
-            <b>${esc(a.name)}</b>${a.handle ? ` <span class="muted">${esc(a.handle)}</span>` : ''}
-            ${a.creatorCode ? `<code>${esc(a.creatorCode)}</code>` : ''}
-            ${a.accountUsername ? `<span class="muted">account ${esc(a.accountUsername)}</span>` : ''}
-            ${a.reason ? `<span class="muted" style="flex:1;min-width:160px">“${esc(a.reason)}”</span>` : ''}
-            <span class="muted" style="margin-left:auto;white-space:nowrap">${new Date(a.decidedAt).toLocaleDateString()} · ${esc(a.by || '')}${a.notifiedEmail ? ' · emailed' : a.notifiedInbox ? ' · inbox' : ' · not notified'}</span>
-          </div>`).join('')}
-      </div>
-    </div>
-    <div class="card" style="margin-bottom:12px">
-      <div class="row" style="flex-wrap:wrap;gap:10px;align-items:flex-end">
-        <label class="field" style="min-width:230px">Share links
-          <select id="cr-share-pick" style="width:auto;min-width:230px">
-            <option value="">Pick a creator…</option>
-            ${d.creators.filter((c) => c.status === 'active').map((c) => `<option value="${esc(c.code)}">${esc(c.name)}${c.handle ? ` (${esc(c.handle)})` : ''}</option>`).join('')}
-          </select>
-        </label>
-        <label class="field" style="flex:1;min-width:260px">Referral link
-          <input type="text" id="cr-share-link" readonly value="" placeholder="Pick a creator to see their link">
-        </label>
-        <button class="btn sm" id="cr-share-copylink" disabled>Copy link</button>
-        <label class="field" style="flex:1;min-width:200px">Viewer discount code
-          <input type="text" id="cr-share-code" readonly value="" placeholder="">
-          <span class="small muted" id="cr-share-code-hint"></span>
-        </label>
-        <button class="btn sm" id="cr-share-copycode" disabled>Copy code</button>
-        <button class="btn sm" id="cr-share-add">+ Add creator</button>
-      </div>
-      <div class="row" style="gap:10px;align-items:flex-end;margin-top:8px">
-        <label class="field" style="flex:1;min-width:220px">Attach an existing account
-          <input type="text" id="cr-attach-user" placeholder="username or email" style="max-width:260px">
-        </label>
-        <button class="btn sm" id="cr-attach" disabled>Attach</button>
-        <span class="small muted" style="max-width:340px">Give an account that signed up without the link this creator's earnings — e.g. someone who already had an account. Future commission goes to the picked creator; what past earnings already in a ledger stay there.</span>
-      </div>
-    </div>
-    <div class="stat-row">
-      <div class="stat"><div class="stat-num">${d.totals.creators}</div><div class="stat-label">creators</div></div>
-      <div class="stat"><div class="stat-num">${d.totals.signups}</div><div class="stat-label">referred signups</div></div>
-      <div class="stat"><div class="stat-num">${d.totals.payingReferrals}</div><div class="stat-label">paying referrals</div></div>
-      <div class="stat"><div class="stat-num">${money(d.totals.earnedCents)}</div><div class="stat-label">commission earned (all time)</div></div>
-      <div class="stat"><div class="stat-num">${money(d.totals.balanceCents)}</div><div class="stat-label">unpaid balances</div></div>
-    </div>
-    <div class="card" style="overflow-x:auto">
-      ${
-        d.creators.length
-          ? `<table>
-        <thead><tr><th>Creator</th><th>Code</th><th>Tier</th><th>Signups</th><th>Paying</th><th>Earned</th><th>Balance</th><th>Viewer code</th><th>Status</th><th></th></tr></thead>
-        <tbody>${d.creators
-          .map(
-            (c) => `<tr>
-          <td><b>${esc(c.name)}</b>${c.handle ? `<div class="small muted">${esc(c.handle)}${c.platform ? ` · ${esc(c.platform)}` : ''}</div>` : ''}</td>
-          <td><code class="copy" data-copy="${esc(c.code)}" title="Click to copy the code">${esc(c.code)}</code><div><a class="small" href="#" data-link="${esc(c.code)}">copy link</a></div></td>
-          <td>${creatorTierBadge(c.tier)}</td>
-          <td>${c.stats.signups}</td>
-          <td>${c.stats.payingReferrals}</td>
-          <td>${money(c.stats.earnedCents)}</td>
-          <td>${creatorBalanceHtml(c)}</td>
-          <td class="small">${c.viewerCode ? `<code class="copy" data-copy="${esc(c.viewerCode.code)}" title="Click to copy">${esc(c.viewerCode.code)}</code><div class="muted">${c.viewerCode.percentOff}% off${c.viewerCode.active ? '' : ' · paused'}</div>` : '<span class="muted">-</span>'}</td>
-          <td>${c.status === 'active' ? '<span class="badge green">active</span>' : '<span class="badge red">disabled</span>'}</td>
-          <td class="actions-cell" style="white-space:nowrap">
-            <button class="btn sm" data-ledger="${esc(c.code)}">Ledger</button>
-            <button class="btn sm" data-edit="${esc(c.code)}">Edit</button>
-            <button class="btn sm" data-payout="${esc(c.code)}">Mark payout</button>
-            <button class="btn sm danger" data-toggle="${esc(c.code)}" data-disable="${c.status === 'active' ? 1 : 0}">${c.status === 'active' ? 'Disable' : 'Enable'}</button>
-          </td>
-        </tr>`,
-          )
-          .join('')}</tbody></table>`
-          : '<p class="muted" style="margin:0">No creators yet. Add the first one and send them their link.</p>'
-      }
-    </div>
-    <p class="hint small" style="margin-top:8px">Balances are real money owed — payouts are sent by hand (PayPal, bank transfer or gift card) and marked here, which is what keeps the ledger and the audit log truthful. A negative balance means a refund clawed back more than was left after a payout; it clears against future commission.</p>`;
-  $('#cr-add', body).addEventListener('click', () => creatorModal(null, () => adminCreators(body)));
-  $('#cr-share-add', body).addEventListener('click', () => creatorModal(null, () => adminCreators(body)));
-  // Share links picker: selecting a creator fills their path-style referral link
-  // ({publicUrl or origin}/CODE — same shape as the deploy endpoint and what creators
-  // paste into YouTube descriptions) and their viewer discount code, if any.
-  const base = state.me.publicUrl || location.origin;
-  const shareLink = $('#cr-share-link', body);
-  const shareCode = $('#cr-share-code', body);
-  const codeHint = $('#cr-share-code-hint', body);
-  const pick = $('#cr-share-pick', body);
-  const copyBtns = [$('#cr-share-copylink', body), $('#cr-share-copycode', body)];
-  const syncShare = () => {
-    const c = d.creators.find((x) => x.code === pick.value);
-    shareLink.value = c ? `${base}/${c.code}` : '';
-    shareCode.value = c?.viewerCode?.code || '';
-    codeHint.textContent = c ? (c.viewerCode ? `${c.viewerCode.percentOff}% off${c.viewerCode.active ? '' : ' · paused'}` : '') : '';
-    shareCode.placeholder = c && !c.viewerCode ? 'No viewer code yet' : '';
-    copyBtns[0].disabled = !c;
-    copyBtns[1].disabled = !(c && c.viewerCode);
-  };
-  pick.addEventListener('change', syncShare);
-  const attachBtn = $('#cr-attach', body);
-  const attachInput = $('#cr-attach-user', body);
-  attachInput.addEventListener('input', () => (attachBtn.disabled = !(pick.value && attachInput.value.trim())));
-  attachBtn.addEventListener('click', () => {
-    const code = pick.value;
-    attempt(async () => {
-      const r = await api('POST', `/api/admin/creators/${encodeURIComponent(code)}/attach`, { username: attachInput.value.trim() });
-      toast(`${r.username} — now earning for ${r.creatorCode}`);
-      attachInput.value = '';
-      attachBtn.disabled = true;
-      adminCreators(body);
-    });
-  });
-  copyBtns[0].addEventListener('click', () => navigator.clipboard.writeText(shareLink.value).then(() => toast('Referral link copied')));
-  copyBtns[1].addEventListener('click', () => navigator.clipboard.writeText(shareCode.value).then(() => toast('Viewer code copied')));
-  // Applications panel: expand the reviewed list, accept/deny (suggested codes copy via the
-  // shared [data-copy] handler below).
-  const reviewedBox = $('#cr-apps-reviewed', body);
-  const reviewedToggle = $('#cr-apps-toggle', body);
-  if (reviewedToggle)
-    reviewedToggle.addEventListener('click', (e) => {
-      e.preventDefault();
-      const open = reviewedBox.style.display === 'none';
-      reviewedBox.style.display = open ? '' : 'none';
-      reviewedToggle.textContent = `${apps.reviewed.length} reviewed${open ? '' : ' (hidden)'}`;
-    });
+    <div class="card">
+    ${
+      shown.length
+        ? shown.map((a) => a.outcome === 'pending'
+          ? `<div class="row" style="gap:10px;align-items:flex-start;border-top:1px solid rgba(128,128,128,.2);padding:10px 0;flex-wrap:wrap">
+              <div style="flex:1;min-width:220px">
+                <b>${esc(a.name)}</b> ${a.handle ? `<span class="muted">${esc(a.handle)}</span>` : ''}${a.platform ? ` <span class="badge">${esc(a.platform)}</span>` : ''}${a.handle ? ` <a class="small" href="${socialUrl(a)}" target="_blank" rel="noopener">view channel ↗</a>` : ''}
+                <div class="small" style="margin-top:2px">${esc(a.message)}</div>
+                <div class="small muted">applied ${new Date(a.at).toLocaleDateString()} · suggested code <code class="copy" data-copy="${esc(a.suggestedCode)}">${esc(a.suggestedCode)}</code></div>
+              </div>
+              <div class="actions-cell" style="white-space:nowrap">
+                <button class="btn sm primary" data-app-accept="${esc(a.id)}">Accept</button>
+                <button class="btn sm" data-app-deny="${esc(a.id)}">Deny</button>
+              </div>
+            </div>`
+          : `<div class="row small" style="gap:8px;border-top:1px solid rgba(128,128,128,.2);padding:8px 0;align-items:center;flex-wrap:wrap">
+              <span class="badge ${a.outcome === 'approved' ? 'green' : 'red'}">${a.outcome === 'approved' ? 'Approved' : 'Denied'}</span>
+              <b>${esc(a.name)}</b>${a.handle ? ` <span class="muted">${esc(a.handle)}</span>` : ''}
+              <span class="muted">decided ${a.decidedAt ? new Date(a.decidedAt).toLocaleDateString() : '?'}${a.by ? ` by ${esc(a.by)}` : ''}</span>
+              ${a.creatorCode ? `<span>code <code class="copy" data-copy="${esc(a.creatorCode)}">${esc(a.creatorCode)}</code></span>` : ''}
+              ${a.reason ? `<span class="muted" style="flex-basis:100%">reason: ${esc(a.reason)}</span>` : ''}
+              <span class="muted">${a.notifiedEmail ? 'emailed' : ''}${a.notifiedEmail && a.notifiedInbox ? ' + ' : ''}${a.notifiedInbox ? 'inboxed' : ''}${!a.notifiedEmail && !a.notifiedInbox ? 'not notified (no address)' : ''}</span>
+            </div>`)
+          : `<p class="muted small" style="margin:6px 0">No ${filter === 'all' ? '' : filter + ' '}applications.</p>`
+    }
+    </div>`;
   $$('[data-app-accept]', body).forEach((b) => b.addEventListener('click', () => {
     const app = apps.pending.find((a) => a.id === b.dataset.appAccept);
     if (!app) return toast('That application was just reviewed — refresh to see the latest.', 'error');
-    applicationAcceptModal(app, () => adminCreators(body));
+    applicationAcceptModal(app, () => adminApplications(body, filter));
   }));
   $$('[data-app-deny]', body).forEach((b) => b.addEventListener('click', () => {
     const app = apps.pending.find((a) => a.id === b.dataset.appDeny);
     if (!app) return toast('That application was just reviewed — refresh to see the latest.', 'error');
-    applicationDenyModal(app, () => adminCreators(body));
+    applicationDenyModal(app, () => adminApplications(body, filter));
   }));
   $$('[data-copy]', body).forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
+}
+
+async function adminCreators(body, sub) {
+  if (sub) return creatorLedger(body, sub);
   $$('[data-link]', body).forEach((el) =>
     el.addEventListener('click', (e) => {
       e.preventDefault();
