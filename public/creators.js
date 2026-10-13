@@ -60,7 +60,7 @@ async function openCreatorEarnings() {
   let data = creatorLookupCache ? creatorLookupCache.data : null;
 
   const draw = () => {
-    if (!data.found) {
+    if (!data.found || !data.stats) {
       // Disabled (or removed) mid-session. The code is the credential, so unknown and
       // disabled answer the same { found: false } — same wording either way.
       body.classList.remove('muted');

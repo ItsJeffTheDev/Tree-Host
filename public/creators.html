@@ -305,7 +305,7 @@
 
     async function renderEarnings(code) {
       const mine = await loadEarnings(code);
-      if (mine && mine.found) {
+      if (mine && mine.found && mine.stats) {
         $('#r-balance').textContent = money(mine.stats.balanceCents);
         $('#r-paidout').textContent = money(mine.stats.paidOutCents);
         const ul = $('#r-earnings'); ul.innerHTML = '';
@@ -318,6 +318,11 @@
         $('#r-payout-hint').textContent = mine.payoutHint || '';
         $('#r-money').hidden = false;
         $('#r-login').hidden = true;
+      } else if (mine && mine.found && !mine.stats) {
+        // A mismatched/old response shape must never blank the page — show the nudge.
+        $('#r-login-text').textContent = 'Your earnings are ready — log in again to see them.';
+        $('#r-money').hidden = true;
+        $('#r-login').hidden = false;
       } else {
         $('#r-login-text').textContent = mine === 'other'
           ? 'This code belongs to a different account. Log in with the account you signed up through your link.'
@@ -333,8 +338,8 @@
       tb.textContent = `${d.tier.label} · ${d.tier.percent}%`;
       tb.className = `tier-badge-sm ${d.tier.id}`;
       $('#r-tier-line').textContent = `You earn ${d.tier.percent}% of every referred first payment at your current tier.`;
-      $('#r-signups').textContent = d.stats.signups;
-      $('#r-paying').textContent = d.stats.payingReferrals;
+      $('#r-signups').textContent = (d.stats || {}).signups ?? 0;
+      $('#r-paying').textContent = (d.stats || {}).payingReferrals ?? 0;
       $('#r-tier').textContent = d.tier.label;
       const origin = location.origin.startsWith('http') && !location.origin.includes('localhost') ? location.origin : 'https://treehost.online';
       $('#r-link').textContent = `${origin}/?ref=${encodeURIComponent(d.code)}`;
