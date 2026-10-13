@@ -3,6 +3,7 @@
 // With Firebase set up, each collection lives in the Realtime Database (so it survives losing the machine) and a
 // local copy is kept in the data folder as a backup. Without Firebase, only the local JSON files are used.
 const fsp = require('fs').promises;
+const crypto = require('crypto');
 const path = require('path');
 const { DATA } = require('./paths');
 const firebase = require('./firebase');
@@ -34,10 +35,21 @@ async function writeLocal(name, data) {
   await fsp.mkdir(DATA, { recursive: true });
   const file = localFile(name);
   // A unique tmp name per write: two flushes of the same collection (e.g. one racing
-  // shutdown) can never rename over each other's tmp file.
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fsp.writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
-  await fsp.rename(tmp, file);
+  // shutdown, or two module inits saving in the same millisecond) can never rename over
+  // each other's tmp file — pid + timestamp alone collided when two writes landed in
+  // the same ms, which killed Render starts with ENOENT. Counter + random suffix makes
+  // collisions impossible; the rename retry below is the belt-and-braces.
+  for (let attempt = 0; ; attempt++) {
+    const tmp = `${file}.${process.pid}.${Date.now()}.${(writeLocal.n = (writeLocal.n || 0) + 1).toString(36)}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+    try {
+      await fsp.writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+      await fsp.rename(tmp, file);
+      return;
+    } catch (e) {
+      await fsp.unlink(tmp).catch(() => {});
+      if (attempt >= 2) throw e;
+    }
+  }
 }
 
 /**
