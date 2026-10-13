@@ -419,6 +419,8 @@ class Creators {
     if (!c || c.status !== 'active') return { found: false };
     const tier = tierFor(c.stats.payingReferrals, this.ladder());
     const vp = c.viewerCode ? this.hooks.viewerPromo(c.viewerCode) : null;
+    const maps = this.hooks.metricsMaps() || {};
+    const signupRef = maps.signupRef || {};
     const recent = this.ledger
       .filter((e) => e.creatorId === c.id)
       .sort((a, b) => b.at - a.at)
@@ -434,7 +436,7 @@ class Creators {
       code: c.code,
       tier: { id: tier.id, label: tier.label, percent: tier.percent },
       stats: {
-        signups: c.stats.signups,
+        signups: Math.round(Number(signupRef[c.code]) || 0) || c.stats.signups,
         payingReferrals: c.stats.payingReferrals,
         balanceCents: c.stats.balanceCents,
         paidOutCents: c.stats.paidOutCents,

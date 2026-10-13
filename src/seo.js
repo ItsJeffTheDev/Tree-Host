@@ -28,6 +28,12 @@ const PAGES = [
     keywords: ['minecraft server price', 'cheap minecraft server hosting', 'minecraft server plans', 'lifetime minecraft hosting', 'minecraft server monthly'],
   },
   {
+    path: '/creators', file: 'creators.html', priority: '0.6', changefreq: 'monthly',
+    title: 'Creator Program: Get Paid to Recommend Tree Host',
+    description: 'Earn 10-20% of every first payment from players you send to Tree Host. Share your personal link, give viewers a discount code, request a payout any time. No follower minimums.',
+    keywords: ['minecraft server affiliate program', 'minecraft creator program', 'get paid to recommend minecraft hosting', 'minecraft referral program', 'tree host creators'],
+  },
+  {
     path: '/servers', file: 'servers.html', priority: '0.7', changefreq: 'daily',
     title: 'Minecraft Server List | Tree Host',
     description: 'Minecraft servers hosted on Tree Host: survival SMPs, modded worlds, minigames, creative and more. Find one and join.',

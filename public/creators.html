@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Creator Program - Tree Host</title>
+  <meta name="description" content="Get paid to recommend Tree Host. Share your personal link, earn 10-20% of every referred first payment, paid out on request. No follower minimums to start.">
+  <link rel="icon" href="/brand/tree-host-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/site.css">
+  <style>
+    .tier-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:20px; align-items:stretch; }
+    .tier-card { background:var(--panel); border:1px solid var(--border); border-radius:18px; padding:28px; display:flex; flex-direction:column; position:relative; transition:transform .25s, box-shadow .25s, border-color .25s; }
+    .tier-card:hover { transform:translateY(-4px); box-shadow:0 24px 60px rgba(0,0,0,.4); }
+    .tier-card.gold { border-color:rgba(232,194,122,.55); background:linear-gradient(135deg, rgba(232,194,122,.10), var(--panel) 55%); }
+    .tier-badge { width:54px; height:54px; border-radius:50%; display:grid; place-items:center; font-weight:800; font-size:12px; letter-spacing:.5px; margin-bottom:14px; border:2px solid; }
+    .tier-badge.bronze { color:#e0a878; border-color:#8a5a34; background:rgba(138,90,52,.22); }
+    .tier-badge.silver { color:#d7dee3; border-color:#7c8b95; background:rgba(124,139,149,.18); }
+    .tier-badge.gold { color:#e8c27a; border-color:#c5a944; background:rgba(197,169,68,.18); }
+    .tier-card h3 { font-size:20px; margin-bottom:2px; }
+    .tier-pct { font-size:40px; font-weight:800; line-height:1.1; background:linear-gradient(180deg, var(--accent2), var(--accent)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    .tier-card.gold .tier-pct { background:linear-gradient(180deg,#f0cf8c,#c5a944); -webkit-background-clip:text; background-clip:text; }
+    .tier-req { color:var(--muted); font-size:14.5px; margin:6px 0 0; }
+    .tier-card.tier-note { background:var(--panel2); }
+    .tier-card.tier-note p { color:var(--muted); font-size:14.5px; margin:0; }
+    .tier-card.tier-note b { color:var(--accent2); }
+    .steps-box { display:grid; grid-template-columns:repeat(3,1fr); gap:22px; position:relative; }
+    .steps-box::before { content:""; position:absolute; top:34px; left:16%; right:16%; height:2px; background:linear-gradient(90deg, var(--accent), var(--accent2)); transform:scaleX(0); transform-origin:left; transition:transform 1.4s ease .3s; }
+    .steps-box.in::before { transform:scaleX(1); }
+    .apply-grid, .lookup-grid { display:grid; grid-template-columns:1.15fr .85fr; gap:22px; align-items:start; }
+    .creator-form, .lookup-card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:26px; }
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    textarea { padding:11px 12px; border-radius:10px; border:1px solid var(--border); background:var(--bg2); color:var(--text); font:inherit; font-weight:400; width:100%; resize:vertical; }
+    textarea:focus { outline:none; border-color:var(--accent); }
+    select { padding:11px 12px; border-radius:10px; border:1px solid var(--border); background:var(--bg2); color:var(--text); font:inherit; font-weight:400; width:100%; }
+    select:focus { outline:none; border-color:var(--accent); }
+    .char-count { font-size:12.5px; color:var(--muted); text-align:right; margin-top:4px; }
+    .char-count.over { color:#ff8f8f; }
+    .form-ok { background:rgba(70,195,123,.12); border:1px solid rgba(70,195,123,.45); color:var(--accent2); border-radius:10px; padding:14px 16px; font-size:14.5px; }
+    .form-err { background:rgba(220,80,80,.12); border:1px solid rgba(255,120,120,.45); color:#ff9d9d; border-radius:10px; padding:14px 16px; font-size:14.5px; }
+    .lookup-row { display:flex; gap:10px; }
+    .lookup-row input { flex:1; }
+    .lookup-hint { font-size:13px; color:var(--muted); margin:10px 0 0; }
+    .result-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+    .tier-badge-sm { display:inline-block; font-size:12px; font-weight:800; letter-spacing:.5px; padding:3px 12px; border-radius:99px; border:1px solid; text-transform:uppercase; }
+    .tier-badge-sm.bronze { color:#e0a878; border-color:#8a5a34; background:rgba(138,90,52,.22); }
+    .tier-badge-sm.silver { color:#d7dee3; border-color:#7c8b95; background:rgba(124,139,149,.18); }
+    .tier-badge-sm.gold { color:#e8c27a; border-color:#c5a944; background:rgba(197,169,68,.18); }
+    .stat-boxes { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin:16px 0; }
+    .stat-box { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+    .stat-box .v { font-size:22px; font-weight:800; color:var(--accent2); font-variant-numeric:tabular-nums; line-height:1.2; }
+    .stat-box .l { font-size:12.5px; color:var(--muted); }
+    .code-chip { display:flex; align-items:center; gap:8px; background:rgba(70,195,123,.10); border:1px solid rgba(70,195,123,.35); border-radius:10px; padding:10px 12px; font-family:var(--mono); font-size:15px; font-weight:700; color:var(--accent2); }
+    .code-chip.off { opacity:.55; border-style:dashed; }
+    .copy-btn { background:none; border:1px solid var(--border); border-radius:8px; color:var(--muted); font:inherit; font-size:13px; font-weight:600; padding:5px 12px; cursor:pointer; transition:border-color .2s, color .2s; margin-left:auto; flex:none; }
+    .copy-btn:hover { border-color:var(--accent); color:var(--accent2); }
+    .ref-link { font-family:var(--mono); font-size:13.5px; word-break:break-all; }
+    .earnings { list-style:none; padding:0; margin:0; }
+    .earnings li { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid var(--border); font-size:14px; }
+    .earnings li:last-child { border-bottom:0; }
+    .earnings .amt { font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .earnings .amt.pos { color:var(--accent2); }
+    .earnings .amt.neg { color:#ff8f8f; }
+    .earnings .lbl { color:var(--muted); }
+    @media (max-width:960px) { .apply-grid, .lookup-grid { grid-template-columns:1fr; } .form-row { grid-template-columns:1fr; } .steps-box { grid-template-columns:1fr; gap:34px; } .steps-box::before { display:none; } }
+    @media (max-width:600px) { .stat-boxes { grid-template-columns:1fr 1fr; } }
+  </style>
+</head>
+<body data-page="creators">
+  <header id="site-header"></header>
+
+  <div class="page-hero">
+    <div class="wrap">
+      <span class="eyebrow reveal">Creator program</span>
+      <h1 class="reveal d1">Get paid to recommend Tree Host.</h1>
+      <p class="reveal d2">Share your personal link. When someone you sent signs up and pays for their first server,
+        you earn a cut of that payment — real money, paid out by our team on request. No follower minimums to start.</p>
+    </div>
+  </div>
+
+  <section style="padding-top:8px">
+    <div class="wrap">
+      <div class="section-head reveal"><h2>Referral tiers</h2><p>The more players you send who stay, the bigger your cut.
+        Your tier moves itself — you never ask, and it never drops.</p></div>
+      <div class="tier-grid">
+        <div class="tier-card reveal">
+          <div class="tier-badge bronze">BRONZE</div>
+          <h3>Bronze</h3>
+          <div class="tier-pct">10%</div>
+          <p class="tier-req">of every first payment · from your very first referral — everyone starts here</p>
+        </div>
+        <div class="tier-card reveal d1">
+          <div class="tier-badge silver">SILVER</div>
+          <h3>Silver</h3>
+          <div class="tier-pct">15%</div>
+          <p class="tier-req">of every first payment · at <b>5+ paying referrals</b></p>
+        </div>
+        <div class="tier-card gold reveal d2">
+          <div class="tier-badge gold">GOLD</div>
+          <h3>Gold</h3>
+          <div class="tier-pct">20%</div>
+          <p class="tier-req">of every first payment · at <b>25+ paying referrals</b></p>
+        </div>
+        <div class="tier-card tier-note reveal d3">
+          <div class="ico" style="width:46px;height:46px;border-radius:12px;display:grid;place-items:center;background:rgba(70,195,123,.12);margin-bottom:14px"><svg class="ic" aria-hidden="true"><use href="/icons.svg#sparkle"/></svg></div>
+          <h3 style="color:var(--accent2)">Your tier moves itself</h3>
+          <p>Auto-promotes the moment a referral's first payment lands — you're paid at your current tier, and every
+            payment you've already earned stays counted. Your tier never drops back down.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section style="padding-top:0">
+    <div class="wrap">
+      <div class="section-head reveal"><h2>How it works</h2><p>Three steps between your channel and your first payout.</p></div>
+      <div class="steps-box">
+        <div class="step reveal"><div class="step-num">1</div><h3>Get your code</h3><p>Apply below. We review new creators by hand — usually within a couple of days — and send you a personal code.</p></div>
+        <div class="step reveal d1"><div class="step-num">2</div><h3>Share your link</h3><p>Your link is <code>treehost.online/?ref=YOURCODE</code>. You also get an optional discount code your viewers can use at checkout.</p></div>
+        <div class="step reveal d2"><div class="step-num">3</div><h3>Earn on every first payment</h3><p>When a referred player's first payment lands, your cut is added to your balance automatically. Request a payout whenever you like.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0" id="apply">
+    <div class="wrap">
+      <div class="section-head reveal"><h2>Apply to the program</h2><p>Applications are reviewed by the Tree Host team, usually within a couple of days.</p></div>
+      <div class="apply-grid">
+        <form class="creator-form reveal" id="apply-form" novalidate>
+          <div class="form-row">
+            <label class="d-field"><span>Your name</span>
+              <input type="text" id="a-name" maxlength="40" placeholder="Alex" autocomplete="name" required></label>
+            <label class="d-field"><span>Channel handle</span>
+              <input type="text" id="a-handle" maxlength="40" placeholder="@yourchannel" autocomplete="off"></label>
+          </div>
+          <label class="d-field" style="margin-top:14px"><span>Where do you post?</span>
+            <select id="a-platform" required>
+              <option value="">Choose a platform…</option>
+              <option>YouTube</option>
+              <option>Twitch</option>
+              <option>TikTok</option>
+              <option>Discord</option>
+              <option>Reddit</option>
+              <option>Forum / website</option>
+              <option>Other</option>
+            </select></label>
+          <label class="d-field" style="margin-top:14px"><span>Anything we should know? <span class="muted">(optional, max 500 characters)</span></span>
+            <textarea id="a-message" rows="4" maxlength="500" placeholder="I make SMP survival series with 8k subscribers…"></textarea>
+            <span class="char-count" id="a-count">500 characters left</span></label>
+          <div class="form-ok" id="a-ok" hidden></div>
+          <div class="form-err" id="a-err" hidden></div>
+          <button type="submit" class="btn-cta block" id="a-go" style="margin-top:16px">Send application</button>
+        </form>
+        <div class="card reveal d1" style="padding:26px">
+          <div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#handshake"/></svg></div>
+          <h3>What we look for</h3>
+          <p>Minecraft content of any size — an SMP series, a modpack spotlight, a tutorial, a server list. We care
+            that your audience actually plays, not how big the channel is. No follower minimums to start.</p>
+          <h3 style="margin-top:18px">The fine print</h3>
+          <p>Commission is a cut of the <b>first payment</b> from each referred player. It lands in your Tree Host
+            balance the moment their server goes live, and you can request a payout at any time — we pay out by
+            PayPal, IBAN or gift card. If a first payment is refunded, the commission is clawed back automatically.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0" id="lookup">
+    <div class="wrap">
+      <div class="section-head reveal"><h2>Already a creator?</h2><p>Enter your creator code to see your referrals, tier and balance.</p></div>
+      <div class="lookup-grid">
+        <div class="lookup-card reveal">
+          <div id="lookup-idle">
+            <div class="lookup-row">
+              <label class="d-field" style="flex:1"><span class="sr-only" hidden>Your creator code</span>
+                <input type="text" id="l-code" placeholder="e.g. SPARK" autocomplete="off" spellcheck="false" maxlength="32" style="text-transform:uppercase"></label>
+              <button type="button" class="btn-cta" id="l-go">Look up</button>
+            </div>
+            <p class="lookup-hint">Codes are case-insensitive. Lost it? <a data-email="promo" href="#">Email the team</a>.</p>
+            <div class="form-err" id="l-err" hidden></div>
+          </div>
+          <div id="lookup-result" hidden>
+            <div class="result-head">
+              <h3 id="r-greeting" style="margin:0">Here's how <span class="green" id="r-code"></span> is doing</h3>
+              <span class="tier-badge-sm" id="r-tier-badge"></span>
+            </div>
+            <p class="muted small" id="r-tier-line" style="margin:6px 0 0"></p>
+            <div class="stat-boxes">
+              <div class="stat-box"><div class="v" id="r-signups">0</div><div class="l">Signups from your link</div></div>
+              <div class="stat-box"><div class="v" id="r-paying">0</div><div class="l">Paying referrals</div></div>
+              <div class="stat-box"><div class="v" id="r-balance">$0.00</div><div class="l">Balance (USD)</div></div>
+              <div class="stat-box"><div class="v" id="r-tier">—</div><div class="l">Current tier</div></div>
+            </div>
+            <div class="d-field"><span>Your referral link — this is the one to share</span>
+              <div class="code-chip"><span class="ref-link" id="r-link"></span><button type="button" class="copy-btn" id="r-copy">Copy</button></div>
+            </div>
+            <div class="d-field" id="r-viewer-wrap" style="margin-top:14px" hidden><span>Your viewer discount code</span>
+              <div class="code-chip" id="r-viewer-chip"><span id="r-viewer-code"></span><span class="muted small" id="r-viewer-off" style="font-weight:400"></span></div>
+              <span class="muted small">Viewers enter this at checkout for a discount on their first payment.</span>
+            </div>
+            <div class="d-field" style="margin-top:14px"><span>Recent earnings</span>
+              <ul class="earnings" id="r-earnings"></ul>
+            </div>
+            <p class="muted small" id="r-payout-hint" style="margin:14px 0 0"></p>
+            <button type="button" class="btn-ghost btn-sm" id="r-back" style="margin-top:14px">Look up another code</button>
+          </div>
+          <div id="lookup-dead" hidden>
+            <div class="form-err"><b>This creator code is no longer active.</b><br>
+              <span class="small">If you think this is a mistake, <a data-email="promo" href="#">email the team</a>. Earned balances are still honoured.</span></div>
+            <button type="button" class="btn-ghost btn-sm" id="d-back" style="margin-top:14px">Try another code</button>
+          </div>
+        </div>
+        <div class="card reveal d1" style="padding:26px">
+          <div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#search"/></svg></div>
+          <h3>Where to find it</h3>
+          <p>Your creator code was in the email from the Tree Host team when you were accepted. It's the same code
+            that's in your referral link — everything after <code>?ref=</code>.</p>
+          <h3 style="margin-top:18px">Your balance</h3>
+          <p>Every referred player's first payment adds your cut automatically. Payouts are sent by our team on
+            request, by PayPal, IBAN or gift card — the balance is shown exactly as recorded, so you always know
+            where you stand.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer id="site-footer"></footer>
+  <script src="/icons.js"></script>
+  <script src="/site.js"></script>
+  <script src="/staging.js" defer></script>
+  <script>
+  (() => {
+    const $ = (s) => document.querySelector(s);
+    const esc = window.esc || ((v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]));
+    const money = (cents) => { try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(cents / 100); } catch { return '$' + (cents / 100).toFixed(2); } };
+
+    // ---------- application form ----------
+    const form = $('#apply-form'), aErr = $('#a-err'), aOk = $('#a-ok'), aGo = $('#a-go');
+    const msg = $('#a-message'), count = $('#a-count');
+    const left = () => { const n = 500 - msg.value.length; count.textContent = `${n} character${n === 1 ? '' : 's'} left`; count.classList.toggle('over', n < 0); };
+    msg.addEventListener('input', left); left();
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      aErr.hidden = true; aOk.hidden = true;
+      const body = { name: $('#a-name').value.trim(), handle: $('#a-handle').value.trim(), platform: $('#a-platform').value, message: msg.value.trim() };
+      if (!body.name) return show(aErr, 'Enter your name.');
+      if (!body.platform) return show(aErr, 'Choose where you post.');
+      if (body.message.length > 500) return show(aErr, 'Keep the message under 500 characters.');
+      aGo.disabled = true; aGo.textContent = 'Sending…';
+      try {
+        const r = await fetch('/api/creators/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json().catch(() => ({}));
+        if (r.status === 429) show(aErr, 'Too many applications from your network right now — try again in a little while.');
+        else if (!r.ok) show(aErr, d.error || 'Something went wrong. Try again, or email the team.');
+        else { aOk.hidden = false; aOk.innerHTML = '<b>Application sent — thank you!</b> We review every application by hand, usually within a couple of days. We\'ll get back to you by email.'; form.reset(); left(); }
+      } catch { show(aErr, 'Could not reach the server. Check your connection and try again.'); }
+      aGo.disabled = false; aGo.textContent = 'Send application';
+    });
+    function show(el, text) { el.textContent = text; el.hidden = false; el.scrollIntoView({ block: 'nearest' }); }
+
+    // ---------- creator code lookup ----------
+    const idle = $('#lookup-idle'), result = $('#lookup-result'), dead = $('#lookup-dead');
+    const lCode = $('#l-code'), lErr = $('#l-err'), lGo = $('#l-go');
+    const state = (s) => { for (const el of [idle, result, dead]) el.hidden = el !== s; };
+    lCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lGo.click(); } });
+    lGo.addEventListener('click', async () => {
+      const code = lCode.value.trim().toUpperCase();
+      lErr.hidden = true;
+      if (!code) { show(lErr, 'Enter your creator code.'); return; }
+      lGo.disabled = true; lGo.textContent = 'Checking…';
+      try {
+        const r = await fetch(`/api/creators/lookup?code=${encodeURIComponent(code)}`);
+        const d = await r.json().catch(() => ({}));
+        if (r.status === 429) { state(idle); show(lErr, 'Too many lookups right now — wait a few minutes and try again.'); }
+        else if (r.ok && d.found) render(d);
+        else if (r.ok) { state(dead); $('#d-back').focus(); } // identical for unknown + disabled (GAP-1)
+        else show(lErr, d.error || 'Could not look that up. Try again.');
+      } catch { state(idle); show(lErr, 'Could not reach the server. Check your connection and try again.'); }
+      lGo.disabled = false; lGo.textContent = 'Look up';
+    });
+    const back = () => { state(idle); lCode.value = ''; lCode.focus(); };
+    $('#r-back').addEventListener('click', back);
+    $('#d-back').addEventListener('click', back);
+
+    function render(d) {
+      $('#r-code').textContent = d.code;
+      const tb = $('#r-tier-badge');
+      tb.textContent = `${d.tier.label} · ${d.tier.percent}%`;
+      tb.className = `tier-badge-sm ${d.tier.id}`;
+      $('#r-tier-line').textContent = `You earn ${d.tier.percent}% of every referred first payment at your current tier.`;
+      $('#r-signups').textContent = d.stats.signups;
+      $('#r-paying').textContent = d.stats.payingReferrals;
+      $('#r-balance').textContent = money(d.stats.balanceCents);
+      $('#r-tier').textContent = d.tier.label;
+      const origin = location.origin.startsWith('http') && !location.origin.includes('localhost') ? location.origin : 'https://treehost.online';
+      $('#r-link').textContent = `${origin}/?ref=${encodeURIComponent(d.code)}`;
+      $('#r-viewer-wrap').hidden = !d.viewerCode;
+      if (d.viewerCode) {
+        $('#r-viewer-code').textContent = d.viewerCode.code;
+        $('#r-viewer-off').textContent = d.viewerCode.active ? `${d.viewerCode.percentOff}% off their first payment` : 'no longer active';
+        $('#r-viewer-chip').classList.toggle('off', !d.viewerCode.active);
+      }
+      const ul = $('#r-earnings'); ul.innerHTML = '';
+      (d.recent || []).forEach((e) => {
+        const li = document.createElement('li');
+        li.innerHTML = `<span class="lbl">${esc(e.label)}</span><span class="amt ${e.amountCents >= 0 ? 'pos' : 'neg'}">${e.amountCents >= 0 ? '+' : ''}${money(e.amountCents)}</span>`;
+        ul.appendChild(li);
+      });
+      if (!(d.recent || []).length) ul.innerHTML = '<li><span class="lbl">No earnings yet — share your link to get started.</span></li>';
+      $('#r-payout-hint').textContent = d.payoutHint || '';
+      state(result);
+      result.scrollIntoView({ block: 'nearest' });
+      // referral-link copy (reduced-motion safe: no animation involved)
+      $('#r-copy').onclick = async () => {
+        const b = $('#r-copy');
+        try { await navigator.clipboard.writeText($('#r-link').textContent); b.textContent = 'Copied!'; }
+        catch { const sel = getSelection(); sel.removeAllRanges(); const rg = document.createRange(); rg.selectNodeContents($('#r-link')); sel.addRange(rg); document.execCommand('copy'); b.textContent = 'Copied!'; }
+        setTimeout(() => { b.textContent = 'Copy'; }, 1600);
+      };
+    }
+  })();
+  </script>
+</body>
+</html>
