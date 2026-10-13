@@ -1696,6 +1696,9 @@ route(
 );
 route('POST', '/api/admin/promos', async (req) => {
   const body = await readJson(req);
+  // A promo code can't take a creator's code: the same string would mean a free plan in one box
+  // and a percent-off checkout code in the other (spec §4/D15 — the collision is bidirectional).
+  if (creators.byCode(body.code)) throw httpError(400, `${String(body.code).trim().toUpperCase()} is already a creator code. Pick another.`);
   // "forUser": a username, email or account id. The code then only works for that account, once.
   let target = null;
   if (body.forUser || body.forUserId) {

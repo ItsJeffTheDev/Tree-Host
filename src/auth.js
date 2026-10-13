@@ -169,6 +169,8 @@ class Auth {
       emailVerified: u.firebaseUid ? !!u.emailVerified : true,
       twoFactor: !!(u.mfa && u.mfa.on),
       ref: u.ref || null,
+      // The creator this account was attributed to at signup (their own display code; spec §11 E1).
+      creatorCode: u.creatorCode || null,
       // An Owner email that isn't verified yet: it becomes Owner as soon as the email is verified.
       ownerPending: !!u.email && this.adminEmails.has(u.email) && u.role !== 'owner',
     };

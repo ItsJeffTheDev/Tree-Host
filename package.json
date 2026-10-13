@@ -10,7 +10,8 @@
     "test:unit": "node --test test/",
     "test:growth": "node test/growth.e2e.js",
     "test:browser": "node test/growth.browser.js",
-    "test:rbac": "node test/rbac.e2e.js"
+    "test:rbac": "node test/rbac.e2e.js",
+    "test:creators": "node test/creators.e2e.js"
   },
   "engines": {
     "node": ">=20"
