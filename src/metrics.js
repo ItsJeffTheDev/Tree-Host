@@ -76,13 +76,21 @@ function normPath(p) {
   return s.startsWith('/') ? s : null;
 }
 
-// Ref allowlist: discord/youtube/reddit/serverlist kept verbatim; any other non-empty value
-// -> 'other'; absent/empty -> null (not recorded).
-function refValue(ref) {
+// Ref allowlist: discord/youtube/reddit/serverlist kept verbatim (lowercase); any other
+// non-empty value is 'other' UNLESS creatorCodes is supplied and the uppercase-normalized
+// input matches one case-insensitively — then the creator code itself (verbatim, uppercase).
+// Absent/empty -> null (not recorded). Single-arg calls behave exactly as before.
+function refValue(ref, { creatorCodes } = {}) {
   if (ref === undefined || ref === null) return null;
   const s = String(ref).trim().toLowerCase();
   if (!s) return null;
-  return REFS.includes(s) ? s : 'other';
+  if (REFS.includes(s)) return s;
+  if (Array.isArray(creatorCodes) && creatorCodes.length) {
+    const up = s.toUpperCase();
+    const code = creatorCodes.find((c) => String(c || '').trim().toUpperCase() === up);
+    if (code) return String(code).trim().toUpperCase();
+  }
+  return 'other';
 }
 
 function newBucket() {

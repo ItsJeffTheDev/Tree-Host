@@ -124,16 +124,15 @@
 
   // ---------- attribution: ?ref= capture + page-view beacon ----------
   // Session-scoped marker only (sessionStorage, dies with the tab — never a cookie). The
-  // ref value is validated against the same allowlist the server uses; anything else that
-  // was supplied counts as 'other', nothing is stored when absent.
+  // ref value is NOT validated here: creator codes are not known client-side, so any
+  // non-empty value is passed through (uppercased) and the server's refValue() — with the
+  // creator registry — is the single enforcement point. Nothing is stored when absent.
 
-  const REFS = ['discord', 'youtube', 'reddit', 'serverlist'];
   const refFromUrl = () => {
     const raw = new URLSearchParams(location.search).get('ref');
     if (!raw) return null;
-    const v = String(raw).trim().toLowerCase();
-    if (!v) return null;
-    return REFS.includes(v) ? v : 'other';
+    const v = String(raw).trim().toUpperCase();
+    return v || null;
   };
   try {
     const ref = refFromUrl();
