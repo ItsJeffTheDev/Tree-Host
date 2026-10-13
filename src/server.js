@@ -1986,6 +1986,95 @@ route('POST', '/api/admin/emails/test', async (req) => {
   return { ok: true, to: req.user.email };
 }, { perm: 'settings.manage' });
 
+// Email broadcast: the Owner emails everyone who signed up, or a list of addresses typed in by hand
+// (people who haven't signed up yet). Composition and sending both happen here; the composer is in the
+// Staff Console → Settings → Broadcast email.
+const BROADCAST_MAX = 2000; // addresses per send (Resend rate limits: also why sends are spaced out below)
+const BROADCAST_DELAY = 150; // ms between sends
+const BROADCAST_SUBJECT_MAX = 120;
+const BROADCAST_BODY_MAX = 5000;
+const cleanEmailList = (raw) => {
+  const list = Array.isArray(raw) ? raw : String(raw || '').split(/[\n,;]+/);
+  const seen = new Set();
+  const out = [];
+  for (let e of list) {
+    e = String(e || '').trim().toLowerCase();
+    if (!e) continue;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw httpError(400, `"${e.slice(0, 80)}" is not a valid email address.`);
+    if (!seen.has(e)) {
+      seen.add(e);
+      out.push(e);
+    }
+  }
+  if (!out.length) throw httpError(400, 'Enter at least one email address.');
+  if (out.length > BROADCAST_MAX) throw httpError(400, `That's ${out.length} addresses — the limit is ${BROADCAST_MAX} per send.`);
+  return out;
+};
+const broadcastBody = (body) => {
+  const subject = String(body.subject || '').trim();
+  const text = String(body.body || '').trim();
+  if (!subject) throw httpError(400, 'Enter a subject.');
+  if (subject.length > BROADCAST_SUBJECT_MAX) throw httpError(400, `The subject is too long (max ${BROADCAST_SUBJECT_MAX} characters).`);
+  if (!text) throw httpError(400, 'Write something in the message.');
+  if (text.length > BROADCAST_BODY_MAX) throw httpError(400, `The message is too long (max ${BROADCAST_BODY_MAX} characters).`);
+  const paragraphs = text.split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
+  const button = body.button && body.button.text && body.button.url ? { text: String(body.button.text).slice(0, 60), url: String(body.button.url) } : null;
+  if (button && !/^https?:\/\//.test(button.url)) throw httpError(400, 'The button link must start with http:// or https://.');
+  if (!Array.isArray(paragraphs) || !paragraphs.length) throw httpError(400, 'Write something in the message.');
+  return { subject, paragraphs, button };
+};
+const broadcastFrom = (raw) => {
+  if (!mail.allowedFrom(raw)) throw httpError(400, 'Pick one of the Tree Host addresses to send from.');
+  return String(raw).trim().toLowerCase();
+};
+const broadcastAudience = (req, body) => {
+  if (body.audience === 'signedup') {
+    const recipients = [];
+    let skipped = 0;
+    for (const u of auth.users) {
+      if (u.email) recipients.push({ email: u.email, user: u });
+      else skipped++;
+    }
+    return { recipients, skipped };
+  }
+  return { recipients: cleanEmailList(body.emails).map((email) => ({ email, user: auth.users.find((u) => u.email === email) || null })), skipped: 0 };
+};
+route('GET', '/api/admin/broadcast', () => ({
+  enabled: mail.enabled(),
+  fromOptions: mail.senders(),
+  count: auth.users.filter((u) => u.email).length,
+}), { perm: 'settings.manage' });
+route('POST', '/api/admin/broadcast/preview', async (req, res) => {
+  const body = await readJson(req);
+  const { subject, paragraphs, button } = broadcastBody(body);
+  const from = broadcastFrom(body.from);
+  const { html } = mail.render(subject, paragraphs, button, { preview: true, note: 'You are receiving this because you have a Tree Host account or gave us your email address.' });
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'" });
+  res.end(html);
+  return HANDLED;
+}, { perm: 'settings.manage' });
+route('POST', '/api/admin/broadcast/send', async (req) => {
+  const body = await readJson(req);
+  if (!body.confirm) throw httpError(400, 'Not confirmed: press Send again and confirm in the dialog.');
+  if (!mail.enabled()) throw httpError(400, 'Emails are off: put RESEND_API_KEY in the settings file and restart.');
+  const { subject, paragraphs, button } = broadcastBody(body);
+  const from = broadcastFrom(body.from);
+  const { recipients, skipped } = broadcastAudience(req, body);
+  const sent = [];
+  const failed = [];
+  for (const { email } of recipients) {
+    try {
+      await mail.send(email, subject, paragraphs, button, { from });
+      sent.push(email);
+    } catch (e) {
+      failed.push({ email, error: String(e.message || e).slice(0, 200) });
+    }
+    if (sent.length + failed.length < recipients.length) await new Promise((r) => setTimeout(r, BROADCAST_DELAY));
+  }
+  audit(req, `sent a broadcast email "${subject}" from ${from} to ${sent.length} recipient(s)${failed.length ? `, ${failed.length} failed` : ''}`);
+  return { sent: sent.length, failed, skipped, total: recipients.length };
+}, { perm: 'settings.manage' });
+
 // Staff docs: kept out of public/ (so they can't be fetched as static files) and served only to staff.
 const STAFF_DOCS_DIR = path.join(__dirname, '..', 'staff-docs');
 const STAFF_DOCS = [

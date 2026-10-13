@@ -2438,6 +2438,10 @@ async function adminSettings(body) {
       <h3>Emails</h3>
       <div id="email-body" class="muted">Loading...</div>
     </div>
+    <div class="card stack" id="broadcast-card">
+      <h3>Broadcast email</h3>
+      <div id="broadcast-body" class="muted">Loading...</div>
+    </div>
     <div class="card stack" id="notify-card">
       <h3>Discord alerts for admins</h3>
       <div id="notify-body" class="muted">Loading...</div>
@@ -2445,6 +2449,7 @@ async function adminSettings(body) {
 `;
   renderNotifications(body).catch((e) => toast(e.message, 'error'));
   renderEmailSettings(body).catch((e) => ($('#email-body', body).textContent = e.message));
+  renderBroadcast(body);
   const st = await api('GET', '/api/team/settings');
   const box = $('#allow-signup', body);
   box.checked = !!st.allowSignup;
@@ -2494,6 +2499,92 @@ async function renderEmailSettings(body) {
       toast(`Sent to ${r.to}. Check your inbox (and spam).`);
     }),
   );
+}
+
+// ---------- broadcast email (Owner: Settings → Broadcast email) ----------
+
+// The composer for emailing everyone who signed up, or a hand-typed list of addresses. Two-step send:
+// Send… opens a confirm dialog showing how many inboxes this goes to; the request only goes out with
+// confirm: true. Results list the addresses that failed so they can be retried.
+function renderBroadcast(body) {
+  const host = $('#broadcast-body', body);
+  host.innerHTML = '<div class="muted">Loading...</div>';
+  api('GET', '/api/admin/broadcast').then((b) => {
+    host.innerHTML = `
+      <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:10px">
+        ${b.enabled ? '<span class="badge green">Sending is on</span>' : '<span class="badge red">Off: no email key set</span>'}
+        <span class="badge">${b.count} account${b.count === 1 ? '' : 's'} with an email</span>
+      </div>
+      <div class="stack">
+        <div class="row" style="flex-wrap:wrap;gap:14px;align-items:center">
+          <label class="small">From
+            <select id="bc-from">${b.fromOptions.map((o) => `<option value="${esc(o.address)}">${esc(o.address)} (${esc(o.label)})</option>`).join('')}</select>
+          </label>
+          <label class="check" style="margin:0"><input type="radio" name="bc-aud" value="signedup" checked> Everyone who signed up</label>
+          <label class="check" style="margin:0"><input type="radio" name="bc-aud" value="manual"> A list I enter</label>
+        </div>
+        <textarea id="bc-emails" rows="4" style="display:none" placeholder="One email per line (comma-separated works too)&#10;steve@example.com&#10;anna@example.com"></textarea>
+        <input type="text" id="bc-subject" maxlength="120" placeholder="Subject" style="width:100%">
+        <textarea id="bc-bodytext" rows="6" style="width:100%" placeholder="Your message. A blank line starts a new paragraph; **bold** works like in the other emails."></textarea>
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <input type="text" id="bc-btn-text" placeholder="Button text (optional)" style="flex:1;min-width:160px">
+          <input type="text" id="bc-btn-url" placeholder="Button link https://…" style="flex:1;min-width:220px">
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="btn" id="bc-preview">Preview</button>
+          <button class="btn primary" id="bc-send" ${b.enabled ? '' : 'disabled'}>Send…</button>
+        </div>
+        <div id="bc-result"></div>
+      </div>`;
+    const aud = () => host.querySelector('input[name="bc-aud"]:checked');
+    $$('input[name="bc-aud"]', host).forEach((r) =>
+      r.addEventListener('change', () => { $('#bc-emails', host).style.display = aud().value === 'manual' ? '' : 'none'; }));
+    const payload = (confirm) => ({
+      from: $('#bc-from', host).value,
+      audience: aud().value,
+      emails: $('#bc-emails', host).value,
+      subject: $('#bc-subject', host).value,
+      body: $('#bc-bodytext', host).value,
+      button: { text: $('#bc-btn-text', host).value.trim(), url: $('#bc-btn-url', host).value.trim() },
+      confirm,
+    });
+    const countRecipients = (p) =>
+      p.audience === 'manual'
+        ? new Set(p.emails.split(/[\n,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean)).size
+        : b.count;
+    $('#bc-preview', host).addEventListener('click', () =>
+      attempt(async () => {
+        const res = await fetch('/api/admin/broadcast/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload(false)) });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Preview failed');
+        const w = window.open('', '_blank');
+        if (!w) throw new Error('Allow pop-ups to see the preview.');
+        w.document.write(await res.text());
+        w.document.close();
+      }));
+    const doSend = () =>
+      attempt(async () => {
+        const r = await api('POST', '/api/admin/broadcast/send', payload(true));
+        const fails = r.failed.map((f) => `<div class="small" style="color:#b23b3b">${esc(f.email)} — ${esc(f.error)}</div>`).join('');
+        $('#bc-result', host).innerHTML = `
+          <div class="card" style="margin-top:10px">
+            <b>Sent to ${r.sent} of ${r.total}</b>${r.skipped ? ` · ${r.skipped} skipped` : ''}${r.failed.length ? ` · ${r.failed.length} failed` : ''}
+            ${fails ? `<div style="margin-top:6px">${fails}<div class="hint" style="margin-top:6px">Fix the problem, then send again to just these addresses (paste them into “A list I enter”).</div></div>` : ''}
+          </div>`;
+        toast(`Broadcast sent: ${r.sent} ok${r.failed.length ? `, ${r.failed.length} failed` : ''}`, r.failed.length ? 'error' : 'info');
+      });
+    $('#bc-send', host).addEventListener('click', () =>
+      attempt(async () => {
+        const p = payload(false);
+        const n = countRecipients(p);
+        if (!n) throw new Error('There is nobody to send to.');
+        const { close, root } = openModal(`
+          <h2>${ic('mail')} Send to ${n} ${p.audience === 'manual' ? (n === 1 ? 'address' : 'addresses') : (n === 1 ? 'account' : 'accounts')}?</h2>
+          <p class="muted" style="margin-top:-6px">From <b>${esc(p.from)}</b> · Subject: “${esc(p.subject)}”.</p>
+          <p class="hint">This goes out to real inboxes and can't be taken back.</p>
+          <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" id="bc-confirm">Send it</button></div>`);
+        $('#bc-confirm', root).addEventListener('click', () => { close(); doSend(); });
+      }));
+  }).catch((e) => { host.textContent = e.message; });
 }
 
 // ---------- deploy from build ----------

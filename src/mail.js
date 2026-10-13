@@ -9,6 +9,24 @@ const path = require('path');
 
 const KEY = process.env.RESEND_API_KEY || '';
 const FROM = process.env.MAIL_FROM || 'Tree Host <no-reply@treehost.online>';
+// Resend's API base (tests point this at a local stub so sends can be exercised without the network).
+const API = process.env.TREEHOST_RESEND_API || 'https://api.resend.com/emails';
+// Addresses we may send from: every Tree Host inbox plus the no-reply address. The broadcast composer
+// offers these and the API accepts only these, so a staff account can never make email look like it
+// came from some other sender.
+const SENDER_LABELS = {
+  'no-reply@treehost.online': 'No reply',
+  'support@treehost.online': 'Support',
+  'billing@treehost.online': 'Billing',
+  'promotion@treehost.online': 'Promotions',
+  'dmca@treehost.online': 'DMCA',
+};
+const senders = () => Object.entries(SENDER_LABELS).map(([address, label]) => ({ address, label }));
+/** The full "Tree Host <address>" envelope sender for an allowlisted bare address, or null if not allowed. */
+const allowedFrom = (address) => {
+  const a = String(address || '').trim().toLowerCase();
+  return SENDER_LABELS[a] ? `Tree Host <${a}>` : null;
+};
 // Where replies go: billing emails to the billing inbox, everything else to support.
 const SUPPORT = process.env.TREEHOST_SUPPORT_EMAIL || 'support@treehost.online';
 // Links in the footer go to the public site (a local test site's localhost means nothing in someone's inbox).
@@ -138,18 +156,20 @@ function render(subject, paragraphs, button, opts = {}) {
   return { html, text };
 }
 
-/** paragraphs: plain-text strings (**bold** allowed); button: { text, url } (optional); opts: see render(). */
+/** paragraphs: plain-text strings (**bold** allowed); button: { text, url } (optional); opts: see render().
+ * opts.from: an allowlisted bare address (see senders()) to send this email from instead of MAIL_FROM. */
 async function send(to, subject, paragraphs, button, opts = {}) {
   if (!KEY || !to) return false;
+  if (opts.from !== undefined && !allowedFrom(opts.from)) throw new Error(`Not an allowed sending address: ${opts.from}`);
   const { html, text } = render(subject, paragraphs, button, opts);
-  const res = await fetch('https://api.resend.com/emails', {
+  const res = await fetch(API, {
     method: 'POST',
     headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: FROM, to: [to], reply_to: opts.replyTo || SUPPORT, subject, html, text, attachments: attachments() }),
+    body: JSON.stringify({ from: allowedFrom(opts.from) || FROM, to: [to], reply_to: opts.replyTo || SUPPORT, subject, html, text, attachments: attachments() }),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Email failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
   return true;
 }
 
-module.exports = { enabled, send, render };
+module.exports = { enabled, send, render, senders, allowedFrom };
