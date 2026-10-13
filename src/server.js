@@ -762,6 +762,13 @@ route(
       }
       linkDevice(user, device).catch(() => {});
     }
+    // Session got renewed past half its TTL? Re-issue the cookie now too (a fresh 30-day Max-Age), so a browser
+    // in daily use never has its cookie run out before the server session does. The renewal itself happens in
+    // userFromSession (throttled to once an hour); this only fires when that also renewed the expiry.
+    if (TEAM && user && !user.local) {
+      const renewed = auth.renewedSession(getCookie(req, SESSION_COOKIE));
+      if (renewed) res.setHeader('Set-Cookie', [sessionCookie(req, renewed.token, 30 * 86400), ...(res.getHeader('Set-Cookie') || [])]);
+    }
     return {
       teamMode: TEAM,
       user: user ? { ...(user.local ? user : auth.publicUser(user)), ...(user.local ? {} : lifetimeOf(user)), roleLabel: rbac.role(user.role).label, ...(TEAM && !user.local && onTeamPage(user) ? { teamProfile: { show: true, title: '', bio: '', ...(user.teamProfile || {}) } } : {}), ...(TEAM && !user.local && rbac.isStaff(user) ? { staffPrefs: staffPrefsOf(user) } : {}), permissions: TEAM ? rbac.permissionsOf(user).filter((x) => can(user, x)) : PERMISSIONS.map((x) => x.id), ...(needs2fa(user) ? { needs2fa: true } : {}) } : null,
@@ -921,6 +928,34 @@ route('POST', '/api/auth/switch', async (req, res) => {
   sendJson(res, 200, { ok: true, username: s.user.username }, { 'Set-Cookie': await signInCookies(req, s.token) });
   return HANDLED;
 }, { restrictedOk: true });
+
+// Account → Security → "Signed-in browsers": the sessions of the signed-in account, and signing out of one (or of
+// all the others). Any signed-in account can see and revoke its own sessions.
+route('GET', '/api/auth/sessions', (req) => {
+  if (!TEAM) return { sessions: [] };
+  return {
+    maxAgeDays: 30,
+    sessions: auth.listSessions(req.user, auth.sessionHash(getCookie(req, SESSION_COOKIE))),
+  };
+});
+route('POST', '/api/auth/sessions/revoke', async (req, res) => {
+  if (!TEAM) throw httpError(400, 'Sessions only exist in team mode.');
+  const body = await readJson(req);
+  const currentHash = auth.sessionHash(getCookie(req, SESSION_COOKIE));
+  if (body.all) {
+    // Keep this session; every other browser where the account is signed in is signed out.
+    const n = await auth.revokeOtherSessions(req.user, currentHash);
+    return { ok: true, revoked: n };
+  }
+  const ok = await auth.revokeSession(req.user, body.id);
+  if (!ok) throw httpError(404, 'That session was already signed out or has expired.');
+  if (auth.sessionHash(getCookie(req, SESSION_COOKIE)).startsWith(String(body.id || ''))) {
+    // Revoking the browser you're using right now is a sign-out: clear the cookies too.
+    sendJson(res, 200, { ok: true, signedOut: true }, { 'Set-Cookie': [sessionCookie(req, '', 0), cookieStr(req, ACCOUNTS_COOKIE, '', 0)] });
+    return HANDLED;
+  }
+  return { ok: true };
+});
 
 route('PATCH', '/api/auth/me', async (req) => {
   if (!TEAM) throw httpError(400, 'Accounts only exist in team mode.');

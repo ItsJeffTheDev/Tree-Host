@@ -798,12 +798,58 @@ function openSecurity() {
     <h2>${ic('lock')} Security</h2>
     <p class="muted" style="margin-top:-6px">Keep your Tree Host account safe, even if someone learns your password.</p>
     <div class="card stack" id="sec-2fa"></div>
+    <div class="card stack" id="sec-sessions"><h3>${ic('globe')} Signed-in browsers</h3><p class="muted" style="margin:0">Loading...</p></div>
     <div class="card stack">
       <h3>${ic('key')} Password</h3>
       <p class="hint" style="margin:0">${state.me.user.firebase ? 'You sign in with your email or Google: change your password from the sign-in page with <b>Forgot password</b>.' : 'Change it in <b>Account</b>. Use a long one you don\'t use anywhere else.'}</p>
     </div>
     <div class="modal-actions"><button class="btn" data-close>Close</button></div>`);
   renderTwoFactorCard($('#sec-2fa', root));
+  renderSessionsCard($('#sec-sessions', root));
+}
+
+/** Account → Security → Signed-in browsers: where this account is signed in (server-side sessions), with the
+ *  option to sign out of one browser or all the others. 30 days after you last used one, it expires by itself. */
+async function renderSessionsCard(box) {
+  if (!box) return;
+  let data;
+  try {
+    data = await api('GET', '/api/auth/sessions');
+  } catch {
+    box.innerHTML = `<h3>${ic('globe')} Signed-in browsers</h3><p class="hint" style="margin:0">Sessions are only tracked in accounts mode.</p>`;
+    return;
+  }
+  const row = (s) => `<div class="row" style="align-items:center;gap:8px">
+      <span style="flex:1;min-width:0">
+        <b>${s.current ? 'This browser' : 'Another browser'}</b>
+        ${s.current ? '<span class="badge green">using now</span>' : ''}
+        <span class="small muted" style="display:block">signed in ${new Date(s.createdAt).toLocaleDateString()}
+          · last used ${new Date(s.lastSeen).toLocaleString()}</span>
+      </span>
+      ${s.current ? '' : `<button class="btn sm danger" data-srev="${esc(s.id)}">Revoke</button>`}
+    </div>`;
+  const list = data.sessions;
+  const others = list.filter((s) => !s.current).length;
+  box.innerHTML = `<h3>${ic('globe')} Signed-in browsers</h3>
+    <p class="hint" style="margin:0">Your account stays signed in for <b>${data.maxAgeDays} days</b> after each use, on each browser
+      (2FA is only asked for when you sign in, never while the session lasts). Revoke a browser you don't recognise.</p>
+    <div class="stack" style="gap:10px">${list.map(row).join('') || '<span class="muted small">No active sessions.</span>'}</div>
+    ${others ? '<div class="row"><button class="btn sm" id="sec-revoke-others">Sign out everywhere else</button></div>' : ''}`;
+  $$('[data-srev]', box).forEach((b) =>
+    b.addEventListener('click', () => confirm('Sign this browser out of your account?') &&
+      attempt(async () => {
+        await api('POST', '/api/auth/sessions/revoke', { id: b.dataset.srev });
+        toast('Signed out there.');
+        renderSessionsCard(box);
+      })));
+  if ($('#sec-revoke-others', box)) {
+    $('#sec-revoke-others', box).addEventListener('click', () => confirm(`Sign out of your account on all ${others} other browser${others > 1 ? 's' : ''}?`) &&
+      attempt(async () => {
+        const r = await api('POST', '/api/auth/sessions/revoke', { all: true });
+        toast(`Signed out of ${r.revoked} other browser${r.revoked === 1 ? '' : 's'}.`);
+        renderSessionsCard(box);
+      }));
+  }
 }
 
 function renderTwoFactorCard(box) {

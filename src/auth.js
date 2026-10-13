@@ -87,6 +87,7 @@ class Auth {
     this.invites = [];
     this.resets = [];
     this.sessions = new Map();
+    this.renewed = null;
     this.attempts = new Map();
     this.settings = { allowSignup: true, baseUrl: '' };
     // Who becomes an admin: the emails in TREEHOST_ADMIN_EMAILS (once the email is verified).
@@ -699,9 +700,15 @@ class Auth {
 
   async createSession(user) {
     const token = randomToken(32);
-    this.sessions.set(sha256(token), { userId: user.id, expires: Date.now() + SESSION_TTL });
+    const now = Date.now();
+    this.sessions.set(sha256(token), { userId: user.id, expires: now + SESSION_TTL, createdAt: now, lastSeen: now });
     await this.saveSessions();
     return token;
+  }
+
+  /** The session store key for a cookie token (what listSessions/revoke compare against). */
+  sessionHash(token) {
+    return sha256(String(token || ''));
   }
 
   userFromSession(token) {
@@ -709,7 +716,73 @@ class Auth {
     const s = this.sessions.get(sha256(token));
     if (!s || s.expires < Date.now()) return null;
     const user = this.users.find((u) => u.id === s.userId) || null;
-    return user && !user.disabled ? user : null;
+    if (!user || user.disabled) return null;
+    // Sliding renewal + last-seen, throttled to once an hour so the busiest route (GET /api/auth/me on every
+    // dashboard load) doesn't rewrite the sessions file on every hit. A session past half its 30-day TTL gets
+    // a fresh 30 days, so an account in regular use never expires. 2FA plays no part here: the code is only
+    // asked for at a fresh login, never for an already-valid session. Tradeoff: the cookie's Max-Age only
+    // catches up on the next sign-in or account switch (signInCookies), so a browser that stays logged in for
+    // months may have its cookie expire client-side before the server session does — it then just signs in
+    // again. A failed save never logs anybody out: the in-memory session is already renewed.
+    const now = Date.now();
+    s.lastSeen = now;
+    if (now - (s.lastSavedAt || s.createdAt || 0) > 3600000) {
+      s.lastSavedAt = now;
+      if (s.expires - now < SESSION_TTL / 2) {
+        s.expires = now + SESSION_TTL;
+        this.renewed = { hash: sha256(token) }; // GET /api/auth/me re-issues the cookie with a fresh 30-day Max-Age
+      }
+      this.saveSessions().catch(() => {});
+    }
+    return user;
+  }
+
+  /** This account's still-valid sessions, most recently used first, for Account → Security. */
+  listSessions(user, currentHash = '') {
+    return [...this.sessions.entries()]
+      .filter(([, s]) => s.userId === user.id && s.expires > Date.now())
+      .map(([hash, s]) => ({
+        id: hash.slice(0, 12),
+        createdAt: s.createdAt || null,
+        lastSeen: s.lastSeen || s.createdAt || null,
+        current: hash === currentHash,
+      }))
+      .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  }
+
+  /**
+   * What userFromSession renewed on the last hit, as the cookie token to re-issue (null when nothing was renewed).
+   * Only the session token itself is kept (it's a hash on disk anyway), for the hour-throttled GET /api/auth/me
+   * cookie refresh; the token never leaves the server memory.
+   */
+  renewedSession(token) {
+    const h = sha256(String(token || ''));
+    return this.renewed && this.renewed.hash === h ? { token } : null;
+  }
+
+  /** Signs one session of this account out (by the short id from listSessions). False if it's already gone. */
+  async revokeSession(user, id) {
+    for (const [hash, s] of this.sessions) {
+      if (s.userId === user.id && hash.startsWith(String(id || ''))) {
+        this.sessions.delete(hash);
+        await this.saveSessions();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** "Sign out everywhere else": every session of this account except the current one. Returns how many died. */
+  async revokeOtherSessions(user, currentHash = '') {
+    let n = 0;
+    for (const [hash, s] of this.sessions) {
+      if (s.userId === user.id && hash !== currentHash) {
+        this.sessions.delete(hash);
+        n++;
+      }
+    }
+    if (n) await this.saveSessions();
+    return n;
   }
 
   async logout(token) {
