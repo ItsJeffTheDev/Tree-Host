@@ -27,8 +27,6 @@
     .steps-box { display:grid; grid-template-columns:repeat(3,1fr); gap:22px; position:relative; }
     .steps-box::before { content:""; position:absolute; top:34px; left:16%; right:16%; height:2px; background:linear-gradient(90deg, var(--accent), var(--accent2)); transform:scaleX(0); transform-origin:left; transition:transform 1.4s ease .3s; }
     .steps-box.in::before { transform:scaleX(1); }
-    .apply-grid, .lookup-grid { display:grid; grid-template-columns:1.15fr .85fr; gap:22px; align-items:start; }
-    .creator-form, .lookup-card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:26px; }
     .form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
     textarea { padding:11px 12px; border-radius:10px; border:1px solid var(--border); background:var(--bg2); color:var(--text); font:inherit; font-weight:400; width:100%; resize:vertical; }
     textarea:focus { outline:none; border-color:var(--accent); }
@@ -38,9 +36,6 @@
     .char-count.over { color:#ff8f8f; }
     .form-ok { background:rgba(70,195,123,.12); border:1px solid rgba(70,195,123,.45); color:var(--accent2); border-radius:10px; padding:14px 16px; font-size:14.5px; }
     .form-err { background:rgba(220,80,80,.12); border:1px solid rgba(255,120,120,.45); color:#ff9d9d; border-radius:10px; padding:14px 16px; font-size:14.5px; }
-    .lookup-row { display:flex; gap:10px; }
-    .lookup-row input { flex:1; }
-    .lookup-hint { font-size:13px; color:var(--muted); margin:10px 0 0; }
     .result-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
     .tier-badge-sm { display:inline-block; font-size:12px; font-weight:800; letter-spacing:.5px; padding:3px 12px; border-radius:99px; border:1px solid; text-transform:uppercase; }
     .tier-badge-sm.bronze { color:#e0a878; border-color:#8a5a34; background:rgba(138,90,52,.22); }
@@ -62,7 +57,6 @@
     .earnings .amt.pos { color:var(--accent2); }
     .earnings .amt.neg { color:#ff8f8f; }
     .earnings .lbl { color:var(--muted); }
-    @media (max-width:960px) { .apply-grid, .lookup-grid { grid-template-columns:1fr; } .form-row { grid-template-columns:1fr; } .steps-box { grid-template-columns:1fr; gap:34px; } .steps-box::before { display:none; } }
     @media (max-width:600px) { .stat-boxes { grid-template-columns:1fr 1fr; } }
   </style>
 </head>
@@ -164,64 +158,6 @@
     </div>
   </section>
 
-  <section style="padding-top:0" id="lookup">
-    <div class="wrap">
-      <div class="section-head reveal"><h2>Already a creator?</h2><p>Enter your creator code to see your referrals, tier and balance.</p></div>
-      <div class="lookup-grid">
-        <div class="lookup-card reveal">
-          <div id="lookup-idle">
-            <div class="lookup-row">
-              <label class="d-field" style="flex:1"><span class="sr-only" hidden>Your creator code</span>
-                <input type="text" id="l-code" placeholder="e.g. SPARK" autocomplete="off" spellcheck="false" maxlength="32" style="text-transform:uppercase"></label>
-              <button type="button" class="btn-cta" id="l-go">Look up</button>
-            </div>
-            <p class="lookup-hint">Codes are case-insensitive. Lost it? <a data-email="promo" href="#">Email the team</a>.</p>
-            <div class="form-err" id="l-err" hidden></div>
-          </div>
-          <div id="lookup-result" hidden>
-            <div class="result-head">
-              <h3 id="r-greeting" style="margin:0">Here's how <span class="green" id="r-code"></span> is doing</h3>
-              <span class="tier-badge-sm" id="r-tier-badge"></span>
-            </div>
-            <p class="muted small" id="r-tier-line" style="margin:6px 0 0"></p>
-            <div class="stat-boxes">
-              <div class="stat-box"><div class="v" id="r-signups">0</div><div class="l">Signups from your link</div></div>
-              <div class="stat-box"><div class="v" id="r-paying">0</div><div class="l">Paying referrals</div></div>
-              <div class="stat-box"><div class="v" id="r-balance">$0.00</div><div class="l">Balance (USD)</div></div>
-              <div class="stat-box"><div class="v" id="r-tier">—</div><div class="l">Current tier</div></div>
-            </div>
-            <div class="d-field"><span>Your referral link — this is the one to share</span>
-              <div class="code-chip"><span class="ref-link" id="r-link"></span><button type="button" class="copy-btn" id="r-copy">Copy</button></div>
-            </div>
-            <div class="d-field" id="r-viewer-wrap" style="margin-top:14px" hidden><span>Your viewer discount code</span>
-              <div class="code-chip" id="r-viewer-chip"><span id="r-viewer-code"></span><span class="muted small" id="r-viewer-off" style="font-weight:400"></span></div>
-              <span class="muted small">Viewers enter this at checkout for a discount on their first payment.</span>
-            </div>
-            <div class="d-field" style="margin-top:14px"><span>Recent earnings</span>
-              <ul class="earnings" id="r-earnings"></ul>
-            </div>
-            <p class="muted small" id="r-payout-hint" style="margin:14px 0 0"></p>
-            <button type="button" class="btn-ghost btn-sm" id="r-back" style="margin-top:14px">Look up another code</button>
-          </div>
-          <div id="lookup-dead" hidden>
-            <div class="form-err"><b>This creator code is no longer active.</b><br>
-              <span class="small">If you think this is a mistake, <a data-email="promo" href="#">email the team</a>. Earned balances are still honoured.</span></div>
-            <button type="button" class="btn-ghost btn-sm" id="d-back" style="margin-top:14px">Try another code</button>
-          </div>
-        </div>
-        <div class="card reveal d1" style="padding:26px">
-          <div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#search"/></svg></div>
-          <h3>Where to find it</h3>
-          <p>Your creator code was in the email from the Tree Host team when you were accepted. It's the same code
-            that's in your referral link — everything after <code>?ref=</code>.</p>
-          <h3 style="margin-top:18px">Your balance</h3>
-          <p>Every referred player's first payment adds your cut automatically. Payouts are sent by our team on
-            request, by PayPal, IBAN or gift card — the balance is shown exactly as recorded, so you always know
-            where you stand.</p>
-        </div>
-      </div>
-    </div>
-  </section>
 
   <footer id="site-footer"></footer>
   <script src="/icons.js"></script>
@@ -257,66 +193,6 @@
     });
     function show(el, text) { el.textContent = text; el.hidden = false; el.scrollIntoView({ block: 'nearest' }); }
 
-    // ---------- creator code lookup ----------
-    const idle = $('#lookup-idle'), result = $('#lookup-result'), dead = $('#lookup-dead');
-    const lCode = $('#l-code'), lErr = $('#l-err'), lGo = $('#l-go');
-    const state = (s) => { for (const el of [idle, result, dead]) el.hidden = el !== s; };
-    lCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lGo.click(); } });
-    lGo.addEventListener('click', async () => {
-      const code = lCode.value.trim().toUpperCase();
-      lErr.hidden = true;
-      if (!code) { show(lErr, 'Enter your creator code.'); return; }
-      lGo.disabled = true; lGo.textContent = 'Checking…';
-      try {
-        const r = await fetch(`/api/creators/lookup?code=${encodeURIComponent(code)}`);
-        const d = await r.json().catch(() => ({}));
-        if (r.status === 429) { state(idle); show(lErr, 'Too many lookups right now — wait a few minutes and try again.'); }
-        else if (r.ok && d.found) render(d);
-        else if (r.ok) { state(dead); $('#d-back').focus(); } // identical for unknown + disabled (GAP-1)
-        else show(lErr, d.error || 'Could not look that up. Try again.');
-      } catch { state(idle); show(lErr, 'Could not reach the server. Check your connection and try again.'); }
-      lGo.disabled = false; lGo.textContent = 'Look up';
-    });
-    const back = () => { state(idle); lCode.value = ''; lCode.focus(); };
-    $('#r-back').addEventListener('click', back);
-    $('#d-back').addEventListener('click', back);
-
-    function render(d) {
-      $('#r-code').textContent = d.code;
-      const tb = $('#r-tier-badge');
-      tb.textContent = `${d.tier.label} · ${d.tier.percent}%`;
-      tb.className = `tier-badge-sm ${d.tier.id}`;
-      $('#r-tier-line').textContent = `You earn ${d.tier.percent}% of every referred first payment at your current tier.`;
-      $('#r-signups').textContent = d.stats.signups;
-      $('#r-paying').textContent = d.stats.payingReferrals;
-      $('#r-balance').textContent = money(d.stats.balanceCents);
-      $('#r-tier').textContent = d.tier.label;
-      const origin = location.origin.startsWith('http') && !location.origin.includes('localhost') ? location.origin : 'https://treehost.online';
-      $('#r-link').textContent = `${origin}/?ref=${encodeURIComponent(d.code)}`;
-      $('#r-viewer-wrap').hidden = !d.viewerCode;
-      if (d.viewerCode) {
-        $('#r-viewer-code').textContent = d.viewerCode.code;
-        $('#r-viewer-off').textContent = d.viewerCode.active ? `${d.viewerCode.percentOff}% off their first payment` : 'no longer active';
-        $('#r-viewer-chip').classList.toggle('off', !d.viewerCode.active);
-      }
-      const ul = $('#r-earnings'); ul.innerHTML = '';
-      (d.recent || []).forEach((e) => {
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="lbl">${esc(e.label)}</span><span class="amt ${e.amountCents >= 0 ? 'pos' : 'neg'}">${e.amountCents >= 0 ? '+' : ''}${money(e.amountCents)}</span>`;
-        ul.appendChild(li);
-      });
-      if (!(d.recent || []).length) ul.innerHTML = '<li><span class="lbl">No earnings yet — share your link to get started.</span></li>';
-      $('#r-payout-hint').textContent = d.payoutHint || '';
-      state(result);
-      result.scrollIntoView({ block: 'nearest' });
-      // referral-link copy (reduced-motion safe: no animation involved)
-      $('#r-copy').onclick = async () => {
-        const b = $('#r-copy');
-        try { await navigator.clipboard.writeText($('#r-link').textContent); b.textContent = 'Copied!'; }
-        catch { const sel = getSelection(); sel.removeAllRanges(); const rg = document.createRange(); rg.selectNodeContents($('#r-link')); sel.addRange(rg); document.execCommand('copy'); b.textContent = 'Copied!'; }
-        setTimeout(() => { b.textContent = 'Copy'; }, 1600);
-      };
-    }
   })();
   </script>
 </body>

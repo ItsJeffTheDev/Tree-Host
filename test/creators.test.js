@@ -283,7 +283,7 @@ test('C-DIS-001: viewer promo minted via the createPromo hook contract; disabled
   assert.equal(refValue('SPARK', { creatorCodes: m.activeCodes() }), 'SPARK');
 });
 
-test('C-LOOK-001: public lookup — aggregates only; unknown and disabled both { found: false }', async () => {
+test('C-LOOK-001: public lookup — no money fields; unknown and disabled both { found: false }', async () => {
   const m = newCreators();
   withUsers(m);
   await m.create({ name: 'Alex', code: 'SPARK' }, 'owner');
@@ -294,16 +294,17 @@ test('C-LOOK-001: public lookup — aggregates only; unknown and disabled both {
   assert.equal(lk.code, 'SPARK');
   assert.equal(lk.tier.id, 'bronze');
   assert.equal(lk.stats.payingReferrals, 1);
-  assert.equal(lk.stats.balanceCents, 100); // public shape exposes balance/paidOut, not earned
-  assert.equal(lk.payoutHint.includes('creators@treehost.online'), true);
+  // privacy (T16): the public shape carries NO money — only the authenticated /api/creators/me does
+  assert.equal(lk.stats.balanceCents, undefined);
+  assert.equal(lk.stats.paidOutCents, undefined);
+  assert.equal(lk.recent, undefined);
+  assert.equal(lk.payoutHint, undefined);
   // aggregates only: no usernames, emails or ledger detail leak into the public shape
   const json = JSON.stringify(lk);
   assert.equal(json.includes('ender'), false);
   assert.equal(json.includes('@t.dev'), false);
   assert.equal(json.includes('sub_l1'), false);
-  for (const k of ['username', 'email', 'subId']) assert.equal(json.includes(k), false);
-  assert.equal(lk.recent.length, 1);
-  assert.deepEqual(Object.keys(lk.recent[0]).sort(), ['amountCents', 'at', 'label']);
+  for (const k of ['username', 'email', 'subId', 'balanceCents', 'paidOutCents']) assert.equal(json.includes(k), false);
   // identical { found: false } for unknown AND disabled (GAP-1)
   const unknown = m.lookup('NOPE');
   await m.setStatus('SPARK', true, 'owner');
