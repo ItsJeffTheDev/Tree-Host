@@ -20,7 +20,7 @@ const RATE_WINDOW = 15 * 60 * 1000;
 const APPLY_MAX = 10; // applications per IP per window, like signup
 const LOOKUP_MAX = 10;
 const LEDGER_PAGE = 500;
-const PAYOUT_HINT = 'Email creators@treehost.online to request your payout.';
+const PAYOUT_HINT = 'Email promotion@treehost.online to request your payout.';
 
 const cleanCode = (c) => String(c || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32);
 const newId = (p) => `${p}_${crypto.randomBytes(6).toString('hex')}`;
@@ -411,9 +411,31 @@ class Creators {
     };
   }
 
+  /**
+   * Recent ledger activity for the creator's own eyes (money amounts included). Only ever
+   * returned through me() — the public lookup must never carry a single amount.
+   */
+  recentFor(c, limit = 5) {
+    return this.ledger
+      .filter((e) => e.creatorId === c.id)
+      .sort((a, b) => b.at - a.at)
+      .slice(0, limit)
+      .map((e) => ({
+        at: e.at,
+        amountCents: e.amountCents,
+        label: e.type === 'commission' ? `First payment · ${e.planName || 'a plan'}`
+          : e.type === 'payout' ? `Payout sent (${PAYOUT_METHOD_LABELS[e.method] || e.method})` : 'Commission refunded',
+      }));
+  }
+
   // ----- public / staff views -----
 
-  /** Public lookup: aggregates only. Unknown AND disabled codes both get the same { found: false } (GAP-1). */
+  /**
+   * Public lookup: NON-SENSITIVE aggregates only. No balance, no paid-out total, no ledger
+   * amounts, no earnings of any kind — only the logged-in creator sees money. The code is the
+   * only credential here, so unknown AND disabled codes both get the identical
+   * { found: false } shape+timing (GAP-1): no existence oracle for a public endpoint.
+   */
   lookup(code) {
     const c = this.byCode(code);
     if (!c || c.status !== 'active') return { found: false };
@@ -421,16 +443,33 @@ class Creators {
     const vp = c.viewerCode ? this.hooks.viewerPromo(c.viewerCode) : null;
     const maps = this.hooks.metricsMaps() || {};
     const signupRef = maps.signupRef || {};
-    const recent = this.ledger
-      .filter((e) => e.creatorId === c.id)
-      .sort((a, b) => b.at - a.at)
-      .slice(0, 5)
-      .map((e) => ({
-        at: e.at,
-        amountCents: e.amountCents,
-        label: e.type === 'commission' ? `First payment · ${e.planName || 'a plan'}`
-          : e.type === 'payout' ? `Payout sent (${PAYOUT_METHOD_LABELS[e.method] || e.method})` : 'Commission refunded',
-      }));
+    return {
+      found: true,
+      code: c.code,
+      tier: { id: tier.id, label: tier.label, percent: tier.percent },
+      stats: {
+        signups: Math.round(Number(signupRef[c.code]) || 0) || c.stats.signups,
+        payingReferrals: c.stats.payingReferrals,
+      },
+      viewerCode: vp ? { code: c.viewerCode, percentOff: vp.percentOff, active: !!vp.active } : null,
+    };
+  }
+
+  /**
+   * Full self-service data for the AUTHENTICATED creator (GET /api/creators/me). This is the
+   * only public-facing surface that carries money: the server passes the signed-in user's own
+   * creatorCode (user.creatorCode), so the earnings are never visible to someone who merely
+   * knows the code. An unknown or disabled code (or an account with no creatorCode) gets the
+   * identical { found: false } shape — same wording either way in the UI.
+   */
+  me(code) {
+    const c = this.byCode(code);
+    if (!c || c.status !== 'active') return { found: false };
+    const tier = tierFor(c.stats.payingReferrals, this.ladder());
+    const next = this.ladder().filter((t) => t.minPaying > c.stats.payingReferrals).sort((a, b) => a.minPaying - b.minPaying)[0] || null;
+    const vp = c.viewerCode ? this.hooks.viewerPromo(c.viewerCode) : null;
+    const maps = this.hooks.metricsMaps() || {};
+    const signupRef = maps.signupRef || {};
     return {
       found: true,
       code: c.code,
@@ -440,8 +479,10 @@ class Creators {
         payingReferrals: c.stats.payingReferrals,
         balanceCents: c.stats.balanceCents,
         paidOutCents: c.stats.paidOutCents,
+        nextTier: next ? next.id : null,
+        nextTierAt: next ? next.minPaying : null,
       },
-      recent,
+      recent: this.recentFor(c),
       viewerCode: vp ? { code: c.viewerCode, percentOff: vp.percentOff, active: !!vp.active } : null,
       payoutHint: PAYOUT_HINT,
     };

@@ -2467,11 +2467,16 @@ route('GET', '/api/metrics/social', () => metrics.social({
 
 // ---------- Creator program (public) ----------
 // The lookup is rate-limited per IP and answers the identical { found: false } shape+timing for
-// unknown AND disabled codes (GAP-1): the code is the credential, so no existence oracle.
+// unknown AND disabled codes (GAP-1): the code is the credential, so no existence oracle. It is
+// NON-SENSITIVE by design (daniel, CREATORS-T16): tier + signup counts only — NO money fields,
+// NO ledger. Earnings live behind /api/creators/me, which requires a signed-in session whose
+// account was referred by the creator (user.creatorCode) — knowing the code is never enough.
 route('GET', '/api/creators/lookup', (req, res, p, q) => {
   creators.checkLookupRate(clientIp(req));
   return creators.lookup(q.get('code') || '');
 }, { public: true });
+// The creator's own full data (money included): session-tied, no code entry anywhere.
+route('GET', '/api/creators/me', (req) => creators.me(req.user.creatorCode));
 route('POST', '/api/creators/apply', async (req) => creators.apply(await readJson(req), clientIp(req)), { public: true });
 
 route('GET', '/api/admin/metrics', () => ({
