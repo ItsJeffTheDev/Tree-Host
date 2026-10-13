@@ -115,6 +115,77 @@
     </div>
   </section>
 
+  <section style="padding-top:0" id="lookup">
+    <div class="wrap">
+      <div class="section-head reveal"><h2>Already a creator?</h2><p>Enter your creator code to see your referrals and tier. Earnings are private — sign in with your account to see them.</p></div>
+      <div class="lookup-grid">
+        <div class="lookup-card reveal">
+          <div id="lookup-idle">
+            <div class="lookup-row">
+              <label class="d-field" style="flex:1"><span class="sr-only" hidden>Your creator code</span>
+                <input type="text" id="l-code" placeholder="e.g. SPARK" autocomplete="off" spellcheck="false" maxlength="32" style="text-transform:uppercase"></label>
+              <button type="button" class="btn-cta" id="l-go">Look up</button>
+            </div>
+            <p class="lookup-hint">Codes are case-insensitive. Lost it? <a data-email="promo" href="#">Email the team</a>.</p>
+            <div class="form-err" id="l-err" hidden></div>
+          </div>
+          <div id="lookup-result" hidden>
+            <div class="result-head">
+              <h3 id="r-greeting" style="margin:0">Here's how <span class="green" id="r-code"></span> is doing</h3>
+              <span class="tier-badge-sm" id="r-tier-badge"></span>
+            </div>
+            <p class="muted small" id="r-tier-line" style="margin:6px 0 0"></p>
+            <div class="stat-boxes">
+              <div class="stat-box"><div class="v" id="r-signups">0</div><div class="l">Signups from your link</div></div>
+              <div class="stat-box"><div class="v" id="r-paying">0</div><div class="l">Paying referrals</div></div>
+              <div class="stat-box"><div class="v" id="r-tier">—</div><div class="l">Current tier</div></div>
+            </div>
+            <div class="d-field"><span>Your referral link — this is the one to share</span>
+              <div class="code-chip"><span class="ref-link" id="r-link"></span><button type="button" class="copy-btn" id="r-copy">Copy</button></div>
+            </div>
+            <div class="d-field" id="r-viewer-wrap" style="margin-top:14px" hidden><span>Your viewer discount code</span>
+              <div class="code-chip" id="r-viewer-chip"><span id="r-viewer-code"></span><span class="muted small" id="r-viewer-off" style="font-weight:400"></span></div>
+              <span class="muted small">Viewers enter this at checkout for a discount on their first payment.</span>
+            </div>
+            <div id="r-money" hidden>
+              <div class="d-field" style="margin-top:14px"><span>Recent earnings</span>
+                <ul class="earnings" id="r-earnings"></ul>
+              </div>
+              <div class="stat-boxes">
+                <div class="stat-box"><div class="v" id="r-balance">$0.00</div><div class="l">Balance (USD)</div></div>
+                <div class="stat-box"><div class="v" id="r-paidout">$0.00</div><div class="l">Paid out (USD)</div></div>
+              </div>
+              <p class="muted small" id="r-payout-hint" style="margin:14px 0 0"></p>
+            </div>
+            <div id="r-login" hidden>
+              <div class="form-ok" style="background:var(--bg2);border-color:var(--border);color:var(--text)">
+                <b>Earnings are private.</b><br>
+                <span class="small" id="r-login-text">Log in with the account you signed up through your link to see your earnings.</span>
+              </div>
+              <a class="btn-cta btn-sm" id="r-login-link" href="/dashboard?signup" style="margin-top:12px;display:inline-block">Log in</a>
+            </div>
+            <button type="button" class="btn-ghost btn-sm" id="r-back" style="margin-top:14px">Look up another code</button>
+          </div>
+          <div id="lookup-dead" hidden>
+            <div class="form-err"><b>This creator code is no longer active.</b><br>
+              <span class="small">If you think this is a mistake, <a data-email="promo" href="#">email the team</a>. Earned balances are still honoured.</span></div>
+            <button type="button" class="btn-ghost btn-sm" id="d-back" style="margin-top:14px">Try another code</button>
+          </div>
+        </div>
+        <div class="card reveal d1" style="padding:26px">
+          <div class="ico"><svg class="ic" aria-hidden="true"><use href="/icons.svg#search"/></svg></div>
+          <h3>Where to find it</h3>
+          <p>Your creator code was in the email from the Tree Host team when you were accepted. It's the same code
+            that's in your referral link — everything after <code>?ref=</code>.</p>
+          <h3 style="margin-top:18px">Your earnings</h3>
+          <p>They're tied to your account, not just the code: after looking up your code, log in with the account you
+            signed up through your link and your balance, paid-out total and recent activity appear right here. Payouts
+            are sent by our team on request, by PayPal, IBAN or gift card.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section style="padding-top:0" id="apply">
     <div class="wrap">
       <div class="section-head reveal"><h2>Apply to the program</h2><p>Applications are reviewed by the Tree Host team, usually within a couple of days.</p></div>
@@ -192,6 +263,99 @@
       aGo.disabled = false; aGo.textContent = 'Send application';
     });
     function show(el, text) { el.textContent = text; el.hidden = false; el.scrollIntoView({ block: 'nearest' }); }
+
+    // ---------- creator code lookup (two tiers: public aggregates + sign-in for earnings) ----------
+    const idle = $('#lookup-idle'), result = $('#lookup-result'), dead = $('#lookup-dead');
+    const lCode = $('#l-code'), lErr = $('#l-err'), lGo = $('#l-go');
+    const state = (s) => { for (const el of [idle, result, dead]) el.hidden = el !== s; };
+    lCode.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lGo.click(); } });
+    lGo.addEventListener('click', async () => {
+      const code = lCode.value.trim().toUpperCase();
+      lErr.hidden = true;
+      if (!code) { show(lErr, 'Enter your creator code.'); return; }
+      lGo.disabled = true; lGo.textContent = 'Checking…';
+      try {
+        const r = await fetch(`/api/creators/lookup?code=${encodeURIComponent(code)}`);
+        const d = await r.json().catch(() => ({}));
+        if (r.status === 429) { state(idle); show(lErr, 'Too many lookups right now — wait a few minutes and try again.'); }
+        else if (r.ok && d.found) { render(d); renderEarnings(d.code); }
+        else if (r.ok) { state(dead); $('#d-back').focus(); } // identical for unknown + disabled (GAP-1)
+        else show(lErr, d.error || 'Could not look that up. Try again.');
+      } catch { state(idle); show(lErr, 'Could not reach the server. Check your connection and try again.'); }
+      lGo.disabled = false; lGo.textContent = 'Look up';
+    });
+    const back = () => { state(idle); lCode.value = ''; lCode.focus(); };
+    $('#r-back').addEventListener('click', back);
+    $('#d-back').addEventListener('click', back);
+
+    // The "See your earnings" step (money is never in the public lookup): if the visitor is
+    // signed in AND their account's creatorCode matches the code they entered, the full data
+    // comes from /api/creators/me. Otherwise a sign-in nudge, nothing more — never a hint about
+    // whose account the code belongs to beyond what the public lookup already showed.
+    async function loadEarnings(code) {
+      try {
+        const me = await fetch('/api/auth/me').then((r) => r.json()).catch(() => null);
+        if (!me || !me.user) return null;
+        if (String(me.user.creatorCode || '').toUpperCase() !== String(code || '').toUpperCase()) return 'other';
+        const r = await fetch('/api/creators/me');
+        if (!r.ok) return null;
+        return await r.json();
+      } catch { return null; }
+    }
+
+    async function renderEarnings(code) {
+      const mine = await loadEarnings(code);
+      if (mine && mine.found) {
+        $('#r-balance').textContent = money(mine.stats.balanceCents);
+        $('#r-paidout').textContent = money(mine.stats.paidOutCents);
+        const ul = $('#r-earnings'); ul.innerHTML = '';
+        (mine.recent || []).forEach((e) => {
+          const li = document.createElement('li');
+          li.innerHTML = `<span class="lbl">${esc(e.label)}</span><span class="amt ${e.amountCents >= 0 ? 'pos' : 'neg'}">${e.amountCents >= 0 ? '+' : ''}${money(e.amountCents)}</span>`;
+          ul.appendChild(li);
+        });
+        if (!(mine.recent || []).length) ul.innerHTML = '<li><span class="lbl">No earnings yet — share your link to get started.</span></li>';
+        $('#r-payout-hint').textContent = mine.payoutHint || '';
+        $('#r-money').hidden = false;
+        $('#r-login').hidden = true;
+      } else {
+        $('#r-login-text').textContent = mine === 'other'
+          ? 'This code belongs to a different account. Log in with the account you signed up through your link.'
+          : 'Log in with the account you signed up through your link to see your earnings.';
+        $('#r-money').hidden = true;
+        $('#r-login').hidden = false;
+      }
+    }
+
+    function render(d) {
+      $('#r-code').textContent = d.code;
+      const tb = $('#r-tier-badge');
+      tb.textContent = `${d.tier.label} · ${d.tier.percent}%`;
+      tb.className = `tier-badge-sm ${d.tier.id}`;
+      $('#r-tier-line').textContent = `You earn ${d.tier.percent}% of every referred first payment at your current tier.`;
+      $('#r-signups').textContent = d.stats.signups;
+      $('#r-paying').textContent = d.stats.payingReferrals;
+      $('#r-tier').textContent = d.tier.label;
+      const origin = location.origin.startsWith('http') && !location.origin.includes('localhost') ? location.origin : 'https://treehost.online';
+      $('#r-link').textContent = `${origin}/?ref=${encodeURIComponent(d.code)}`;
+      $('#r-viewer-wrap').hidden = !d.viewerCode;
+      if (d.viewerCode) {
+        $('#r-viewer-code').textContent = d.viewerCode.code;
+        $('#r-viewer-off').textContent = d.viewerCode.active ? `${d.viewerCode.percentOff}% off their first payment` : 'no longer active';
+        $('#r-viewer-chip').classList.toggle('off', !d.viewerCode.active);
+      }
+      $('#r-money').hidden = true;
+      $('#r-login').hidden = true;
+      state(result);
+      result.scrollIntoView({ block: 'nearest' });
+      // referral-link copy (reduced-motion safe: no animation involved)
+      $('#r-copy').onclick = async () => {
+        const b = $('#r-copy');
+        try { await navigator.clipboard.writeText($('#r-link').textContent); b.textContent = 'Copied!'; }
+        catch { const sel = getSelection(); sel.removeAllRanges(); const rg = document.createRange(); rg.selectNodeContents($('#r-link')); sel.addRange(rg); document.execCommand('copy'); b.textContent = 'Copied!'; }
+        setTimeout(() => { b.textContent = 'Copy'; }, 1600);
+      };
+    }
 
   })();
   </script>
