@@ -2036,7 +2036,7 @@ async function adminCreators(body, sub) {
       ${apps.pending.length ? apps.pending.map((a) => `
         <div class="row" style="gap:10px;align-items:flex-start;border-top:1px solid rgba(128,128,128,.2);padding:8px 0;flex-wrap:wrap">
           <div style="flex:1;min-width:220px">
-            <b>${esc(a.name)}</b> ${a.handle ? `<span class="muted">${esc(a.handle)}</span>` : ''}${a.platform ? ` <span class="badge">${esc(a.platform)}</span>` : ''}
+            <b>${esc(a.name)}</b> ${a.handle ? `<span class="muted">${esc(a.handle)}</span>` : ''}${a.platform ? ` <span class="badge">${esc(a.platform)}</span>` : ''}${a.handle ? ` <a class="small" href="${socialUrl(a)}" target="_blank" rel="noopener">view channel ↗</a>` : ''}
             <div class="small" style="margin-top:2px">${esc(a.message)}</div>
             <div class="small muted">applied ${new Date(a.at).toLocaleDateString()} · suggested code <code class="copy" data-copy="${esc(a.suggestedCode)}">${esc(a.suggestedCode)}</code></div>
           </div>
@@ -2212,6 +2212,7 @@ async function applicationAcceptModal(app, done) {
   } catch {} // the account search is best-effort: staff can always fall back to a manual email
   const { root, close } = openModal(`
     <h2>Accept ${esc(app.name)}</h2>
+    ${app.handle ? `<p class="muted" style="margin-top:-6px"><a href="${socialUrl(app)}" target="_blank" rel="noopener">Open their channel ↗</a></p>` : ''}
     <p class="muted" style="margin-top:-6px">Creates creator <code>${esc(app.suggestedCode)}</code> (editable) and sends them their link and code.</p>
     <form id="cr-app-accept" class="stack">
       <label class="field">Creator code<input type="text" name="code" maxlength="32" value="${esc(app.suggestedCode)}" style="text-transform:uppercase"></label>
@@ -2249,11 +2250,26 @@ async function applicationAcceptModal(app, done) {
 }
 
 /** Deny-application modal: reason (strongly encouraged) + optional email for a no-account applicant. */
+/** Best-effort channel URL for an application's handle/platform (opens in a new tab for review). */
+function socialUrl(a) {
+  const h = String(a.handle || '').replace(/^@/, '').trim();
+  const p = String(a.platform || '').toLowerCase();
+  if (!h) return '#';
+  if (p.includes('you')) return `https://youtube.com/@${encodeURIComponent(h)}`;
+  if (p.includes('twitch')) return `https://twitch.tv/${encodeURIComponent(h)}`;
+  if (p.includes('tiktok')) return `https://tiktok.com/@${encodeURIComponent(h)}`;
+  if (p.includes('insta')) return `https://instagram.com/${encodeURIComponent(h)}`;
+  if (p.includes('x') || p.includes('twitter')) return `https://x.com/${encodeURIComponent(h)}`;
+  if (p.includes('discord')) return '#';
+  return `https://www.google.com/search?q=${encodeURIComponent(`${a.platform || ''} ${h}`.trim())}`;
+}
+
 function applicationDenyModal(app, done) {
   if (!app) return;
   const { root, close } = openModal(`
     <h2>Deny ${esc(app.name)}</h2>
-    <p class="muted" style="margin-top:-6px">The application is closed. They can apply again later.</p>
+    ${app.handle ? `<p class="muted" style="margin-top:-6px"><a href="${socialUrl(app)}" target="_blank" rel="noopener">Open their channel ↗</a> before deciding.</p>` : '<p class="muted" style="margin-top:-6px">The application is closed. They can apply again later.</p>'}
+    ${app.handle ? '' : '<p class="muted" style="margin-top:-6px">The application is closed. They can apply again later.</p>'}
     <form id="cr-app-deny" class="stack">
       <label class="field">Reason <span class="muted small">(goes into the decline email)</span>
         <textarea name="reason" rows="3" maxlength="500" placeholder="We're focusing on channels with a bigger audience right now."></textarea>
