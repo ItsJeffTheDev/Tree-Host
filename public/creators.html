@@ -12,10 +12,11 @@
     .tier-card { background:var(--panel); border:1px solid var(--border); border-radius:18px; padding:28px; display:flex; flex-direction:column; position:relative; transition:transform .25s, box-shadow .25s, border-color .25s; }
     .tier-card:hover { transform:translateY(-4px); box-shadow:0 24px 60px rgba(0,0,0,.4); }
     .tier-card.gold { border-color:rgba(232,194,122,.55); background:linear-gradient(135deg, rgba(232,194,122,.10), var(--panel) 55%); }
-    .tier-badge { width:54px; height:54px; border-radius:50%; display:grid; place-items:center; font-weight:800; font-size:12px; letter-spacing:.5px; margin-bottom:14px; border:2px solid; }
-    .tier-badge.bronze { color:#e0a878; border-color:#8a5a34; background:rgba(138,90,52,.22); }
-    .tier-badge.silver { color:#d7dee3; border-color:#7c8b95; background:rgba(124,139,149,.18); }
-    .tier-badge.gold { color:#e8c27a; border-color:#c5a944; background:rgba(197,169,68,.18); }
+    .tier-badge { width:58px; height:58px; border-radius:50%; display:grid; place-items:center; margin-bottom:14px; position:relative; box-shadow: inset 0 0 0 2px currentColor, inset 0 0 0 5px var(--panel), inset 0 0 0 7px currentColor; font-size:10px; font-weight:800; letter-spacing:1px; }
+    .tier-badge.bronze { color:#e0a878; background:radial-gradient(circle at 32% 28%, rgba(224,168,120,.4), rgba(138,90,52,.16) 65%); }
+    .tier-badge.silver { color:#d7dee3; background:radial-gradient(circle at 32% 28%, rgba(215,222,227,.38), rgba(124,139,149,.14) 65%); }
+    .tier-badge.gold { color:#e8c27a; background:radial-gradient(circle at 32% 28%, rgba(232,194,122,.42), rgba(197,169,68,.16) 65%); }
+    .tier-badge::after { content:""; position:absolute; inset:12px; border-radius:50%; background:currentColor; opacity:.14; }
     .tier-card h3 { font-size:20px; margin-bottom:2px; }
     .tier-pct { font-size:40px; font-weight:800; line-height:1.1; background:linear-gradient(180deg, var(--accent2), var(--accent)); -webkit-background-clip:text; background-clip:text; color:transparent; }
     .tier-card.gold .tier-pct { background:linear-gradient(180deg,#f0cf8c,#c5a944); -webkit-background-clip:text; background-clip:text; }
@@ -83,19 +84,19 @@
         Your tier moves itself — you never ask, and it never drops.</p></div>
       <div class="tier-grid">
         <div class="tier-card reveal">
-          <div class="tier-badge bronze">BRONZE</div>
+          <div class="tier-badge bronze" title="Bronze"><svg class="ic" style="width:20px;height:20px;position:relative;z-index:1"><use href="/icons.svg#star"/></svg></div>
           <h3>Bronze</h3>
           <div class="tier-pct">10%</div>
           <p class="tier-req">of every first payment · from your very first referral — everyone starts here</p>
         </div>
         <div class="tier-card reveal d1">
-          <div class="tier-badge silver">SILVER</div>
+          <div class="tier-badge silver" title="Silver"><svg class="ic" style="width:20px;height:20px;position:relative;z-index:1"><use href="/icons.svg#star"/></svg></div>
           <h3>Silver</h3>
           <div class="tier-pct">15%</div>
           <p class="tier-req">of every first payment · at <b>5+ paying referrals</b></p>
         </div>
         <div class="tier-card gold reveal d2">
-          <div class="tier-badge gold">GOLD</div>
+          <div class="tier-badge gold" title="Gold"><svg class="ic" style="width:20px;height:20px;position:relative;z-index:1"><use href="/icons.svg#star"/></svg></div>
           <h3>Gold</h3>
           <div class="tier-pct">20%</div>
           <p class="tier-req">of every first payment · at <b>25+ paying referrals</b></p>
