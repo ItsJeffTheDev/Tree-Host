@@ -135,9 +135,15 @@
     const v = String(raw).trim().toUpperCase();
     return v || null;
   };
+  // Last click wins: the ref survives browsing, new tabs and return visits (localStorage,
+  // not a cookie — the privacy page says so). Each fresh ?ref= overwrites the old one, so
+  // the creator whose link was clicked last gets the payout.
   try {
     const ref = refFromUrl();
-    if (ref) sessionStorage.setItem('th_ref', ref);
+    if (ref) {
+      localStorage.setItem('th_ref', ref);
+      try { sessionStorage.setItem('th_ref', ref); } catch {}
+    }
   } catch {}
 
   // The server already counted this page view in serveStatic(); the beacon only carries
@@ -151,7 +157,7 @@
       type: 'pageview',
       path: location.pathname,
       referrerHost: (() => { try { return new URL(document.referrer).host || null; } catch { return null; } })(),
-      ref: (() => { try { return sessionStorage.getItem('th_ref'); } catch { return null; } })(),
+      ref: (() => { try { return localStorage.getItem('th_ref') || sessionStorage.getItem('th_ref'); } catch { return null; } })(),
     }),
   }).catch(() => {});
 

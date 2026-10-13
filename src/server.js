@@ -4085,6 +4085,16 @@ const seoSite = () => ({ company: env('COMPANY', 'Tree Host'), supportEmail: EMA
 
 async function serveStatic(req, res, pathname) {
   pathname = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname;
+  // Creator links: treehost.online/CHANCSMP (a bare path segment, no file extension) is a
+  // creator code — redirect to /?ref=CODE so the page capture and analytics work as usual.
+  // Only for requests that would otherwise 404: real pages and files always win.
+  if (pathname.length > 1 && !path.extname(pathname) && !PAGES[pathname] && /^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$/.test(pathname.slice(1))
+      && !(await require('./util').exists(path.join(PUBLIC, `${pathname.slice(1)}.html`)))
+      && !(await require('./util').exists(path.join(PUBLIC, pathname.slice(1))))) {
+    res.writeHead(302, { Location: `/?ref=${encodeURIComponent(pathname.slice(1).toUpperCase())}` });
+    res.end();
+    return;
+  }
   // Search engines and AI assistants (the public website only)
   if (HOSTED && ['/robots.txt', '/sitemap.xml', '/llms.txt'].includes(pathname)) {
     const body =

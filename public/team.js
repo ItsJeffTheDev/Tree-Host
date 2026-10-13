@@ -241,7 +241,7 @@ function showFirebaseAuth(forceMode) {
     const f = $('#auth-form').elements;
     // Attribution: where the visitor came from (?ref=, kept in sessionStorage by site.js).
     let ref = null;
-    try { ref = sessionStorage.getItem('th_ref'); } catch {}
+    try { ref = localStorage.getItem('th_ref') || sessionStorage.getItem('th_ref'); } catch {}
     return {
       username: f.username ? f.username.value.trim() : undefined,
       acceptTerms: f.acceptTerms ? f.acceptTerms.checked : undefined,
@@ -516,7 +516,7 @@ function showAuth(forceMode) {
     // Attribution: where the visitor came from (?ref=, kept in sessionStorage by site.js).
     if (mode === 'signup') {
       try {
-        const ref = sessionStorage.getItem('th_ref');
+        const ref = localStorage.getItem('th_ref') || sessionStorage.getItem('th_ref');
         if (ref) body.ref = ref;
       } catch {}
     }
