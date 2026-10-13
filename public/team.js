@@ -1844,8 +1844,28 @@ async function adminCreators(body, sub) {
   const d = await api('GET', '/api/admin/creators');
   body.innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
-      <p class="muted" style="margin:0 0 10px;max-width:620px">The creator (affiliate) program. A creator shares their personal link — <code>?ref=CODE</code> — and earns a % of every referred customer's first payment. An optional viewer discount code gives their audience % off at checkout.</p>
+      <p class="muted" style="margin:0 0 10px;max-width:620px">The creator (affiliate) program. A creator shares their personal link — <code>${esc((state.me.publicUrl || location.origin).replace(/^https?:\/\//, ''))}/CODE</code> — and earns a % of every referred customer's first payment. An optional viewer discount code gives their audience % off at checkout.</p>
       <button class="btn primary" id="cr-add">+ Add creator</button>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="row" style="flex-wrap:wrap;gap:10px;align-items:flex-end">
+        <label class="field" style="min-width:230px">Share links
+          <select id="cr-share-pick" style="width:auto;min-width:230px">
+            <option value="">Pick a creator…</option>
+            ${d.creators.filter((c) => c.status === 'active').map((c) => `<option value="${esc(c.code)}">${esc(c.name)}${c.handle ? ` (${esc(c.handle)})` : ''}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field" style="flex:1;min-width:260px">Referral link
+          <input type="text" id="cr-share-link" readonly value="" placeholder="Pick a creator to see their link">
+        </label>
+        <button class="btn sm" id="cr-share-copylink" disabled>Copy link</button>
+        <label class="field" style="flex:1;min-width:200px">Viewer discount code
+          <input type="text" id="cr-share-code" readonly value="" placeholder="">
+          <span class="small muted" id="cr-share-code-hint"></span>
+        </label>
+        <button class="btn sm" id="cr-share-copycode" disabled>Copy code</button>
+        <button class="btn sm" id="cr-share-add">+ Add creator</button>
+      </div>
     </div>
     <div class="stat-row">
       <div class="stat"><div class="stat-num">${d.totals.creators}</div><div class="stat-label">creators</div></div>
@@ -1885,11 +1905,33 @@ async function adminCreators(body, sub) {
     </div>
     <p class="hint small" style="margin-top:8px">Balances are real money owed — payouts are sent by hand (PayPal, bank transfer or gift card) and marked here, which is what keeps the ledger and the audit log truthful. A negative balance means a refund clawed back more than was left after a payout; it clears against future commission.</p>`;
   $('#cr-add', body).addEventListener('click', () => creatorModal(null, () => adminCreators(body)));
+  $('#cr-share-add', body).addEventListener('click', () => creatorModal(null, () => adminCreators(body)));
+  // Share links picker: selecting a creator fills their path-style referral link
+  // ({publicUrl or origin}/CODE — same shape as the deploy endpoint and what creators
+  // paste into YouTube descriptions) and their viewer discount code, if any.
+  const base = state.me.publicUrl || location.origin;
+  const shareLink = $('#cr-share-link', body);
+  const shareCode = $('#cr-share-code', body);
+  const codeHint = $('#cr-share-code-hint', body);
+  const pick = $('#cr-share-pick', body);
+  const copyBtns = [$('#cr-share-copylink', body), $('#cr-share-copycode', body)];
+  const syncShare = () => {
+    const c = d.creators.find((x) => x.code === pick.value);
+    shareLink.value = c ? `${base}/${c.code}` : '';
+    shareCode.value = c?.viewerCode?.code || '';
+    codeHint.textContent = c ? (c.viewerCode ? `${c.viewerCode.percentOff}% off${c.viewerCode.active ? '' : ' · paused'}` : '') : '';
+    shareCode.placeholder = c && !c.viewerCode ? 'No viewer code yet' : '';
+    copyBtns[0].disabled = !c;
+    copyBtns[1].disabled = !(c && c.viewerCode);
+  };
+  pick.addEventListener('change', syncShare);
+  copyBtns[0].addEventListener('click', () => navigator.clipboard.writeText(shareLink.value).then(() => toast('Referral link copied')));
+  copyBtns[1].addEventListener('click', () => navigator.clipboard.writeText(shareCode.value).then(() => toast('Viewer code copied')));
   $$('[data-copy]', body).forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
   $$('[data-link]', body).forEach((el) =>
     el.addEventListener('click', (e) => {
       e.preventDefault();
-      navigator.clipboard.writeText(`${location.origin}/?ref=${el.dataset.link}`).then(() => toast('Referral link copied'));
+      navigator.clipboard.writeText(`${state.me.publicUrl || location.origin}/${el.dataset.link}`).then(() => toast('Referral link copied'));
     }),
   );
   $$('[data-ledger]', body).forEach((b) => b.addEventListener('click', () => (location.hash = `#creators/${b.dataset.ledger}`)));
