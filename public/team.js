@@ -253,7 +253,7 @@ function showFirebaseAuth(forceMode) {
   /** Hands the Firebase sign-in to Tree Host, which answers with a session (or asks for a username). */
   const finish = async (user, more = {}) => {
     const idToken = await user.getIdToken();
-    const r = await withSecondFactor((code) => api('POST', '/api/auth/firebase', { idToken, signupCode: testerCode(), ...more, ...(code ? { code } : {}) }));
+    const r = await withSecondFactor((code) => api('POST', '/api/auth/firebase', { idToken, signupCode: testerCode(), ...more, ...(code ? { code: code.code, method: code.method } : {}) }), more && more.email);
     if (r.needsProfile) {
       state.pendingProfile = { suggested: r.suggested || '' };
       // Check if we've saved the username locally (fallback for Firebase sync issues)
@@ -528,7 +528,7 @@ function showAuth(forceMode) {
       reset: '/api/auth/reset',
     }[mode];
     try {
-      if (mode === 'login') await withSecondFactor((code) => api('POST', url, code ? { ...body, code } : body));
+      if (mode === 'login') await withSecondFactor((code) => api('POST', url, code ? { ...body, code: code.code, method: code.method } : body), body && body.username);
       else await api('POST', url, body);
       if (mode === 'forgot') {
         const ok = $('#auth-ok');
@@ -746,48 +746,89 @@ function openModal(html) {
   return { root, close };
 }
 
-// ---------- two-factor sign-in (authenticator app codes, src/totp.js) ----------
+// ---------- two-factor sign-in (authenticator app codes, emailed codes, passkeys) ----------
 
-/** Asks for the 6-digit code (or a recovery code) during sign-in. Resolves with the code, or null if cancelled. */
-function askSecondFactor(message) {
+/** The second-factor methods the account offers, from the server's MFA_REQUIRED answer. */
+function mfaMethodsOf(err) {
+  return Array.isArray(err.methods) && err.methods.length ? err.methods : ['totp'];
+}
+
+/** Asks for the 6-digit code (or a recovery code) during sign-in. Resolves with the code, or null if cancelled.
+ *  methods: ['totp'] authenticator app only, ['totp','email'] app or a code we emailed, method: which is asked for. */
+function askSecondFactor(message, methods = ['totp'], method = 'totp') {
   return new Promise((resolve) => {
+    const emailOn = methods.includes('email');
     const { root, close } = openModal(`
       <h2>${ic('lock')} Two-factor sign-in</h2>
-      <p class="muted" style="margin-top:-6px">${esc(message || 'Enter the 6-digit code from your authenticator app.')}</p>
+      <p class="muted" style="margin-top:-6px">${esc(message || (method === 'email'
+        ? `Enter the code we just sent to your email${methods.includes('totp') ? ', or use your authenticator app' : ''}.`
+        : 'Enter the 6-digit code from your authenticator app.'))}</p>
       <form id="tf-form" class="stack">
         <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" placeholder="123456" required style="font-size:22px;letter-spacing:4px;text-align:center">
         <p class="hint" style="margin:0">Lost your phone? Type one of your recovery codes instead.</p>
+        ${emailOn ? `<div class="row" style="gap:10px;justify-content:center">
+          ${methods.includes('totp') ? `<button type="button" class="btn sm ${method === 'totp' ? 'primary' : ''}" id="tf-m-totp">${ic('phone')} Authenticator app</button>` : ''}
+          <button type="button" class="btn sm ${method === 'email' ? 'primary' : ''}" id="tf-m-email">${ic('mail')} Email me a code</button>
+        </div>` : ''}
         <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Sign in</button></div>
       </form>`);
     let done = false;
     $('#tf-form', root).addEventListener('submit', (e) => {
       e.preventDefault();
       done = true;
-      const code = e.target.elements.code.value.trim();
+      resolve({ typed: e.target.elements.code.value.trim() });
       close();
-      resolve(code);
     });
+    if ($('#tf-m-totp', root)) $('#tf-m-totp', root).addEventListener('click', () => { done = true; close(); resolve({ method: 'totp' }); });
+    if ($('#tf-m-email', root)) $('#tf-m-email', root).addEventListener('click', () => { done = true; close(); resolve({ method: 'email' }); });
     $$('[data-close]', root).forEach((b) => b.addEventListener('click', () => !done && resolve(null)));
     $('input', root).focus();
   });
 }
 
-/** Runs a sign-in request, asking for the 2FA code (and retrying) when the account has it on. */
-async function withSecondFactor(send) {
+/**
+ * Runs a sign-in request, handling the 2FA step (and retrying) when the account has it on. When several
+ * methods are on, "Email me a code" fetches a code to the account's address first and the typed code is
+ * sent back marked method=email. login: the username/email typed into the form (for the emailed-code ask).
+ * Resolves with the response, or throws CANCELLED.
+ */
+async function withSecondFactor(send, login) {
+  let message;
+  let method = 'totp';
+  let methods = ['totp'];
   try {
     return await send(undefined);
   } catch (err) {
     if (err.code !== 'MFA_REQUIRED') throw err;
-    let message;
-    for (;;) {
-      const code = await askSecondFactor(message);
-      if (!code) throw Object.assign(new Error('Sign-in cancelled.'), { code: 'CANCELLED' });
+    methods = mfaMethodsOf(err);
+  }
+  for (;;) {
+    const picked = await askSecondFactor(message, methods, method);
+    if (!picked) throw Object.assign(new Error('Sign-in cancelled.'), { code: 'CANCELLED' });
+    if (picked.method === 'email') {
+      // Ask the server to email a code, then come back asking for it. The answer never says whether
+      // the address has an account, so show the same thing either way.
       try {
-        return await send(code);
-      } catch (e2) {
-        if (e2.code !== 'MFA_INVALID') throw e2;
-        message = e2.message;
+        await api('POST', '/api/auth/2fa/email/login-code', { login });
+      } catch (e) {
+        if (e.status !== 503) toast(e.message, 'error');
+        else message = e.message;
+        continue;
       }
+      method = 'email';
+      message = `Enter the code we just sent to your email${methods.includes('totp') ? ', or use your authenticator app' : ''}.`;
+      continue;
+    }
+    if (picked.method === 'totp') {
+      method = 'totp';
+      message = undefined;
+      continue;
+    }
+    try {
+      return await send({ code: picked.typed, method });
+    } catch (e2) {
+      if (e2.code !== 'MFA_INVALID') throw e2;
+      message = e2.message;
     }
   }
 }
@@ -798,6 +839,10 @@ function openSecurity() {
     <h2>${ic('lock')} Security</h2>
     <p class="muted" style="margin-top:-6px">Keep your Tree Host account safe, even if someone learns your password.</p>
     <div class="card stack" id="sec-2fa"></div>
+    <div class="card stack" id="sec-passkeys"><h3>${ic('key')} Passkeys</h3>
+      <p class="hint" style="margin:0">Passkeys (sign in with your fingerprint or face, nothing to type) are on our list.
+        <b>Not finished yet</b> — while they're in the works, an authenticator app plus emailed codes and recovery codes keep
+        your account safe.</p></div>
     <div class="card stack" id="sec-sessions"><h3>${ic('globe')} Signed-in browsers</h3><p class="muted" style="margin:0">Loading...</p></div>
     <div class="card stack">
       <h3>${ic('key')} Password</h3>
@@ -856,25 +901,65 @@ function renderTwoFactorCard(box) {
   if (!box) return;
   const u = state.me.user;
   const required = !!u.needs2fa || (u.twoFactor && isTeam() && hasPerm('console.access') && /^https:/.test(state.me.publicUrl || ''));
+  const methodsLine = u.mfaEmail
+    ? '<p class="hint" style="margin:0">Fallback: a code to <b>your email</b> works too.</p>'
+    : '';
   box.innerHTML = u.twoFactor
     ? `<h3>${ic('lock')} Two-factor sign-in</h3>
        <p style="margin:0"><span class="badge green">${ic('check')} On</span> Signing in asks for a code from your authenticator app.</p>
-       ${required ? '<p class="hint" style="margin:0">Staff accounts must keep it on.</p>' : '<div class="row"><button class="btn sm" id="tf-off">Turn off</button></div>'}`
+       ${methodsLine}
+       ${required ? '<p class="hint" style="margin:0">Staff accounts must keep it on.</p>' : `<div class="row">
+         ${u.mfaEmail ? `<button class="btn sm" id="tf-email-off">Turn off email codes</button>` : `<button class="btn sm" id="tf-email-on">${ic('mail')} Add email codes</button>`}
+         <button class="btn sm" id="tf-off">Turn off</button>
+       </div>`}`
     : `<h3>${ic('lock')} Two-factor sign-in</h3>
        <p class="hint" style="margin:0">Protects your account even if someone learns your password: signing in also asks for a 6-digit code
        from an app like Google Authenticator, Authy or 1Password.${u.needs2fa ? ' <b>Staff need it on to use the Staff Console.</b>' : ''}</p>
        <div class="row"><button class="btn primary sm" id="tf-on">Set up two-factor sign-in</button></div>`;
   if ($('#tf-on', box)) $('#tf-on', box).addEventListener('click', () => attempt(() => setUpTwoFactor(box)));
+  if ($('#tf-email-on', box)) $('#tf-email-on', box).addEventListener('click', () => attempt(() => setUpEmailCodes(box)));
+  if ($('#tf-email-off', box)) {
+    $('#tf-email-off', box).addEventListener('click', () => attempt(async () => {
+      const r = await askSecondFactor('Enter a current code (app, emailed code or recovery code) to turn email codes off.');
+      if (!r || !r.typed) return;
+      await api('POST', '/api/auth/2fa/email/disable', { code: r.typed });
+      state.me.user.mfaEmail = false;
+      toast('Email codes are off.');
+      renderTwoFactorCard(box);
+    }));
+  }
   if ($('#tf-off', box)) {
     $('#tf-off', box).addEventListener('click', () => attempt(async () => {
-      const code = await askSecondFactor('Enter a current code to turn two-factor sign-in off.');
-      if (!code) return;
-      await api('POST', '/api/auth/2fa/disable', { code });
+      const r = await askSecondFactor('Enter a current code to turn two-factor sign-in off.');
+      if (!r || !r.typed) return;
+      await api('POST', '/api/auth/2fa/disable', { code: r.typed });
       state.me.user.twoFactor = false;
+      state.me.user.mfaEmail = false;
       toast('Two-factor sign-in is off.');
       openAccount();
     }));
   }
+}
+
+/** Account → Security → Add email codes: a code to the account's email turns the fallback on. */
+async function setUpEmailCodes(box) {
+  const { sentTo } = await api('POST', '/api/auth/2fa/email/start');
+  box.innerHTML = `<h3>${ic('mail')} Two-factor sign-in by email</h3>
+    <p class="hint" style="margin:0">A 6-digit code was sent to <b>${esc(sentTo || state.me.user.email || 'your email')}</b>.
+    Type it below (each one works once and for 10 minutes). At sign-in you can then choose the authenticator
+    app <b>or</b> an emailed code.</p>
+    <form id="tf-email-enable" class="row"><input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" required style="max-width:160px;letter-spacing:3px">
+      <button class="btn primary">Turn on</button></form>`;
+  $('input', box).focus();
+  $('#tf-email-enable', box).addEventListener('submit', (e) => {
+    e.preventDefault();
+    attempt(async () => {
+      await api('POST', '/api/auth/2fa/email/enable', { code: e.target.elements.code.value.trim() });
+      state.me.user.mfaEmail = true;
+      toast('Email codes are on.');
+      renderTwoFactorCard(box);
+    });
+  });
 }
 
 async function setUpTwoFactor(box) {

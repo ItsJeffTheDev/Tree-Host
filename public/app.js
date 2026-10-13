@@ -36,7 +36,7 @@ async function api(method, url, body) {
     state.restrictedShown = true;
     location.reload(); // the account was just suspended or banned: show why
   }
-  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { code: data.code });
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { code: data.code, ...(data.methods ? { methods: data.methods } : {}) });
   return data;
 }
 

@@ -13,6 +13,7 @@ const { SupportChat } = require('./support-chat');
 const { ManagedPlugins, STAFF_ID, PLUGIN_TYPES, MAX_JAR } = require('./managed-plugins');
 const { Auth } = require('./auth');
 const { Rbac, PERMISSIONS, CREATOR_PERKS } = require('./rbac');
+const passkeys = require('./passkeys');
 const { Billing, durationText } = require('./billing');
 const mail = require('./mail');
 const firebase = require('./firebase');
@@ -2186,7 +2187,7 @@ const STAFF_DOCS = [
 const staffDocsFor = (user) => STAFF_DOCS.filter((d) => can(user, d.perm)).map(({ perm, ...d }) => d);
 route('GET', '/api/staff/docs', (req) => ({ docs: staffDocsFor(req.user) }), { perm: 'console.access' });
 
-// Two-factor sign-in (authenticator app codes): set up, turn on (shows recovery codes once), turn off.
+// Two-factor sign-in: set up an authenticator app, turn it on (shows recovery codes once), turn it off.
 route('POST', '/api/auth/2fa/setup', async (req) => auth.startTwoFactor(req.user));
 route('POST', '/api/auth/2fa/enable', async (req) => {
   const r = await auth.enableTwoFactor(req.user, (await readJson(req)).code);
@@ -2198,6 +2199,48 @@ route('POST', '/api/auth/2fa/disable', async (req) => {
   await auth.disableTwoFactor(req.user, (await readJson(req)).code);
   activity.log('audit', req.user.username, 'turned off two-factor sign-in');
   return { ok: true };
+});
+
+// Two-factor sign-in by email: a 6-digit code to the account's address (works at sign-in, and as a
+// fallback when the authenticator app isn't to hand — recovery codes always work too).
+const mfaEmailSend = (to, code) =>
+  mail.send(to, 'Your Tree Host sign-in code', [
+    'Here is your Tree Host sign-in code:',
+    `**${code}**`,
+    'It works once and for the next 10 minutes. If you weren\u2019t trying to sign in, change your password and turn on two-factor sign-in with an authenticator app.',
+  ], null, { community: false, note: 'You get this email because two-factor sign-in by email is on for this account.' });
+
+route('POST', '/api/auth/2fa/email/start', async (req) => {
+  const r = await auth.startEmailCode(req.user, (to, code) => mfaEmailSend(to, code));
+  activity.log('audit', req.user.username, 'started setting up two-factor sign-in by email');
+  return r;
+});
+route('POST', '/api/auth/2fa/email/enable', async (req) => {
+  const r = await auth.enableEmailCode(req.user, (await readJson(req)).code);
+  activity.log('audit', req.user.username, 'turned on two-factor sign-in by email');
+  return r;
+});
+route('POST', '/api/auth/2fa/email/disable', async (req) => {
+  await auth.disableEmailCode(req.user, (await readJson(req)).code);
+  activity.log('audit', req.user.username, 'turned off two-factor sign-in by email');
+  return { ok: true };
+});
+
+// A sign-in code by email: for when the account has two-factor on and the authenticator app isn't to hand.
+// The handle ties the code to this attempt (never to the user id, so this can't confirm who has an account).
+route('POST', '/api/auth/2fa/email/login-code', async (req) => {
+  const b = await readJson(req);
+  return auth.sendLoginEmailCode(b.login, (to, code) => mfaEmailSend(to, code));
+}, { public: true });
+
+// Passkeys: an honest stub (see src/passkeys.js). Challenges are real and single-use; registering and
+// verifying credentials is not built yet, so these answer 501 instead of pretending.
+route('GET', '/api/auth/passkeys/challenge', (req) => ({ challenge: passkeys.newChallenge(auth.passkeyChallenges, 'login') }), { restrictedOk: true });
+route('POST', '/api/auth/passkeys/register', async () => {
+  throw httpError(501, 'Passkeys are not finished yet. Use an authenticator app, an emailed code, or a recovery code.', 'PASSKEYS_UNAVAILABLE');
+});
+route('POST', '/api/auth/passkeys/verify', async () => {
+  throw httpError(501, 'Passkeys are not finished yet. Use an authenticator app, an emailed code, or a recovery code.', 'PASSKEYS_UNAVAILABLE');
 });
 
 // Staff notifications: the bell and the counts in the Staff Console menu.
@@ -4463,7 +4506,7 @@ const server = http.createServer(async (req, res) => {
       const result = await r.handler(req, res, params, url.searchParams);
       if (result !== HANDLED) sendJson(res, 200, result === undefined ? { ok: true } : result);
     } catch (e) {
-      if (!res.headersSent) sendJson(res, e.status || 400, { error: publicMessage(e, req.user), code: e.code });
+      if (!res.headersSent) sendJson(res, e.status || 400, { error: publicMessage(e, req.user), code: e.code, ...(e.methods ? { methods: e.methods } : {}) });
     }
     return;
   }

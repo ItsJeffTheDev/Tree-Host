@@ -101,6 +101,8 @@ class Auth {
     this.allowFirstAdmin = false;
     // TREEHOST_SIGNUP_CODE (a test site for invited testers): new accounts need the code from the tester link.
     this.signupCode = '';
+    // Passkey challenges (an honest stub, src/passkeys.js): issued and burned, nothing else yet.
+    this.passkeyChallenges = new Map();
   }
 
   async init() {
@@ -132,11 +134,34 @@ class Auth {
       if (first) (first.role = 'owner'), (migrated = true);
     }
     if (migrated) await this.save();
+    // Sessions live in the store (Firebase when set up), so a redeploy — which wipes the
+    // ephemeral data folder — no longer signs everyone out. Local file stays as a migration
+    // source for installs that had sessions saved the old way.
+    try {
+      const saved = await store.load('auth-sessions');
+      for (const [hash, s] of Object.entries(saved || {})) {
+        if (s && s.expires > Date.now()) this.sessions.set(hash, { ...s, userId: String(s.userId) });
+      }
+    } catch {
+      /* none yet */
+    }
+    // One-time migration: sessions saved to the old local file move into the store.
     try {
       const list = JSON.parse(await fsp.readFile(SESSIONS_FILE, 'utf8'));
-      for (const [hash, s] of list) if (s.expires > Date.now()) this.sessions.set(hash, s);
+      let moved = 0;
+      for (const [hash, s] of list) {
+        if (s && s.expires > Date.now() && !this.sessions.has(hash)) {
+          this.sessions.set(hash, s);
+          moved++;
+        }
+      }
+      if (moved) {
+        await this.saveSessions();
+        await fsp.unlink(SESSIONS_FILE).catch(() => {});
+        console.log(`  Migrated ${moved} session${moved === 1 ? '' : 's'} to the store.`);
+      }
     } catch {
-      /* no sessions yet */
+      /* no legacy file */
     }
   }
 
@@ -152,7 +177,7 @@ class Auth {
   }
 
   saveSessions() {
-    return this.write(SESSIONS_FILE, [...this.sessions]);
+    return store.save('auth-sessions', Object.fromEntries(this.sessions));
   }
 
   publicUser(u) {
@@ -169,6 +194,9 @@ class Auth {
       lastLogin: u.lastLogin || null,
       emailVerified: u.firebaseUid ? !!u.emailVerified : true,
       twoFactor: !!(u.mfa && u.mfa.on),
+      // Second-factor methods on the account, so the Security card can offer email codes and passkeys.
+      mfaEmail: !!(u.mfa && u.mfa.email && u.mfa.email.on),
+      mfaPasskey: false, // passkeys are an honest stub (see src/passkeys.js): nothing stored yet
       ref: u.ref || null,
       // The creator this account was attributed to at signup (their own display code; spec §11 E1).
       creatorCode: u.creatorCode || null,
@@ -275,26 +303,53 @@ class Auth {
     }
   }
 
-  // ----- two-factor sign-in (authenticator app codes, src/totp.js) -----
+  // ----- two-factor sign-in (authenticator app codes via src/totp.js, and email codes) -----
 
-  /** Asks for (and checks) the 2FA code when the account has 2FA on. A wrong code counts like a wrong password. */
-  checkSecondFactor(user, code, keys) {
-    if (!user.mfa || !user.mfa.on) return;
-    if (!code) throw httpError(401, 'Enter the 6-digit code from your authenticator app.', 'MFA_REQUIRED');
-    if (!this.useSecondFactor(user, code)) {
+  /** The second-factor methods this account has on, in the order they're offered. */
+  mfaMethods(user) {
+    const m = user && user.mfa;
+    if (!m || !m.on) return [];
+    const methods = ['totp'];
+    if (m.email) methods.push('email');
+    return methods;
+  }
+
+  hasMfa(user) {
+    return this.mfaMethods(user).length > 0;
+  }
+
+  /** Asks for (and checks) the 2FA code when the account has 2FA on. A wrong code counts like a wrong password.
+   *  method: which method the code is for when several are on ('totp' default, 'email' fallback; recovery codes
+   *  are accepted either way). Without a code the error carries the methods so the browser can ask which to use. */
+  checkSecondFactor(user, code, keys, method) {
+    const methods = this.mfaMethods(user);
+    if (!methods.length) return;
+    if (!code) {
+      throw Object.assign(
+        new Error(methods.length > 1 ? 'Two-factor sign-in is on for this account.' : 'Enter the 6-digit code from your authenticator app.'),
+        { status: 401, code: 'MFA_REQUIRED', methods },
+      );
+    }
+    if (!this.useSecondFactor(user, code, method)) {
       this.recordFailure(keys);
-      throw httpError(401, "That code didn't work. Use the newest code in your authenticator app, or one of your recovery codes.", 'MFA_INVALID');
+      throw httpError(401, "That code didn't work. Use the newest code in your authenticator app, a code we emailed you, or one of your recovery codes.", 'MFA_INVALID');
     }
   }
 
-  /** A current authenticator code (each one works once) or an unused recovery code. */
-  useSecondFactor(user, code) {
+  /** A current authenticator code (each one works once), a one-time emailed code, or an unused recovery code.
+   *  method: 'email' checks the emailed code first; anything else (or the default) checks the app first. */
+  useSecondFactor(user, code, method) {
     const c = String(code || '').trim();
-    const step = totp.verify(user.mfa.secret, c);
-    if (step !== null && step > (user.mfa.lastStep || 0)) {
-      user.mfa.lastStep = step;
-      this.save().catch(() => {});
-      return true;
+    const order = method === 'email' ? ['email', 'totp'] : ['totp', 'email'];
+    for (const kind of order) {
+      if (kind === 'totp' && user.mfa.secret) {
+        const step = totp.verify(user.mfa.secret, c);
+        if (step !== null && step > (user.mfa.lastStep || 0)) {
+          user.mfa.lastStep = step;
+          this.save().catch(() => {});
+          return true;
+        }
+      } else if (kind === 'email' && user.mfa.email && this.useEmailedCode(user, c)) return true;
     }
     const h = sha256(c.toUpperCase().replace(/[^A-Z0-9]/g, ''));
     const i = (user.mfa.recovery || []).indexOf(h);
@@ -306,9 +361,19 @@ class Auth {
     return false;
   }
 
+  /** The emailed sign-in code (issued by sendLoginEmailCode), each one working once. */
+  useEmailedCode(user, code) {
+    const p = user.mfa.loginCode;
+    if (!p || Date.now() > p.expires) return false;
+    if (!crypto.timingSafeEqual(Buffer.from(sha256(String(code || '').trim())), Buffer.from(p.hash))) return false;
+    delete user.mfa.loginCode;
+    this.save().catch(() => {});
+    return true;
+  }
+
   /** Step 1: a new secret to add to the authenticator app (not on until a code from it is entered). */
   async startTwoFactor(user) {
-    if (user.mfa && user.mfa.on) throw httpError(400, 'Two-factor authentication is already on.');
+    if (this.hasMfa(user)) throw httpError(400, 'Two-factor authentication is already on.');
     const secret = totp.newSecret();
     user.mfaPending = { secret, at: Date.now() };
     await this.save();
@@ -328,8 +393,94 @@ class Auth {
     return { recovery };
   }
 
+  // ----- email codes (a second-factor method for accounts with an email on file) -----
+  async enableTwoFactor(user, code) {
+    const p = user.mfaPending;
+    if (!p || Date.now() - p.at > 30 * 60000) throw httpError(400, 'Start the setup again (it expires after 30 minutes).');
+    const step = totp.verify(p.secret, code);
+    if (step === null) throw httpError(400, "That code didn't match. Check the time on your phone is set automatically, then try the newest code.");
+    const recovery = Array.from({ length: 8 }, () => crypto.randomBytes(5).toString('hex').toUpperCase().replace(/(.{5})(.{5})/, '$1-$2'));
+    user.mfa = { on: true, secret: p.secret, at: Date.now(), lastStep: step, recovery: recovery.map((r) => sha256(r.replace('-', ''))) };
+    delete user.mfaPending;
+    await this.save();
+    return { recovery };
+  }
+
+  /** A one-time emailed code: 6 digits, good for 10 minutes, single use, max 5 wrong tries per code. */
+  async startEmailCode(user, send) {
+    if (!user.email) throw httpError(400, 'Add your email address in Account first, then set this up.');
+    if (!user.mfa || !user.mfa.on) throw httpError(400, 'Turn on two-factor sign-in with an authenticator app first.');
+    if (user.mfa.email && user.mfa.email.on) throw httpError(400, 'Email codes are already set up.');
+    if (!send) throw httpError(503, 'Email is not set up yet. Please contact support.');
+    const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+    user.mfa.emailPending = { hash: sha256(code), expires: Date.now() + 10 * 60000, tries: 0 };
+    await this.save();
+    await send(user.email, code);
+    return { sentTo: user.email };
+  }
+
+  /** A code from the inbox turns email codes on. */
+  async enableEmailCode(user, code) {
+    const p = user.mfa && user.mfa.emailPending;
+    if (!p || Date.now() - p.expires > 10 * 60000) throw httpError(400, 'The code expired. Send a new one and try again.');
+    p.tries++;
+    if (!crypto.timingSafeEqual(Buffer.from(sha256(String(code || '').trim())), Buffer.from(p.hash))) {
+      // Five tries per code, then the pending code goes away: send a new one.
+      if (p.tries >= 5) delete user.mfa.emailPending;
+      await this.save();
+      throw httpError(400, "That code didn't match. Send a new one and try again.");
+    }
+    user.mfa.email = { on: true, at: Date.now() };
+    delete user.mfa.emailPending;
+    await this.save();
+    return { ok: true };
+  }
+
+  /** Turns email codes off. Needs any working second factor, so a stolen session can't weaken the account. */
+  async disableEmailCode(user, code) {
+    if (!user.mfa || !user.mfa.email || !user.mfa.email.on) return;
+    if (!this.useSecondFactor(user, code)) throw httpError(400, "That code didn't work.");
+    delete user.mfa.email;
+    await this.save();
+  }
+
+  // ----- email codes at sign-in -----
+
+  /**
+   * Issues a sign-in code to the account's email and remembers it on the account (hashed, like every other
+   * code here). The browser only gets a random handle — never the user id — and the answer is identical
+   * whether or not the address has an account, so this can't confirm who has one.
+   */
+  async sendLoginEmailCode(loginOrUser, send) {
+    const user = typeof loginOrUser === 'string' ? this.findByLogin(loginOrUser) : loginOrUser;
+    if (!send) throw httpError(503, 'Email is not set up yet. Please try an authenticator app or a recovery code.');
+    if (user && user.email && this.hasMfa(user) && !user.disabled) {
+      const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+      user.mfa.loginCode = { hash: sha256(code), expires: Date.now() + 10 * 60000, tries: 0 };
+      await this.save();
+      await send(user.email, code);
+    }
+    // Same shape (and same silence) either way, so this endpoint can't be used to find out who has an account.
+    return { sent: true, handle: randomToken(12) };
+  }
+
+  /** Checks a sign-in code from the inbox (each one works once, max 5 wrong tries, 10 minutes). */
+  checkLoginEmailCode(user, code) {
+    const p = user.mfa && user.mfa.loginCode;
+    if (!p || Date.now() > p.expires) throw httpError(400, 'That code expired. Send a new one and try again.');
+    p.tries++;
+    if (!crypto.timingSafeEqual(Buffer.from(sha256(String(code || '').trim())), Buffer.from(p.hash))) {
+      if (p.tries >= 5) delete user.mfa.loginCode;
+      this.save().catch(() => {});
+      throw httpError(400, "That code didn't work. Send a new one and try again.");
+    }
+    delete user.mfa.loginCode;
+    this.save().catch(() => {});
+    return user;
+  }
+
   async disableTwoFactor(user, code) {
-    if (!user.mfa || !user.mfa.on) return;
+    if (!this.hasMfa(user)) return;
     if (!this.useSecondFactor(user, code)) throw httpError(400, "That code didn't work.");
     delete user.mfa;
     await this.save();
@@ -372,7 +523,7 @@ class Auth {
     return user;
   }
 
-  async login({ username, password, code }, ip) {
+  async login({ username, password, code, method }, ip) {
     const keys = [`ip:${ip}`, `user:${String(username || '').toLowerCase()}`];
     this.checkRate(keys, LOGIN_MAX);
     const user = this.findByLogin(username);
@@ -382,7 +533,7 @@ class Auth {
       throw httpError(401, 'Wrong username, email or password', 'LOGIN');
     }
     if (user.disabled) throw httpError(403, 'This account has been suspended. Contact support.', 'DISABLED');
-    this.checkSecondFactor(user, code, keys);
+    this.checkSecondFactor(user, code, keys, method);
     user.lastLogin = Date.now();
     this.save().catch(() => {});
     return this.createSession(user);
@@ -641,7 +792,7 @@ class Auth {
     if (user) {
       if (user.disabled) throw httpError(403, 'This account has been suspended. Contact support.', 'DISABLED');
       this.checkRate([`fb2fa:${user.id}`], LOGIN_MAX);
-      this.checkSecondFactor(user, body.code, [`fb2fa:${user.id}`]);
+      this.checkSecondFactor(user, body.code, [`fb2fa:${user.id}`], body.method);
       if (id.email && user.email !== id.email) user.email = id.email;
       if (ownerEmail && user.role !== 'owner') user.role = 'owner';
       user.emailVerified = !!(id.emailVerified || id.provider === 'google.com');
