@@ -208,13 +208,34 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   const lk = (await asUser('creafter2', 'GET', '/api/creators/lookup?code=spark')).data; // any case
   expect('E9 lookup found', lk.found, true);
   expect('E9 lookup exposes the code', lk.code, 'SPARK');
-  expect('E9 lookup exposes tier + balance', lk.tier.id, 'gold');
-  expect('E9 lookup stats shape', Object.keys(lk.stats).sort().join(','), 'balanceCents,paidOutCents,payingReferrals,signups');
+  expect('E9 lookup exposes the tier', lk.tier.id, 'gold');
+  // Privacy (CREATORS-T16, daniel): the public shape carries NO money of any kind — no balance,
+  // no paid-out total, no ledger amounts, no payout hint. Only /api/creators/me does.
+  expect('E9 lookup stats shape has no money', Object.keys(lk.stats).sort().join(','), 'payingReferrals,signups');
+  expect('E9 no balance in the public shape', JSON.stringify(lk).includes('balanceCents'), false);
+  expect('E9 no paidOut in the public shape', JSON.stringify(lk).includes('paidOutCents'), false);
+  expect('E9 no amounts in the public shape', JSON.stringify(lk).includes('amountCents'), false);
+  expect('E9 no payout hint in the public shape', JSON.stringify(lk).includes('payoutHint'), false);
+  expect('E9 no recent ledger in the public shape', lk.recent, undefined);
   expect('E9 no usernames in the public shape', JSON.stringify(lk).includes('crecust1'), false);
-  expect('E9 no ledger detail in the public shape', lk.recent.every((r) => !r.username && !r.subId), true);
+  expect('E9 no ledger detail in the public shape', JSON.stringify(lk).includes('subId'), false);
   expect('E9 creator without a viewer code shows none', lk.viewerCode, null);
   const unknown = await (await fetch(B0 + '/api/creators/lookup?code=NOTACODE')).json();
   expect('E9 unknown -> found:false', unknown.found, false);
+  // E9c (CREATORS-T16): the money-bearing endpoint is session-tied, never code-tied.
+  expect('E9c /api/creators/me signed-out -> 401', (await call('nobody', 'GET', '/api/creators/me')).status, 401);
+  const meCreator = (await asUser('creafter2', 'GET', '/api/creators/me')).data;
+  expect('E9c signed-in referred account -> full data', meCreator.found, true);
+  expect('E9c me exposes the code', meCreator.code, 'SPARK');
+  expect('E9c me exposes the balance', typeof meCreator.stats.balanceCents, 'number');
+  expect('E9c me exposes paid out', typeof meCreator.stats.paidOutCents, 'number');
+  expect('E9c me exposes recent ledger', Array.isArray(meCreator.recent), true);
+  expect('E9c me carries the payout hint (promotion@)', (meCreator.payoutHint || '').includes('promotion@treehost.online'), true);
+  expect('E9c me exposes nextTier', meCreator.stats.nextTier, null); // gold is the top tier
+  // A signed-in account WITHOUT a creatorCode must never see anyone's earnings: { found:false },
+  // same shape as a disabled code — and definitely not the SPARK data it could guess by code.
+  const meOther = (await asUser('creowner', 'GET', '/api/creators/me')).data;
+  expect('E9c account with no creatorCode -> found:false (no leak)', meOther, { found: false });
 
   // ------------------------------------------------------------------
   // E10: viewer discount code — discountCents recorded, commission on the discounted base,

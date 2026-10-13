@@ -194,22 +194,34 @@ def run(page):
         badgeClass: document.getElementById('r-tier-badge')?.className,
         signups: document.getElementById('r-signups')?.textContent,
         paying: document.getElementById('r-paying')?.textContent,
-        balance: document.getElementById('r-balance')?.textContent,
         tier: document.getElementById('r-tier')?.textContent,
         link: document.getElementById('r-link')?.textContent,
         copy: !!document.getElementById('r-copy'),
+        moneyShown: !document.getElementById('r-money')?.hidden,
+        loginShown: !document.getElementById('r-login')?.hidden,
     })""")
     check('lookup: valid code shows tier badge "BRONZE · 10%"',
           result['badge'] == 'Bronze · 10%' and 'bronze' in result['badgeClass'], json.dumps(result))
-    check('lookup: valid code shows stat boxes (signups, paying, balance, tier)',
+    check('lookup: valid code shows stat boxes (signups, paying, tier — no balance)',
           result['signups'] is not None and result['paying'] is not None
-          and result['balance'].startswith('$') and result['tier'] == 'Bronze', json.dumps(result))
+          and result['tier'] == 'Bronze', json.dumps(result))
+    check('lookup: public result shows NO money panel (privacy)',
+          not result['moneyShown'] and result['loginShown'], json.dumps(result))
     check('lookup: valid code shows the shareable referral link',
           result['link'].endswith('/?ref=SPARK'), result['link'])
     check('lookup: valid code shows a copy button', result['copy'])
     page.click('#r-copy')
     page.wait_for_function("() => document.getElementById('r-copy').textContent === 'Copied!'", timeout=3000)
     check('lookup: copy button flips to Copied!', True)
+
+    # Earnings step, signed out: the log-in nudge, never an amount (CREATORS-T16).
+    login_nudge = page.evaluate("""() => ({
+        text: document.getElementById('r-login-text')?.textContent || '',
+        href: document.getElementById('r-login-link')?.getAttribute('href'),
+    })""")
+    check('lookup: signed-out earnings step asks to log in with the signup account',
+          'Log in with the account you signed up through your link' in login_nudge['text']
+          and login_nudge['href'].startswith('/dashboard?signup'), json.dumps(login_nudge))
     page.click('#r-back')
     page.wait_for_selector('#lookup-idle:not([hidden])', timeout=5000)
 
@@ -238,6 +250,46 @@ def run(page):
     })""")
     check('lookup: disabled code -> the same "not available" state as unknown',
           disabled['dead'] and not disabled['result'] and disabled['head'] == unknown['head'], json.dumps(disabled))
+
+    # ------------------------------------------------------------------
+    # 2b. Earnings step signed in (CREATORS-T16): the referred account sees its money inline;
+    # a signed-in account whose creatorCode doesn't match gets the "different account" message.
+    # ------------------------------------------------------------------
+    page.evaluate("() => fetch('/api/auth/logout', { method: 'POST' })")
+    page.goto(B + '/dashboard', wait_until='networkidle')
+    page.fill('#auth-form input[name="username"]', 'creref')
+    page.fill('#auth-form input[name="password"]', pw_pass)
+    page.click('#auth-form button.btn.primary')
+    page.wait_for_function("() => !document.getElementById('auth-form')", timeout=15000)
+    page.goto(B + '/creators', wait_until='networkidle')
+    page.fill('#l-code', 'spark')
+    page.click('#l-go')
+    page.wait_for_selector('#lookup-result:not([hidden])', timeout=8000)
+    page.wait_for_function("() => !document.getElementById('r-money').hidden", timeout=8000)
+    mine = page.evaluate("""() => ({
+        balance: document.getElementById('r-balance')?.textContent,
+        paidout: document.getElementById('r-paidout')?.textContent,
+        earnings: document.getElementById('r-earnings')?.textContent || '',
+        hint: document.getElementById('r-payout-hint')?.textContent || '',
+        loginHidden: document.getElementById('r-login')?.hidden,
+    })""")
+    check('lookup: signed-in referred account sees its earnings inline (balance + paid out)',
+          mine['balance'].startswith('$') and mine['paidout'].startswith('$'), json.dumps(mine))
+    check('lookup: payout hint names promotion@treehost.online',
+          'promotion@treehost.online' in mine['hint'], mine['hint'])
+    # The same session, a code that belongs to a DIFFERENT account: the private nudge, no money.
+    page.click('#r-back')
+    page.wait_for_selector('#lookup-idle:not([hidden])', timeout=5000)
+    page.fill('#l-code', 'OLSTAR')
+    page.click('#l-go')
+    page.wait_for_selector('#lookup-result:not([hidden])', timeout=8000)
+    page.wait_for_function("() => !document.getElementById('r-login').hidden", timeout=8000)
+    other = page.evaluate("""() => ({
+        text: document.getElementById('r-login-text')?.textContent || '',
+        moneyHidden: document.getElementById('r-money')?.hidden,
+    })""")
+    check('lookup: signed-in, code belongs to a different account -> private nudge, no money',
+          'different account' in other['text'] and other['moneyHidden'], json.dumps(other))
 
     # ------------------------------------------------------------------
     # 3. Console Creators tab: renders for an owner, permission-gated for a customer.

@@ -299,6 +299,25 @@ test('C-LOOK-001: public lookup — no money fields; unknown and disabled both {
   assert.equal(lk.stats.paidOutCents, undefined);
   assert.equal(lk.recent, undefined);
   assert.equal(lk.payoutHint, undefined);
+  assert.equal(lk.viewerCode, null); // presence-only: the viewer code is public, its earnings are not
+  // the full money-bearing shape lives behind the authenticated me()
+  const mine = m.me('spark');
+  assert.equal(mine.found, true);
+  assert.equal(mine.code, 'SPARK');
+  assert.equal(mine.stats.balanceCents, 100);
+  assert.equal(mine.stats.paidOutCents, 0);
+  assert.equal(mine.stats.signups, 0); // metricsMaps hook returns empty maps in the unit fixture
+  assert.equal(mine.stats.nextTier, 'silver');
+  assert.equal(mine.stats.nextTierAt, 5);
+  assert.equal(mine.payoutHint.includes('promotion@treehost.online'), true);
+  assert.equal(mine.recent.length, 1);
+  assert.deepEqual(Object.keys(mine.recent[0]).sort(), ['amountCents', 'at', 'label']);
+  // an account with no creatorCode (or a disabled/unknown code) gets the same { found: false }
+  assert.deepEqual(m.me(null), { found: false });
+  assert.deepEqual(m.me('NOPE'), { found: false });
+  await m.setStatus('SPARK', true, 'owner');
+  assert.deepEqual(m.me('SPARK'), { found: false });
+  await m.setStatus('SPARK', false, 'owner');
   // aggregates only: no usernames, emails or ledger detail leak into the public shape
   const json = JSON.stringify(lk);
   assert.equal(json.includes('ender'), false);
