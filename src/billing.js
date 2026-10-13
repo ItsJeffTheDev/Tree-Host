@@ -433,8 +433,8 @@ class Billing {
     const raw = String(viewerCode || '').trim();
     if (!raw) return null;
     const p = this.promo(raw);
-    if (p && p.planId) throw httpError(400, `${p.code} is a free-plan code — redeem it in Billing instead of using it at checkout.`);
-    const bad = () => httpError(400, "That code doesn't work any more.");
+    if (p && p.planId) throw httpError(400, `${p.code} is a free-plan code — redeem it in Billing instead of using it at checkout.`, 'FREE_PLAN_CODE');
+    const bad = () => httpError(400, "That code doesn't work any more.", 'DISCOUNT_CODE');
     if (!p || !p.active) throw bad();
     if (p.expiresAt && Date.now() > p.expiresAt) throw bad();
     if (p.uses.length >= p.maxUses) throw bad();
@@ -672,7 +672,7 @@ class Billing {
     const p = this.promo(code);
     const nope = "That code doesn't work. Check the spelling, or ask whoever gave it to you.";
     if (!p || !p.active) throw httpError(404, nope);
-    if (p.percentOff != null) throw httpError(400, `${p.code} is a discount for a paid plan — enter it at checkout, not here.`);
+    if (p.percentOff != null) throw httpError(400, `${p.code} is a discount for a paid plan — enter it at checkout, not here.`, 'DISCOUNT_CODE');
     if (p.expiresAt && Date.now() > p.expiresAt) throw httpError(410, 'That code has expired.');
     if (p.uses.length >= p.maxUses) throw httpError(410, 'That code has already been used.');
     if (p.forUserId && p.forUserId !== user.id) throw httpError(403, 'This code is for a different account. Sign in with the account it was made for.');

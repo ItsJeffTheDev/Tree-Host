@@ -1085,7 +1085,7 @@ async function openPlans() {
 /** The last step before paying: price, renewal terms and the boxes the law asks for. Agreeing is recorded by Tree Host. */
 function confirmCheckout(plan, currency) {
   const price = money(plan.priceCents, currency);
-  const { root } = openModal(`
+  const { root, close } = openModal(`
     <h2>${plan.oneTime ? ic('infinity') : ''} ${esc(plan.name)}</h2>
     <div class="checkout-summary">
       <div class="checkout-price">${price}<span>${plan.oneTime ? ' once' : ' / month'}</span></div>
@@ -1107,6 +1107,14 @@ function confirmCheckout(plan, currency) {
       <div class="modal-actions"><button type="button" class="btn" data-close>Back</button><button class="btn primary" id="co-go">${plan.oneTime ? `Pay ${price}` : `Subscribe for ${price}/month`}</button></div>
     </form>`);
   const form = $('#co-form', root);
+  // Optional creator / viewer discount code: % off this first payment. A free-plan code belongs in
+  // Billing's redeem box, not here; a dead code never blocks the purchase — checkout continues at full price.
+  const codeRow = document.createElement('div');
+  codeRow.className = 'row';
+  codeRow.style.cssText = 'align-items:center;margin:10px 0 0';
+  codeRow.innerHTML = `<input type="text" id="co-code" placeholder="Creator or discount code (optional)" autocomplete="off" style="max-width:260px;text-transform:uppercase">
+    <span class="small muted" id="co-code-hint">A creator code takes % off your first payment.</span>`;
+  form.insertBefore(codeRow, form.querySelector('.modal-actions'));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const go = $('#co-go', root);
@@ -1114,13 +1122,62 @@ function confirmCheckout(plan, currency) {
     go.disabled = true;
     go.textContent = 'Opening checkout...';
     const consent = { renewal: plan.oneTime ? false : form.renewal.checked, adult: form.adult.checked, withdrawal: form.withdrawal.checked };
-    api('POST', '/api/billing/checkout', { planId: plan.id, consent })
-      .then((r) => {
-        if (r.demo) {
+    const hint = $('#co-code-hint', root);
+    const goCheckout = (viewerCode) =>
+      api('POST', '/api/billing/checkout', { planId: plan.id, consent, viewerCode: viewerCode || undefined });
+    const codeEntered = () => $('#co-code', root).value.trim();
+    goCheckout(codeEntered())
+      .catch((err) => {
+        if (err.code === 'FREE_PLAN_CODE') {
+          hint.textContent = `${err.message} Use the Have a code? box in Billing.`;
+          hint.classList.add('code-warn');
+          throw err;
+        }
+        if (err.code === 'DISCOUNT_CODE' && codeEntered()) {
+          // Dead / expired / used-up code: say why and drop it. The checkout continues at full
+          // price when the customer presses Pay again (a dead code never blocks the purchase).
+          hint.textContent = `${err.message} Continuing at full price — press ${plan.oneTime ? 'Pay' : 'Subscribe'} again.`;
+          hint.classList.add('code-warn');
+          $('#co-code', root).value = '';
+          go.disabled = false;
+          go.textContent = label;
+          return new Promise(() => {}); // stay open; the resubmit goes out without the code
+        }
+        throw err;
+      })
+      .then(async (r) => {
+        if (r && r.demo) {
+          // Demo mode activated instantly: read the sub back to confirm the discount the code bought.
+          // Rendered through openModal so [data-close] is re-bound (the raw innerHTML swap loses the
+          // handlers and would trap the customer in a modal they can't dismiss).
+          const wanted = codeEntered().toUpperCase();
+          const done = (disc) =>
+            openModal(`
+              <h2>You're in!</h2>
+              <div class="checkout-summary">
+                <div class="checkout-price">${money((disc ? disc.priceCents - disc.discountCents : plan.priceCents), plan.currency)}<span>${plan.oneTime ? ' once' : ' / month'}</span></div>
+                ${
+                  disc
+                    ? `<p class="small" style="margin:6px 0 0"><span class="badge green">${esc(disc.promoCode)} — ${disc.percentOff}% off</span> your first payment: ${money(disc.priceCents, disc.currency)} → ${money(disc.priceCents - disc.discountCents, disc.currency)}</p>`
+                    : ''
+                }
+              </div>
+              <p class="small muted" style="margin:10px 0 0">${esc(plan.name)} is active. Create your server whenever you like.</p>
+              <div class="modal-actions"><button class="btn primary" data-close>Create a server</button></div>`);
           toast('Plan activated (demo). Now create your server!');
-          root.innerHTML = '';
-          openNewServer();
-        } else location.href = r.url;
+          try {
+            const b = await api('GET', '/api/billing');
+            // Only a sub discounted by exactly the code entered counts: an earlier discount on the
+            // account must never be presented as this purchase's price.
+            const subs = (b.subscriptions || []).filter((x) => x.percentOff && wanted && x.promoCode === wanted);
+            done(subs.sort((a, z) => z.createdAt - a.createdAt)[0] || null);
+          } catch {
+            done(null);
+          }
+        } else if (r && r.url) {
+          if ($('#co-code', root).value.trim()) toast('Your discount code is applied to this checkout.');
+          location.href = r.url;
+        }
       })
       .catch((err) => {
         toast(err.message, 'error');
@@ -1211,16 +1268,30 @@ async function openBilling() {
       <span><b>Have a code?</b></span>
       <input type="text" id="bill-code-in" placeholder="e.g. TREE-7K2P-QX9M" autocomplete="off" style="max-width:240px;text-transform:uppercase">
       <button class="btn sm primary">Redeem</button>
+      <span class="small muted">Codes for a <b>free plan</b>. Buying a plan with a % off code? Enter it at checkout instead.</span>
     </form>`;
   $('#bill-code', root).addEventListener('submit', (e) => {
     e.preventDefault();
     const code = $('#bill-code-in', root).value.trim();
     if (!code) return;
+    // attempt() toasts anything we rethrow, so a handled case resolves silently instead.
     attempt(async () => {
-      const s = await api('POST', '/api/billing/redeem', { code });
-      toast(`Code redeemed: free ${s.planName}${s.freeUntil ? ` until ${new Date(s.freeUntil).toLocaleDateString()}` : ''}`);
-      close();
-      openBilling();
+      let handled = false;
+      try {
+        const s = await api('POST', '/api/billing/redeem', { code });
+        toast(`Code redeemed: free ${s.planName}${s.freeUntil ? ` until ${new Date(s.freeUntil).toLocaleDateString()}` : ''}`);
+        close();
+        openBilling();
+      } catch (err) {
+        if (err.code === 'DISCOUNT_CODE') {
+          handled = true;
+          // A percent-off code was entered in the free-plan box: it redeems at checkout, not here.
+          toast('That was a discount code — enter it during checkout instead.', 'error');
+          close();
+          openPlans();
+        }
+        if (!handled) throw err;
+      }
     });
   });
   $('#bill-buy', root).addEventListener('click', () => {

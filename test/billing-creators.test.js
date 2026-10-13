@@ -245,3 +245,20 @@ test('CRE-PRM-010: redeem() rejects percent-off codes with the checkout hint; pu
   assert.equal(plain.percentOff, null);
   assert.equal(plain.discountCents, 0);
 });
+
+test('CRE-PRM-011: the discount rejections carry machine codes so the UI can route them', async () => {
+  const b = forceMode(newBilling(), 'demo');
+  await b.createPromo({ code: 'SPARK', percentOff: 25 }, 'staff');
+  await discountPromo(b, { code: 'DEAD', active: false });
+  // Redeem box: a discount code is rejected with DISCOUNT_CODE (the UI offers checkout instead).
+  await assert.rejects(() => b.redeem(user('u1'), 'SPARK'), (e) => e.code === 'DISCOUNT_CODE');
+  // Checkout: a dead code is DISCOUNT_CODE (UI continues at full price)...
+  await assert.rejects(() => b.checkout(user('u1'), OAK, 'http://t', consent, 'DEAD'), (e) => e.code === 'DISCOUNT_CODE');
+  // ...a free-plan code at checkout is FREE_PLAN_CODE (UI points back to the redeem box)...
+  await b.createPromo({ code: 'FREETREE', planId: OAK, days: 30 }, 'staff');
+  await assert.rejects(() => b.checkout(user('u1'), OAK, 'http://t', consent, 'FREETREE'), (e) => e.code === 'FREE_PLAN_CODE');
+  // ...and a valid code checkout carries no error and discounts the demo sub.
+  await b.checkout(user('u1'), OAK, 'http://t', consent, 'SPARK');
+  assert.equal(b.subs[0].percentOff, 25);
+  assert.equal(b.subs[0].discountCents, 225);
+});

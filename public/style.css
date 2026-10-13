@@ -90,6 +90,8 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--panel-2); 
 .badge.yellow { background: rgba(217,164,65,.12); border-color: rgba(217,164,65,.4); color: #e8c27a; }
 .badge.red { background: rgba(229,83,75,.12); border-color: rgba(229,83,75,.4); color: #f08a84; }
 .badge.blue { background: rgba(74,158,255,.12); border-color: rgba(74,158,255,.4); color: #8cc2ff; }
+/* Checkout / redeem hint that carries a code problem (dead code, wrong box). */
+.code-warn { color: #e8c27a !important; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .address {
   background: var(--console-bg); border: 1px solid var(--accent-dim); border-radius: var(--radius);
