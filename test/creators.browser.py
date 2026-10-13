@@ -128,10 +128,26 @@ def run(page):
         'name': 'Sparky', 'code': 'SPARK', 'handle': '@spark', 'platform': 'YouTube',
     })
     check("fixture: owner creates creator SPARK", status in (200, 409), str(status))
+    # A referred account (creatorCode SPARK) for the earnings step: the lookup's money comes
+    # from /api/creators/me, tied to this account — never from the public lookup.
+    status, _ = http('creref', 'POST', '/api/auth/login', {'username': 'creref', 'password': pw_pass})
+    if status != 200:
+        status, _ = http('creref', 'POST', '/api/auth/signup', {
+            'username': 'creref', 'email': 'creref@example.com', 'password': pw_pass,
+            'acceptTerms': True, 'birthYear': 1995, 'ref': 'SPARK',
+        })
+    check('fixture: referred account ready (login or first signup)', status == 200, str(status))
+    status, me_ref = http('creref', 'GET', '/api/auth/me')
+    check('fixture: referred account carries creatorCode',
+          (me_ref or {}).get('user', {}).get('creatorCode') == 'SPARK', json.dumps(me_ref)[:160])
     status, _ = http(owner, 'POST', '/api/admin/creators', {
         'name': 'Old Star', 'code': 'OLSTAR', 'handle': '@oldstar', 'platform': 'Twitch',
     })
     check("fixture: owner creates creator OLSTAR (fresh) or already exists (rerun)", status in (200, 409), str(status))
+    status, _ = http(owner, 'POST', '/api/admin/creators', {
+        'name': 'Nebula', 'code': 'NEBULA', 'handle': '@nebula', 'platform': 'TikTok',
+    })
+    check("fixture: owner creates creator NEBULA (fresh) or already exists (rerun)", status in (200, 409), str(status))
     # DELETE toggles status (disable <-> re-enable). A rerun may find it already disabled, so
     # drive it until it reads disabled whatever the starting state (the lookup needs it off).
     for _ in range(2):
@@ -256,7 +272,7 @@ def run(page):
     # a signed-in account whose creatorCode doesn't match gets the "different account" message.
     # ------------------------------------------------------------------
     page.evaluate("() => fetch('/api/auth/logout', { method: 'POST' })")
-    page.goto(B + '/dashboard', wait_until='networkidle')
+    page.goto(B + '/dashboard', wait_until='load')
     page.fill('#auth-form input[name="username"]', 'creref')
     page.fill('#auth-form input[name="password"]', pw_pass)
     page.click('#auth-form button.btn.primary')
@@ -277,12 +293,12 @@ def run(page):
           mine['balance'].startswith('$') and mine['paidout'].startswith('$'), json.dumps(mine))
     check('lookup: payout hint names promotion@treehost.online',
           'promotion@treehost.online' in mine['hint'], mine['hint'])
-    # The same session, a code that belongs to a DIFFERENT account: the private nudge, no money.
+    # The same session, an ACTIVE code that belongs to a DIFFERENT account: the private nudge,
+    # no money — and no hint that this account is or isn't the code's owner beyond the nudge.
     page.click('#r-back')
     page.wait_for_selector('#lookup-idle:not([hidden])', timeout=5000)
-    page.fill('#l-code', 'OLSTAR')
+    page.fill('#l-code', 'NEBULA')
     page.click('#l-go')
-    page.wait_for_selector('#lookup-result:not([hidden])', timeout=8000)
     page.wait_for_function("() => !document.getElementById('r-login').hidden", timeout=8000)
     other = page.evaluate("""() => ({
         text: document.getElementById('r-login-text')?.textContent || '',
@@ -295,11 +311,11 @@ def run(page):
     # 3. Console Creators tab: renders for an owner, permission-gated for a customer.
     # ------------------------------------------------------------------
     # Owner signs in through the UI, opens /admin#creators.
-    page.goto(B + '/dashboard', wait_until='networkidle')
+    page.goto(B + '/dashboard', wait_until='load')
     page.evaluate("""async () => {
         await fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
     }""")
-    page.goto(B + '/dashboard', wait_until='networkidle')
+    page.goto(B + '/dashboard', wait_until='load')
     page.fill('#auth-form input[name="username"]', owner)
     page.fill('#auth-form input[name="password"]', 'TreeHost-test-123')
     page.click('#auth-form button.btn.primary')
@@ -327,7 +343,7 @@ def run(page):
 
     # Permission gate: a customer has no Creators tab, and the API answers 403.
     page.evaluate("() => fetch('/api/auth/logout', { method: 'POST' })")
-    page.goto(B + '/dashboard', wait_until='networkidle')
+    page.goto(B + '/dashboard', wait_until='load')
     page.fill('#auth-form input[name="username"]', cust)
     page.fill('#auth-form input[name="password"]', 'TreeHost-test-123')
     page.click('#auth-form button.btn.primary')

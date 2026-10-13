@@ -235,7 +235,7 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   // A signed-in account WITHOUT a creatorCode must never see anyone's earnings: { found:false },
   // same shape as a disabled code — and definitely not the SPARK data it could guess by code.
   const meOther = (await asUser('creowner', 'GET', '/api/creators/me')).data;
-  expect('E9c account with no creatorCode -> found:false (no leak)', meOther, { found: false });
+  expect('E9c account with no creatorCode -> found:false (no leak)', JSON.stringify(meOther), '{"found":false}');
 
   // ------------------------------------------------------------------
   // E10: viewer discount code — discountCents recorded, commission on the discounted base,
