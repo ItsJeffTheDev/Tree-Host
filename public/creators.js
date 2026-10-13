@@ -1,8 +1,10 @@
 'use strict';
 // Creator earnings: the dashboard panel for accounts that signed up through a creator's
-// referral link (user.creatorCode). Data comes from the PUBLIC lookup endpoint once per
-// modal open (it is rate-limited 10/15min per IP, so it is cached in memory and only
-// re-fetched through the explicit Refresh button — never automatically).
+// referral link (user.creatorCode). Data comes from /api/creators/me — the AUTHENTICATED
+// endpoint, tied to the signed-in account, which is the only surface that carries money
+// amounts (daniel, CREATORS-T16: the public lookup is non-sensitive aggregates only). The
+// endpoint has no per-IP rate limit, but the fetch is still once per modal open and only
+// re-fetched through the explicit Refresh button — never automatically.
 // Loaded before app.js; uses app.js/team.js helpers ($, esc, ic, api, toast, money, openModal, state) at call time.
 
 // The client-side copy of the creator tier ladder (src/creators.js TIER_LADDER). Deployments
@@ -26,8 +28,8 @@ if (typeof fetch === 'function') {
   fetch('/api/site').then((r) => r.json()).then((site) => { creatorPromoEmail = site.promoEmail || null; }).catch(() => {});
 }
 
-async function fetchCreatorLookup(code) {
-  const data = await api('GET', `/api/creators/lookup?code=${encodeURIComponent(code)}`);
+async function fetchCreatorMe() {
+  const data = await api('GET', '/api/creators/me');
   creatorLookupCache = { at: Date.now(), data };
   return data;
 }
@@ -48,7 +50,7 @@ function creatorActivityItem(e) {
 
 async function openCreatorEarnings() {
   const code = state.me?.user?.creatorCode;
-  if (!code) return;
+  if (!code) return; // guarded in app.js too; the panel makes no sense without an account-referred creator
   const { root, close } = openModal(`
     <h2>${ic('star')} Creator earnings — ${esc(code)}</h2>
     <div class="row" style="justify-content:flex-end;margin-top:-10px"><button class="btn sm" id="creator-refresh">${ic('refresh')} Refresh</button></div>
@@ -139,13 +141,13 @@ async function openCreatorEarnings() {
     body.classList.add('muted');
     body.textContent = 'Loading...';
     try {
-      data = await fetchCreatorLookup(code);
+      data = await fetchCreatorMe();
       draw();
     } catch (e) {
       body.classList.remove('muted');
-      // 429 = the 10/15min lookup budget for this IP is spent: say so, never retry on a timer.
-      body.innerHTML = e.status === 429 || e.code === 'RATE_LIMITED' || e.message.includes('Too many')
-        ? '<div class="warn-box">You are checking too often. Try again in a few minutes.</div>'
+      // 401 here means the session lapsed: say so plainly instead of the generic error text.
+      body.innerHTML = e.status === 401 || e.code === 'AUTH'
+        ? '<div class="warn-box">Please sign in again to see your earnings.</div>'
         : `<div class="warn-box">${esc(e.message)}</div>`;
     }
   };
