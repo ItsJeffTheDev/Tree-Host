@@ -26,6 +26,7 @@ const PERMISSIONS = [
   { id: 'messages.send', group: 'Moderation', label: 'Message customers', description: "Send a message to someone's Tree Host inbox (and email)." },
   { id: 'support.chat', group: 'Support', label: 'Answer support chats', description: 'Staff Console → Support chat: see and answer live chats from customers, claim and close them.' },
   { id: 'promos.manage', group: 'Billing', label: 'Manage promo codes', description: 'Create and disable codes for free plans (creators, partners, giveaways).' },
+  { id: 'creators.manage', group: 'Billing', label: 'Manage creators', description: 'Create and disable creator codes, mark payouts, see creator earnings.' },
   { id: 'activity.viewAll', group: 'Platform', label: 'See all activity', description: 'Including sign-ups and payments, not just server events.' },
   { id: 'audit.view', group: 'Platform', label: 'See the audit log', description: 'Every staff action: who did what, when.' },
   { id: 'system.view', group: 'Platform', label: 'See system info', description: 'Memory, Java versions, data folder, full error details.' },
@@ -45,7 +46,7 @@ const CREATOR_PERKS = { 'creator.badge': 'badge', 'creator.announce': 'announce'
 const PERMISSION_IDS = new Set(PERMISSIONS.map((p) => p.id));
 // The permissions that existed before roles remembered which ones they knew (for adding new ones on upgrade).
 const FIRST_PERMISSIONS = ['console.access', 'servers.viewAll', 'servers.operate', 'servers.edit', 'servers.destroy', 'servers.host', 'users.view', 'users.manage',
-  'users.roles', 'billing.view', 'billing.manage', 'promos.manage', 'activity.viewAll', 'audit.view', 'system.view', 'system.manage', 'settings.manage', 'roles.manage'];
+  'users.roles', 'billing.view', 'billing.manage', 'promos.manage', 'creators.manage', 'activity.viewAll', 'audit.view', 'system.view', 'system.manage', 'settings.manage', 'roles.manage'];
 
 /**
  * Roles from most to least access. `level` decides who may manage whom: you can only assign roles below your
