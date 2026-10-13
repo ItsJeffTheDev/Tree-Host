@@ -2732,6 +2732,14 @@ async function init() {
     e.preventDefault();
     openActivity();
   });
+  if (state.me.user.creatorCode) {
+    const link = $('#creator-link');
+    link.classList.remove('hidden');
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      openCreatorEarnings().catch((err) => toast(err.message, 'error'));
+    });
+  }
   renderActivityLink();
   if (isTeam()) {
     $('#inbox-link').classList.remove('hidden');

@@ -72,6 +72,31 @@ section { padding: 88px 0; position: relative; }
 .nav-actions { display: flex; gap: 10px; align-items: center; }
 .nav-toggle { display: none; background: none; border: 1px solid var(--border); color: var(--text); border-radius: 9px; width: 42px; height: 40px; font-size: 20px; cursor: pointer; }
 
+/* "More" dropdown in the header (and inside the open mobile nav panel): opens on hover or
+   click, closes on outside click / Escape. Styled like the rest of the nav, not a card. */
+.nav-more { position: relative; }
+.nav-more-btn { background: none; border: none; color: var(--muted); font: inherit; font-weight: 500; cursor: pointer; padding: 0; position: relative; display: inline-flex; align-items: center; gap: 5px; }
+.nav-more-btn::after { content: ""; position: absolute; left: 0; right: 0; bottom: -5px; height: 2px; background: var(--accent); transform: scaleX(0); transition: transform .25s; border-radius: 2px; }
+.nav-caret { font-size: 11px; transition: transform .2s; }
+.nav-more.open .nav-caret { transform: rotate(180deg); }
+.nav-more:hover .nav-more-btn, .nav-more.open .nav-more-btn { color: var(--text); }
+.nav-more:hover .nav-more-btn::after, .nav-more.open .nav-more-btn::after { transform: scaleX(1); }
+.nav-more-menu { position: absolute; top: calc(100% + 14px); left: 50%; transform: translateX(-50%); min-width: 160px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 8px; display: none;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .45); flex-direction: column; }
+.nav-more.open .nav-more-menu { display: flex; }
+/* Hover-to-open is a desktop nicety only (real pointers): touch and keyboard use the click toggle. */
+@media (hover: hover) and (min-width: 961px) {
+  .nav-more:hover .nav-more-menu { display: flex; }
+  .nav-more:hover .nav-more-btn { color: var(--text); }
+  .nav-more:hover .nav-more-btn::after { transform: scaleX(1); }
+}
+.nav-more-menu a { color: var(--text) !important; text-decoration: none; font-weight: 500; font-size: 15px; padding: 9px 12px; border-radius: 8px; }
+.nav-more-menu a::after { display: none; }
+.nav-more-menu a:hover, .nav-more-menu a.active { background: var(--panel2); color: var(--accent2) !important; }
+.nav-donate { color: var(--accent2) !important; }
+.nav-donate:hover { border-color: var(--accent2); }
+
 /* ---------- footer ---------- */
 .site-footer { border-top: 1px solid var(--border); background: var(--bg2); padding: 56px 0 28px; margin-top: 40px; }
 .footer-grid { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 32px; }
@@ -265,6 +290,13 @@ section { padding: 88px 0; position: relative; }
   .nav-links a { padding: 12px 0; }
   .nav-links a::after { display: none; }
   .nav-actions .hide-sm { display: none; }
+  /* The More dropdown inside the mobile panel: static block, tap to open, full width. */
+  .nav-more { display: block; }
+  .nav-more-btn { padding: 12px 0; width: 100%; justify-content: flex-start; font-size: inherit; }
+  .nav-more-btn::after { display: none; }
+  .nav-more-menu { position: static; transform: none; min-width: 0; border: none; background: none; box-shadow: none; padding: 0 0 0 14px; }
+  .nav-more-menu a { padding: 10px 0; color: var(--muted) !important; font-size: 15px; }
+  .nav-more-menu a.active, .nav-more-menu a:hover { background: none; color: var(--text) !important; }
 }
 @media (max-width: 600px) {
   section { padding: 60px 0; }

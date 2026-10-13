@@ -56,14 +56,25 @@
   const NAV = [
     ['features', '/features', 'Features'],
     ['why', '/why', 'Why Tree Host'],
-    ['servers', '/servers', 'Servers'],
     ['pricing', '/pricing', 'Pricing'],
     ['creators', '/creators', 'Creators'],
     ['support', '/support', 'Support'],
+  ];
+  // Secondary pages, tucked into a "More" dropdown so the header stays scannable
+  // (donate additionally keeps a visible ghost button in nav-actions).
+  const NAV_MORE = [
+    ['servers', '/servers', 'Servers'],
     ['about', '/about', 'About'],
     ['investors', '/investors', 'Invest'],
     ['donate', '/donate', 'Donate'],
   ];
+  const navMoreHtml = (cls) => `
+    <div class="nav-more ${cls}">
+      <button class="nav-more-btn" type="button" aria-haspopup="true" aria-expanded="false">More <span class="nav-caret">▾</span></button>
+      <div class="nav-more-menu">
+        ${NAV_MORE.map(([id, href, label]) => `<a href="${href}" class="${page === id ? 'active' : ''}">${label}</a>`).join('')}
+      </div>
+    </div>`;
   const header = document.getElementById('site-header');
   if (header) {
     header.className = 'site-header';
@@ -72,13 +83,30 @@
         <a href="/" class="nav-brand"><img src="/brand/tree-host-icon.svg" alt="">Tree Host</a>
         <nav class="nav-links" id="nav-links">
           ${NAV.map(([id, href, label]) => `<a href="${href}" class="${page === id ? 'active' : ''}">${label}</a>`).join('')}
+          ${navMoreHtml('')}
         </nav>
         <div class="nav-actions" id="nav-actions">
           <a href="/dashboard" class="btn-ghost btn-sm hide-sm">Sign in</a>
+          <a href="/donate" class="btn-ghost btn-sm hide-sm nav-donate">Donate</a>
           <a href="/dashboard?signup" class="btn-cta btn-sm">Get started</a>
           <button class="nav-toggle" id="nav-toggle" aria-label="Menu"></button>
         </div>
       </div>`;
+    // More dropdown: click to open (hover alone is hostile on touch), close on outside
+    // click and on Escape. Works the same on desktop and inside the mobile panel.
+    header.querySelectorAll('.nav-more').forEach((wrap) => {
+      const btn = wrap.querySelector('.nav-more-btn');
+      const setOpen = (open) => {
+        wrap.classList.toggle('open', open);
+        btn.setAttribute('aria-expanded', String(open));
+      };
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setOpen(!wrap.classList.contains('open'));
+      });
+      document.addEventListener('click', () => setOpen(false));
+      wrap.addEventListener('keydown', (e) => e.key === 'Escape' && setOpen(false));
+    });
     document.getElementById('nav-toggle').addEventListener('click', () => document.getElementById('nav-links').classList.toggle('open'));
     const onScroll = () => header.classList.toggle('scrolled', window.scrollY > 10);
     window.addEventListener('scroll', onScroll, { passive: true });
@@ -96,11 +124,11 @@
             <p>Minecraft server hosting that grows with you. Every server type and version, one-click plugins and automatic backups.</p>
           </div>
           <div class="footer-col"><h4>Product</h4>
-            <a href="/features">Features</a><a href="/why">Why Tree Host</a><a href="/servers">Server list</a><a href="/pricing">Pricing</a><a href="/dashboard?signup">Create a server</a><a href="/dashboard">Dashboard</a></div>
+            <a href="/features">Features</a><a href="/why">Why Tree Host</a><a href="/pricing">Pricing</a><a href="/servers">Server list</a><a href="/dashboard?signup">Create a server</a><a href="/dashboard">Dashboard</a></div>
           <div class="footer-col"><h4>Help</h4>
             <a href="/help.html">Guides</a><a href="/support">Contact &amp; FAQ</a><a href="/help.html?doc=billing">Billing help</a><span id="ft-discord"></span></div>
           <div class="footer-col"><h4>Company</h4>
-            <a href="/about">About</a><a href="/creators">Creators</a><a href="/team">Meet the team</a><a href="/donate">Donate</a><a href="/investors">Invest</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/dmca">Copyright</a></div>
+            <a href="/about">About</a><a href="/team">Meet the team</a><a href="/creators">Creators</a><a href="/investors">Invest</a><a href="/donate">Donate</a><a href="/terms">Terms of Service</a><a href="/privacy">Privacy Policy</a><a href="/dmca">Copyright</a></div>
         </div>
         <div class="footer-bottom">
           <span>© ${new Date().getFullYear()} <span data-company>Tree Host</span>. All rights reserved.</span>
