@@ -21,6 +21,7 @@ const APPLY_MAX = 10; // applications per IP per window, like signup
 const LOOKUP_MAX = 10;
 const LEDGER_PAGE = 500;
 const PAYOUT_HINT = 'Email promotion@treehost.online to request your payout.';
+const CODE_RE = /^[A-Z0-9-]{3,32}$/;
 
 const cleanCode = (c) => String(c || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32);
 const newId = (p) => `${p}_${crypto.randomBytes(6).toString('hex')}`;
@@ -568,6 +569,7 @@ class Creators {
     const msg = stripControls(message).trim().slice(0, 500);
     if (!msg) throw httpError(400, 'Tell us a bit about your channel and audience.');
     const app = {
+      id: newId('app'),
       at: Date.now(),
       name: nm,
       handle: stripControls(handle).trim().slice(0, 40),
@@ -585,6 +587,109 @@ class Creators {
     this.hooks.activity('people', 'Tree Host', `new creator application from ${app.handle || nm} (${app.platform || 'unknown platform'})`);
     this.hooks.email('creatorApplication', app).catch(() => {});
     return { ok: true };
+  }
+
+  /**
+   * Suggests a code for an application: handle or name, sanitized to the creator-code rules
+   * ([A-Z0-9-], 3-32). Junk that sanitizes below 3 chars (or to nothing) gets 'CREATOR'.
+   * Suggestion only — create() still validates it (reserved words, collisions).
+   */
+  suggestCode(app) {
+    const fromHandle = cleanCode(app.handle || '').slice(0, 32);
+    const fromName = cleanCode(app.name || '').slice(0, 32);
+    const raw = fromHandle.length >= 3 ? fromHandle : fromName;
+    return raw.length >= 3 ? raw : 'CREATOR';
+  }
+
+  /** Staff view: pending first (newest first), then reviewed (newest decision first). */
+  applicationsList() {
+    const byNewest = (a, b) => b.at - a.at || (a.id < b.id ? 1 : -1);
+    const appRow = (a) => ({
+      id: a.id, at: a.at, name: a.name, handle: a.handle, platform: a.platform, message: a.message,
+      reviewed: !!a.reviewed,
+      ...(a.reviewed ? {
+        accepted: !!a.accepted, reason: a.reason || null, by: a.by || null, decidedAt: a.decidedAt || null,
+        creatorCode: a.creatorCode || null, accountUsername: a.accountUsername || null,
+        notifiedEmail: !!a.notifiedEmail, notifiedInbox: !!a.notifiedInbox,
+      } : { suggestedCode: this.suggestCode(a) }),
+    });
+    return {
+      pending: this.applications.filter((a) => !a.reviewed).sort(byNewest).map(appRow),
+      reviewed: this.applications.filter((a) => a.reviewed).sort(byNewest).map(appRow),
+    };
+  }
+
+  /**
+   * Accepts or denies an application. Accept creates the creator (staff code override or the
+   * suggested one, with a -2, -3… suffix on a collision), optionally attaches an existing
+   * account (server.js does the account lookup + save through hooks, the same field-setting
+   * path as the TASK-018 attach route), and hands back everything the caller needs to notify
+   * the applicant. The application is marked reviewed either way.
+   */
+  async review(id, { accept, reason, code, accountEmail, accountUsername } = {}, by) {
+    const app = this.applications.find((a) => a.id === id);
+    if (!app) throw httpError(404, 'Application not found');
+    if (app.reviewed) throw httpError(409, 'That application was already reviewed.');
+    if (accept === undefined) throw httpError(400, 'Decide the application: accept or deny it.');
+    const reasonText = stripControls(reason).trim().slice(0, 500);
+    const out = { id: app.id, application: app };
+
+    if (accept) {
+      // The account is resolved BEFORE the creator is created, so a bad attach (unknown
+      // username/email) leaves nothing behind: no creator, no review, nothing to clean up.
+      const login = String(accountUsername || accountEmail || '').trim();
+      const account = login ? (this.hooks.findAccount ? this.hooks.findAccount(login) : null) : null;
+      if (login && !account) throw httpError(404, `No Tree Host account matches ${login}.`);
+      // The code: staff override, else the suggested one. Collisions get a numeric suffix so an
+      // application can always be accepted without staff renaming things by hand first. A staff
+      // override must be typed exactly as stored (like create()); the auto-suggestion is allowed
+      // to be the sanitized form of the handle/name.
+      const override = code !== undefined && code !== null && String(code).trim() !== '';
+      let chosen = cleanCode(override ? code : this.suggestCode(app));
+      if (!CODE_RE.test(chosen)) throw httpError(400, 'Creator codes need 3-32 letters, numbers or dashes.');
+      if (override && String(code).trim().toUpperCase() !== chosen) throw httpError(400, 'Creator codes can only use letters, numbers and dashes.');
+      for (let n = 2; this.byCode(chosen) || this.hooks.promoExists(chosen) || RESERVED_CODES.includes(chosen.toLowerCase()); n++) {
+        const stem = chosen.replace(/-\d+$/, '');
+        const suffix = String(n);
+        if (stem.length + 1 + suffix.length > 32) throw httpError(409, `The code ${chosen} is taken and no suffix fits. Pick another.`);
+        chosen = `${stem}-${suffix}`;
+      }
+      const created = await this.create({
+        name: app.name, handle: app.handle, platform: app.platform, code: chosen, note: `from application ${app.id}`,
+      }, by);
+      app.creatorCode = created.code;
+      out.creator = created;
+
+      // Account attach: the same field-setting path as the TASK-018 attach route — the account
+      // was resolved above; setting the fields + save is the whole attach.
+      if (account) {
+        const prev = account.creatorCode || null;
+        account.creatorCode = created.code;
+        account.creatorId = created.id;
+        await this.hooks.saveAccount();
+        app.accountUsername = account.username;
+        out.account = { username: account.username, email: account.email || null, creatorCode: created.code, was: prev };
+      }
+    }
+
+    app.reviewed = true;
+    app.accepted = !!accept;
+    app.reason = reasonText;
+    app.by = by || null;
+    app.decidedAt = Date.now();
+    await this.save();
+    this.hooks.activity('people', by || 'Tree Host', `${accept ? 'accepted' : 'denied'} the creator application from ${app.handle || app.name}${out.creator ? ` (code ${out.creator.code})` : ''}${reasonText ? `: ${reasonText}` : ''}`);
+    return out;
+  }
+
+  /** Notification outcome, recorded on the application after the caller did (or skipped) it. */
+  async markNotified(id, { email = false, inbox = false } = {}) {
+    const app = this.applications.find((a) => a.id === id);
+    if (!app) throw httpError(404, 'Application not found');
+    app.notifiedEmail = !!email;
+    app.notifiedInbox = !!inbox;
+    await this.save();
+    return app;
   }
 }
 

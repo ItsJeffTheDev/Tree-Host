@@ -385,3 +385,131 @@ test('C-MET-001: refValue creator-code extension (case-insensitive, backward com
   assert.equal(refValue('spark', { creatorCodes: [] }), 'other');
   assert.equal(refValue('spark', { creatorCodes: null }), 'other');
 });
+
+// ---------------------------------------------------------------------
+// C-APP-001..004: application review state transitions (CREATORS-T19)
+// ---------------------------------------------------------------------
+
+/** An application in the registry, applied as if from the public form. Returns the RAW stored
+ *  record (not the list row) so state transitions can be asserted directly. */
+async function applied(m, { name = 'Alex', handle = '@sparkbuilds', platform = 'YouTube', message = 'I make modpack videos' } = {}) {
+  await m.apply({ name, handle, platform, message }, '1.2.3.4');
+  return m.applications[m.applications.length - 1];
+}
+
+test('C-APP-001: apply gets an id; listApplications splits pending/reviewed newest-first', async () => {
+  const m = newCreators();
+  const a1 = await applied(m);
+  assert.match(a1.id, /^app_[0-9a-f]{12}$/); // newId pattern, like cr_/le_ ids
+  assert.equal(m.applicationsList().pending[0].suggestedCode, 'SPARKBUILDS'); // sanitized handle
+  assert.equal(a1.reviewed, false);
+  assert.equal(m.applicationsList().pending.length, 1);
+  assert.equal(m.applicationsList().reviewed.length, 0);
+  await m.review(a1.id, { accept: false, reason: 'later' }, 'owner');
+  const l = m.applicationsList();
+  assert.equal(l.pending.length, 0);
+  assert.equal(l.reviewed.length, 1);
+  assert.equal(l.reviewed[0].accepted, false);
+  assert.equal(l.reviewed[0].reason, 'later');
+  assert.equal(l.reviewed[0].by, 'owner');
+  assert.equal(l.reviewed[0].suggestedCode, undefined); // reviewed rows carry the outcome, not the suggestion
+  // newest decision first
+  const a2 = await applied(m, { name: 'Bo', handle: 'boplays' });
+  await m.review(a2.id, { accept: true }, 'owner');
+  assert.equal(m.applicationsList().reviewed[0].name, 'Bo');
+  // suggestion: junk handle falls back to the name, nothing usable at all -> CREATOR
+  const m3 = newCreators();
+  await m3.apply({ name: 'Casey', handle: '!!!', platform: '', message: 'm' }, '5.5.5.5');
+  assert.equal(m3.applicationsList().pending[0].suggestedCode, 'CASEY');
+  const m4 = newCreators();
+  await m4.apply({ name: '###', handle: '', platform: '', message: 'm' }, '5.5.5.6');
+  assert.equal(m4.applicationsList().pending[0].suggestedCode, 'CREATOR');
+});
+
+test('C-APP-002: accept creates the creator from the application (suggested code, override, collision suffix)', async () => {
+  const m = newCreators();
+  const a = await applied(m);
+  const r = await m.review(a.id, { accept: true }, 'owner');
+  assert.equal(r.creator.code, 'SPARKBUILDS'); // suggested, not typed — sanitized handle is fine
+  assert.equal(r.creator.name, 'Alex');
+  assert.equal(r.creator.handle, '@sparkbuilds');
+  assert.equal(r.creator.platform, 'YouTube');
+  assert.equal(r.creator.createdBy, 'owner');
+  assert.equal(m.byCode('SPARKBUILDS').id, r.creator.id);
+  assert.equal(a.reviewed, true);
+  assert.equal(a.accepted, true);
+  assert.equal(a.creatorCode, 'SPARKBUILDS');
+  assert.equal(a.decidedAt > 0, true);
+  assert.equal(m.applicationsList().reviewed[0].creatorCode, 'SPARKBUILDS'); // the stored record, not the row copy
+  // staff override wins over the suggestion; junk overrides are rejected, not repaired
+  const b = await applied(m, { name: 'Bo', handle: 'boplays' });
+  const rb = await m.review(b.id, { accept: true, code: 'bo-tv' }, 'owner');
+  assert.equal(rb.creator.code, 'BO-TV');
+  const c = await applied(m, { name: 'Cy', handle: 'cyplays' });
+  await assert.rejects(() => m.review(c.id, { accept: true, code: 'has space!' }, 'owner'), (e) => e.status === 400);
+  await assert.rejects(() => m.review(c.id, { accept: true, code: 'AB' }, 'owner'), (e) => e.status === 400);
+  // reserved words are never taken as-is — the override gets suffixed out of the reserved word,
+  // same as a colliding suggestion would
+  const mr = newCreators();
+  const d = await applied(mr, { name: 'Di', handle: 'discord' });
+  const rd = await mr.review(d.id, { accept: true }, 'owner');
+  assert.equal(rd.creator.code, 'DISCORD-2'); // suffixed out of the reserved word
+  const rd2 = await mr.review((await applied(mr, { name: 'Ed', handle: 'ed plays' })).id, { accept: true, code: 'DISCORD' }, 'owner');
+  assert.equal(rd2.creator.code, 'DISCORD-3'); // override collision: suffix keeps counting
+  // collision with an existing creator: numeric suffix, keeping the stem
+  await m.create({ name: 'Dup', code: 'BOPLAYS' }, 'owner'); // someone already owns the suggested code
+  const e = await applied(m, { name: 'Ed', handle: 'boplays' });
+  const re = await m.review(e.id, { accept: true }, 'owner');
+  assert.equal(re.creator.code, 'BOPLAYS-2');
+});
+
+test('C-APP-003: accept with an account attach sets creatorCode/creatorId via hooks; unknown account 404s and leaves nothing behind', async () => {
+  const m = newCreators();
+  const users = new Map([['ender', { id: 'u1', username: 'ender', email: 'ender@example.com', creatorCode: null, creatorId: null }]]);
+  m.hooks.findAccount = (login) => {
+    const l = String(login || '').trim().toLowerCase();
+    return [...users.values()].find((u) => u.username.toLowerCase() === l || u.email.toLowerCase() === l) || null;
+  };
+  m.hooks.saveAccount = async () => { saves++; };
+  let saves = 0;
+  const a = await applied(m);
+  const r = await m.review(a.id, { accept: true, accountEmail: 'ENDER@EXAMPLE.COM' }, 'owner');
+  assert.equal(r.account.username, 'ender');
+  assert.equal(r.account.email, 'ender@example.com');
+  assert.equal(users.get('ender').creatorCode, r.creator.code);
+  assert.equal(users.get('ender').creatorId, r.creator.id);
+  assert.equal(saves, 1);
+  assert.equal(a.accountUsername, 'ender');
+  // unknown account: 404, and the application stays unreviewed (nothing was created either)
+  const b = await applied(m, { name: 'Bo', handle: 'boplays' });
+  await assert.rejects(() => m.review(b.id, { accept: true, accountUsername: 'nobody' }, 'owner'), (e) => e.status === 404);
+  assert.equal(b.reviewed, false);
+  assert.equal(m.creators.find((c) => c.handle === 'boplays'), undefined);
+  // deny records the reason and never creates a creator
+  const c2 = await applied(m, { name: 'Cy', handle: 'cyplays' });
+  const rd = await m.review(c2.id, { accept: false, reason: 'Not the right fit yet' }, 'chief');
+  assert.equal(rd.creator, undefined);
+  assert.equal(rd.account, undefined);
+  assert.equal(c2.accepted, false);
+  assert.equal(c2.reason, 'Not the right fit yet');
+  assert.equal(m.creators.length, 1); // only the first accept exists
+});
+
+test('C-APP-004: guards — unknown id 404, double review 409, missing decision 400; markNotified records the outcome', async () => {
+  const m = newCreators();
+  await assert.rejects(() => m.review('app_nope', { accept: true }, 'owner'), (e) => e.status === 404);
+  await assert.rejects(() => m.review('app_nope', { accept: false }, 'owner'), (e) => e.status === 404);
+  const a = await applied(m);
+  await assert.rejects(() => m.review(a.id, {}, 'owner'), (e) => e.status === 400);
+  await assert.rejects(() => m.review(a.id, { reason: 'no decision' }, 'owner'), (e) => e.status === 400);
+  await m.review(a.id, { accept: true }, 'owner');
+  await assert.rejects(() => m.review(a.id, { accept: true }, 'owner'), (e) => e.status === 409);
+  await assert.rejects(() => m.review(a.id, { accept: false }, 'owner'), (e) => e.status === 409);
+  // markNotified is idempotent and only touches the notify flags
+  await m.markNotified(a.id, { email: true, inbox: false });
+  const row = m.applicationsList().reviewed[0];
+  assert.equal(row.notifiedEmail, true);
+  assert.equal(row.notifiedInbox, false);
+  assert.equal(row.accepted, true);
+  await assert.rejects(() => m.markNotified('app_nope', { email: true }), (e) => e.status === 404);
+});

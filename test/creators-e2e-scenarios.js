@@ -5,7 +5,7 @@
 const crypto = require('crypto');
 const B0 = process.env.TREEHOST_TEST_URL || 'http://localhost:8799';
 
-module.exports = async function run({ call, expect, signup, login, me, consent, buy, creatorRow, ledger, commissionsFor, webhook, asOwner, asUser, expectError }) {
+module.exports = async function run({ call, expect, signup, login, me, consent, buy, creatorRow, ledger, commissionsFor, webhook, asOwner, asUser, expectError, sentEmails: sentEmails_, sendAs }) {
   // ------------------------------------------------------------------
   // Shared fixtures: owner (first account), a developer, a support, an admin-role user.
   // ------------------------------------------------------------------
@@ -458,4 +458,105 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   const audit16 = (await asOwner('GET', '/api/admin/audit')).data;
   expect('E16 audit line for the attach', audit16.some((a) => a.text.includes('attached creattach1 to creator ADMINC')), true);
   expect('E16 audit line notes past money stays', audit16.some((a) => /attached creattach1 to creator ADMINC \(was SPARK/.test(a.text)), true);
+
+  // ------------------------------------------------------------------
+  // E19/E20 (CREATORS-T19): the application review workflow
+  // apply -> list -> accept with an account attach (creator + attach + inbox + email), deny
+  // with a reason (email attempted, no creator), validation 400s, perm 403s.
+  // Emails are asserted through the fake Resend stub (TREEHOST_RESEND_API) — the runner
+  // script starts it and exposes its received list as H.sentEmails.
+  // ------------------------------------------------------------------
+  const sentEmails = sentEmails_ || (run.sentEmails = []); // the runner wires the fake Resend's received list
+  const emailsTo = (addr) => sentEmails.filter((m) => m.to === addr);
+  const emailsBefore = () => sentEmails.length;
+
+  // Perms first: developer gets 403 on both routes, customer 403, signed-out 401.
+  const applyBody = { name: 'Nina Nights', handle: '@ninaplays', platform: 'Twitch', message: 'Variety streams, 4k average viewers, happy to feature Tree Host on stream.' };
+  expect('E19 owner lists applications -> 200', (await asOwner('GET', '/api/admin/creators/applications')).status, 200);
+  expect('E19 developer lists applications -> 403', (await call('credev', 'GET', '/api/admin/creators/applications')).status, 403);
+  expect('E19 developer reviews -> 403', (await call('credev', 'POST', '/api/admin/creators/applications/app_x/review', { accept: true })).status, 403);
+  expect('E19 customer reviews -> 403', (await call('crecust1', 'POST', '/api/admin/creators/applications/app_x/review', { accept: true })).status, 403);
+  expect('E19 signed-out list -> 401', (await call('nobody', 'GET', '/api/admin/creators/applications')).status, 401);
+
+  // Validation 400s: junk body against a real application id (filled in below).
+  await call('creapply1', 'POST', '/api/creators/apply', applyBody, sendAs('creapply1'));
+  const apps1 = (await asOwner('GET', '/api/admin/creators/applications')).data;
+  expect('E19 apply landed pending', apps1.pending.length >= 1, true);
+  const app1 = apps1.pending.find((a) => a.handle === '@ninaplays');
+  expect('E19 application has an id', /^app_/.test(app1.id), true);
+  expect('E19 suggested code from the handle', app1.suggestedCode, 'NINAPLAYS');
+  expect('E19 no decision yet', app1.reviewed, false);
+  expect('E19 unknown application -> 404', (await asOwner('POST', '/api/admin/creators/applications/app_nope/review', { accept: true })).status, 404);
+  expect('E19 no decision -> 400', (await asOwner('POST', `/api/admin/creators/applications/${app1.id}/review`, {})).status, 400);
+  expect('E19 junk code override -> 400', (await asOwner('POST', `/api/admin/creators/applications/${app1.id}/review`, { accept: true, code: 'has space!' })).status, 400);
+  expect('E19 still pending after the failures', (await asOwner('GET', '/api/admin/creators/applications')).data.pending.some((a) => a.id === app1.id), true);
+
+  // --- E20: deny with a reason -> email attempted (no account), no creator created ---
+  await call('creapply2', 'POST', '/api/creators/apply', { name: 'Ollie Small', handle: '@olliesmall', platform: 'YouTube', message: 'Tiny channel but growing fast.' }, sendAs('creapply2'));
+  const app2 = (await asOwner('GET', '/api/admin/creators/applications')).data.pending.find((a) => a.handle === '@olliesmall');
+  const mailBefore20 = emailsBefore();
+  const deny = await asOwner('POST', `/api/admin/creators/applications/${app2.id}/review`, { accept: false, reason: 'We look for channels with a bigger audience right now.', email: 'creapply2@example.com' });
+  expect('E20 deny -> 200', deny.status, 200);
+  expect('E20 review record accepted:false', deny.data.application.accepted, false);
+  expect('E20 review record carries the reason', deny.data.application.reason, 'We look for channels with a bigger audience right now.');
+  expect('E20 no creator created for a deny', deny.data.creator, undefined);
+  expect('E20 decline email recorded on the application', deny.data.notified.email, true);
+  expect('E20 decline email really sent', sentEmails.length > mailBefore20, true);
+  const decline = emailsTo('creapply2@example.com')[emailsTo('creapply2@example.com').length - 1];
+  expect('E20 decline subject mentions the application', /creator application/i.test(decline.subject), true);
+  expect('E20 decline carries the reason', decline.text.includes('bigger audience'), true);
+  expect('E20 denied shows in the reviewed list', (await asOwner('GET', '/api/admin/creators/applications')).data.reviewed.some((a) => a.id === app2.id && a.accepted === false), true);
+  expect('E20 double review -> 409', (await asOwner('POST', `/api/admin/creators/applications/${app2.id}/review`, { accept: false })).status, 409);
+  expect('E20 deny created no creator', (await creatorRow('OLLIESMALL')), null);
+
+  // --- E19 continued: accept with an account attach ---
+  await signup('crehasacct'); // has a Tree Host account, applied without it
+  const app1b = (await asOwner('GET', '/api/admin/creators/applications')).data.pending.find((a) => a.handle === '@ninaplays');
+  const mailBefore = emailsBefore();
+  const acc = await asOwner('POST', `/api/admin/creators/applications/${app1b.id}/review`, { accept: true, accountUsername: 'crehasacct', reason: 'Welcome aboard!' });
+  expect('E19 accept -> 200', acc.status, 200);
+  expect('E19 creator created with the suggested code', acc.data.creator.code, 'NINAPLAYS');
+  expect('E19 account attached', acc.data.account.username, 'crehasacct');
+  expect('E19 me() shows the new code', (await me('crehasacct')).creatorCode, 'NINAPLAYS');
+  expect('E19 review record marks accepted', acc.data.application.accepted, true);
+  expect('E19 review record carries the code', acc.data.application.creatorCode, 'NINAPLAYS');
+  expect('E19 welcome email sent to the account address', acc.data.notified.email, true);
+  expect('E19 inbox message dropped', acc.data.notified.inbox, true);
+  const welcome = emailsTo('crehasacct@example.com')[emailsTo('crehasacct@example.com').length - 1];
+  expect('E19 welcome subject', /creator program/i.test(welcome.subject), true);
+  expect('E19 welcome carries the referral link', welcome.text.includes('/NINAPLAYS'), true);
+  expect('E19 welcome carries the payout hint', welcome.text.includes('promotion@treehost.online'), true);
+  // The dashboard inbox shows the message.
+  const inbox = (await call('crehasacct', 'GET', '/api/inbox')).data;
+  expect('E19 inbox message present', inbox.messages.some((m) => /creator application was accepted/i.test(m.title)), true);
+  // The creator row is live: SPARK-style stats all zero, linked from the application.
+  const row19 = await creatorRow('NINAPLAYS');
+  expect('E19 creator row active with the application name', row19.name, 'Nina Nights');
+  expect('E19 creator row handle', row19.handle, '@ninaplays');
+  expect('E19 creator row stats start at zero', row19.stats.earnedCents, 0);
+  expect('E19 accepted in the reviewed list with the code', (await asOwner('GET', '/api/admin/creators/applications')).data.reviewed.some((a) => a.id === app1b.id && a.creatorCode === 'NINAPLAYS' && a.notifiedEmail && a.notifiedInbox), true);
+  expect('E19 accept audit line', (await asOwner('GET', '/api/admin/audit')).data.some((a) => a.text.includes(`accepted creator application ${app1b.id}`) && a.text.includes('NINAPLAYS') && a.text.includes('attached crehasacct')), true);
+  expect('E19 no second creator from the deny', (await creatorRow('OLLIESMALL')), null);
+
+  // --- accept WITHOUT any notification target: skipped, recorded ---
+  await call('creapply3', 'POST', '/api/creators/apply', { name: 'Pat Quiet', handle: '@patquiet', platform: 'Kick', message: 'Small streamer, big plans.' }, sendAs('creapply3'));
+  const app3 = (await asOwner('GET', '/api/admin/creators/applications')).data.pending.find((a) => a.handle === '@patquiet');
+  const mailBefore3 = emailsBefore();
+  const acc3 = await asOwner('POST', `/api/admin/creators/applications/${app3.id}/review`, { accept: true });
+  expect('E19 accept without account/email -> 200', acc3.status, 200);
+  expect('E19 creator still created', acc3.data.creator.code, 'PATQUIET');
+  expect('E19 no email target -> skipped', acc3.data.notified.email, false);
+  expect('E19 skip noted in the audit line', (await asOwner('GET', '/api/admin/audit')).data.some((a) => a.text.includes('PATQUIET') && a.text.includes('no address to notify')), true);
+  expect('E19 no email sent for the quiet accept', sentEmails.length, mailBefore3);
+
+  // --- accept with a manual email, no account (the no-account acceptance email) ---
+  await call('creapply4', 'POST', '/api/creators/apply', { name: 'Mona Mail', handle: '@monamail', platform: 'YouTube', message: 'Tutorial channel, 20k subs.' }, sendAs('creapply4'));
+  const app4 = (await asOwner('GET', '/api/admin/creators/applications')).data.pending.find((a) => a.handle === '@monamail');
+  const acc4 = await asOwner('POST', `/api/admin/creators/applications/${app4.id}/review`, { accept: true, email: 'mona@example.com' });
+  expect('E19 accept with a manual email -> 200', acc4.status, 200);
+  expect('E19 creator created', acc4.data.creator.code, 'MONAMAIL');
+  expect('E19 no account attached', acc4.data.account, undefined);
+  expect('E19 email sent to the manual address', acc4.data.notified.email, true);
+  const mona = emailsTo('mona@example.com')[emailsTo('mona@example.com').length - 1];
+  expect('E19 manual-email welcome carries the link', mona.text.includes('/MONAMAIL'), true);
 };

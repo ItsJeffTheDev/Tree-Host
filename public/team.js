@@ -1937,11 +1937,40 @@ function creatorTierBadge(tier) {
 
 async function adminCreators(body, sub) {
   if (sub) return creatorLedger(body, sub);
-  const d = await api('GET', '/api/admin/creators');
+  const [d, apps] = await Promise.all([api('GET', '/api/admin/creators'), api('GET', '/api/admin/creators/applications').catch(() => ({ pending: [], reviewed: [] }))]);
   body.innerHTML = `
     <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
       <p class="muted" style="margin:0 0 10px;max-width:620px">The creator (affiliate) program. A creator shares their personal link — <code>${esc((state.me.publicUrl || location.origin).replace(/^https?:\/\//, ''))}/CODE</code> — and earns a % of every referred customer's first payment. An optional viewer discount code gives their audience % off at checkout.</p>
       <button class="btn primary" id="cr-add">+ Add creator</button>
+    </div>
+    <div class="card" style="margin-bottom:12px" id="cr-apps">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <b>Applications</b>
+        <span class="small muted">${apps.pending.length} pending${apps.reviewed.length ? ` · <a href="#" id="cr-apps-toggle">${apps.reviewed.length} reviewed</a>` : ''}</span>
+      </div>
+      ${apps.pending.length ? apps.pending.map((a) => `
+        <div class="row" style="gap:10px;align-items:flex-start;border-top:1px solid rgba(128,128,128,.2);padding:8px 0;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">
+            <b>${esc(a.name)}</b> ${a.handle ? `<span class="muted">${esc(a.handle)}</span>` : ''}${a.platform ? ` <span class="badge">${esc(a.platform)}</span>` : ''}
+            <div class="small" style="margin-top:2px">${esc(a.message)}</div>
+            <div class="small muted">applied ${new Date(a.at).toLocaleDateString()} · suggested code <code class="copy" data-copy="${esc(a.suggestedCode)}">${esc(a.suggestedCode)}</code></div>
+          </div>
+          <div class="actions-cell" style="white-space:nowrap">
+            <button class="btn sm primary" data-app-accept="${esc(a.id)}">Accept</button>
+            <button class="btn sm" data-app-deny="${esc(a.id)}">Deny</button>
+          </div>
+        </div>`).join('') : '<p class="muted small" style="margin:6px 0 0">No pending applications. New ones arrive from the public /creators page and show up here.</p>'}
+      <div id="cr-apps-reviewed" style="display:none">
+        ${apps.reviewed.map((a) => `
+          <div class="row small" style="gap:8px;border-top:1px solid rgba(128,128,128,.2);padding:6px 0;align-items:center;flex-wrap:wrap">
+            <span class="badge ${a.accepted ? 'green' : 'red'}">${a.accepted ? 'accepted' : 'denied'}</span>
+            <b>${esc(a.name)}</b>${a.handle ? ` <span class="muted">${esc(a.handle)}</span>` : ''}
+            ${a.creatorCode ? `<code>${esc(a.creatorCode)}</code>` : ''}
+            ${a.accountUsername ? `<span class="muted">account ${esc(a.accountUsername)}</span>` : ''}
+            ${a.reason ? `<span class="muted" style="flex:1;min-width:160px">“${esc(a.reason)}”</span>` : ''}
+            <span class="muted" style="margin-left:auto;white-space:nowrap">${new Date(a.decidedAt).toLocaleDateString()} · ${esc(a.by || '')}${a.notifiedEmail ? ' · emailed' : a.notifiedInbox ? ' · inbox' : ' · not notified'}</span>
+          </div>`).join('')}
+      </div>
     </div>
     <div class="card" style="margin-bottom:12px">
       <div class="row" style="flex-wrap:wrap;gap:10px;align-items:flex-end">
@@ -2043,6 +2072,19 @@ async function adminCreators(body, sub) {
   });
   copyBtns[0].addEventListener('click', () => navigator.clipboard.writeText(shareLink.value).then(() => toast('Referral link copied')));
   copyBtns[1].addEventListener('click', () => navigator.clipboard.writeText(shareCode.value).then(() => toast('Viewer code copied')));
+  // Applications panel: expand the reviewed list, accept/deny (suggested codes copy via the
+  // shared [data-copy] handler below).
+  const reviewedBox = $('#cr-apps-reviewed', body);
+  const reviewedToggle = $('#cr-apps-toggle', body);
+  if (reviewedToggle)
+    reviewedToggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      const open = reviewedBox.style.display === 'none';
+      reviewedBox.style.display = open ? '' : 'none';
+      reviewedToggle.textContent = `${apps.reviewed.length} reviewed${open ? '' : ' (hidden)'}`;
+    });
+  $$('[data-app-accept]', body).forEach((b) => b.addEventListener('click', () => applicationAcceptModal(apps.pending.find((a) => a.id === b.dataset.appAccept), () => adminCreators(body))));
+  $$('[data-app-deny]', body).forEach((b) => b.addEventListener('click', () => applicationDenyModal(apps.pending.find((a) => a.id === b.dataset.appDeny), () => adminCreators(body))));
   $$('[data-copy]', body).forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
   $$('[data-link]', body).forEach((el) =>
     el.addEventListener('click', (e) => {
@@ -2064,6 +2106,82 @@ async function adminCreators(body, sub) {
       });
     }),
   );
+}
+
+/** Accept-application modal (daniel: suggestion editable, optional account attach, optional reason).
+ *  Account attach: pick from the account list (GET /api/team/users, admin-only) or type an email
+ *  manually for people without an account. */
+async function applicationAcceptModal(app, done) {
+  let accounts = [];
+  try {
+    accounts = (await api('GET', '/api/team/users')).filter((u) => !u.role || u.role === 'customer' || CUSTOMER_ROLES.includes(u.role));
+  } catch {} // the account search is best-effort: staff can always fall back to a manual email
+  const { root, close } = openModal(`
+    <h2>Accept ${esc(app.name)}</h2>
+    <p class="muted" style="margin-top:-6px">Creates creator <code>${esc(app.suggestedCode)}</code> (editable) and sends them their link and code.</p>
+    <form id="cr-app-accept" class="stack">
+      <label class="field">Creator code<input type="text" name="code" maxlength="32" value="${esc(app.suggestedCode)}" style="text-transform:uppercase"></label>
+      <label class="field">Attach a Tree Host account <span class="muted small">(optional — their earnings then show on their dashboard)</span>
+        <select name="account"><option value="">No account to attach</option>
+          ${accounts.map((u) => `<option value="${esc(u.username)}">${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field">…or their email if they have no account <span class="muted small">(the welcome email goes here)</span>
+        <input type="email" name="email" placeholder="them@example.com">
+      </label>
+      <label class="field">Note to include <span class="muted small">(optional)</span>
+        <input type="text" name="reason" maxlength="200" placeholder="Welcome aboard!">
+      </label>
+      <p class="hint small" style="margin:0">If we have neither an account nor an email, we accept them without a notification and note it on the application.</p>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Accept application</button></div>
+    </form>`);
+  $('#cr-app-accept', root).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const account = f.get('account');
+    attempt(async () => {
+      const r = await api('POST', `/api/admin/creators/applications/${encodeURIComponent(app.id)}/review`, {
+        accept: true,
+        code: f.get('code').trim().toUpperCase(),
+        accountUsername: account || undefined,
+        email: !account ? f.get('email').trim() : undefined,
+        reason: f.get('reason').trim() || undefined,
+      });
+      toast(`Accepted — creator ${r.creator.code} created${r.notified.email ? ', welcome email sent' : r.notified.inbox ? ', told in their inbox' : ' (no address to notify)'}`);
+      close();
+      done();
+    });
+  });
+}
+
+/** Deny-application modal: reason (strongly encouraged) + optional email for a no-account applicant. */
+function applicationDenyModal(app, done) {
+  const { root, close } = openModal(`
+    <h2>Deny ${esc(app.name)}</h2>
+    <p class="muted" style="margin-top:-6px">The application is closed. They can apply again later.</p>
+    <form id="cr-app-deny" class="stack">
+      <label class="field">Reason <span class="muted small">(goes into the decline email)</span>
+        <textarea name="reason" rows="3" maxlength="500" placeholder="We're focusing on channels with a bigger audience right now."></textarea>
+      </label>
+      <label class="field">Email to notify <span class="muted small">(only for applicants without a Tree Host account)</span>
+        <input type="email" name="email" placeholder="them@example.com">
+      </label>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn danger">Deny application</button></div>
+    </form>`);
+  $('#cr-app-deny', root).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    attempt(async () => {
+      const r = await api('POST', `/api/admin/creators/applications/${encodeURIComponent(app.id)}/review`, {
+        accept: false,
+        reason: f.get('reason').trim() || undefined,
+        email: f.get('email').trim() || undefined,
+      });
+      toast(`Application denied${r.notified.email ? ', decline email sent' : ' (no address to notify)'}`);
+      close();
+      done();
+    });
+  });
 }
 
 /** Add/Edit creator modal (mockup D). `existing` null = create; otherwise edit (code immutable). */

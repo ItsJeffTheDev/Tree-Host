@@ -235,6 +235,13 @@ creators.hooks.email = (kind, payload) => {
     payload.message,
   ], null, { heading: 'New creator application', replyTo: EMAILS.promo });
 };
+// Application review support: account lookup by username or email + persistence, exactly the
+// fields the TASK-018 attach route sets (no new attach path of its own).
+creators.hooks.findAccount = (login) => {
+  const l = String(login || '').trim().toLowerCase();
+  return auth.users.find((u) => (u.username || '').toLowerCase() === l || (u.email || '').toLowerCase() === l) || null;
+};
+creators.hooks.saveAccount = () => auth.save();
 
 // ---------- emails (the layout is in mail.js) ----------
 
@@ -1824,6 +1831,71 @@ route('POST', '/api/admin/creators/:code/attach', async (req, res, p) => {
   await auth.save();
   audit(req, `attached ${u.username} to creator ${c.code}${prev && prev !== c.code ? ` (was ${prev} — past commission stays in ${prev}'s ledger)` : ''}${prev === c.code ? ' (already attached — no change)' : ''}`);
   return { username: u.username, creatorCode: c.code };
+}, { perm: 'creators.manage' });
+/** List creator applications (pending + reviewed, newest first). */
+route('GET', '/api/admin/creators/applications', () => creators.applicationsList(), { perm: 'creators.manage' });
+/** Accept or deny an application. On accept: creator created (code override or auto-suggested
+ *  with a collision suffix) and optionally an existing account attached. The applicant is told
+ *  here — email when we have an address, plus their Tree Host inbox when they have an account
+ *  — and the notification outcome is recorded on the application (daniel's requirement). */
+route('POST', '/api/admin/creators/applications/:id/review', async (req, res, p) => {
+  const body = await readJson(req);
+  const by = req.user.username;
+  const r = await creators.review(p.id, body, by);
+  const app = r.application;
+  const base = PUBLIC_URL || auth.settings.baseUrl || 'https://treehost.online';
+  // Who hears about it: the attached account's email, else a staff-entered address for people
+  // with no account (both on accept and deny). No address and no account → skip silently,
+  // recorded on the application.
+  const email = (r.account && r.account.email) || String(body.email || '').trim() || null;
+  let sentEmail = false, sentInbox = false;
+  if (body.accept) {
+    const link = `${base}/${r.creator.code}`;
+    const paras = [
+      `Hi **${app.name}**, good news: you're in! We've accepted your creator application for ${app.platform || 'your channel'}${app.handle ? ` (${app.handle})` : ''}.`,
+      `Your personal code is **${r.creator.code}** — share your link **${link}** and every customer who signs up through it earns you a % of their first payment. Viewers can also use the discount code shown on your earnings page.`,
+      r.account
+        ? `We've linked your Tree Host account **${r.account.username}** to it: your earnings show up right on your dashboard.`
+        : `If you already have a Tree Host account, tell us the username and we'll link it so your earnings show on your dashboard.`,
+      creators.PAYOUT_HINT,
+    ];
+    if (email && mail.enabled()) {
+      await mail.send(email, 'Welcome to the Tree Host creator program', paras,
+        { text: 'See my earnings', url: `${base}/creators.html` }, { heading: 'You are a Tree Host creator!', replyTo: EMAILS.promo })
+        .then(() => { sentEmail = true; })
+        .catch((e) => console.error(`[creators] acceptance email to ${email} failed: ${e.message}`));
+    }
+    if (r.account) {
+      const u = auth.users.find((x) => x.username === r.account.username);
+      if (u) {
+        await moderation.message(u.id, {
+          title: 'Your creator application was accepted',
+          body: paras.join('\n\n'),
+          kind: 'message',
+          from: 'Tree Host',
+        }).catch(() => {});
+        sentInbox = true;
+      }
+    }
+  } else {
+    const paras = [
+      `Hi **${app.name}**, thanks for applying to the Tree Host creator program.`,
+      `We've decided not to move forward this time${app.reason ? `: ${app.reason}` : '.'}`,
+      "That's not a verdict on your channel — you're welcome to apply again later, once your channel and audience have grown.",
+    ];
+    if (email && mail.enabled()) {
+      await mail.send(email, 'Your Tree Host creator application', paras, null,
+        { heading: 'About your application', replyTo: EMAILS.promo })
+        .then(() => { sentEmail = true; })
+        .catch((e) => console.error(`[creators] decline email to ${email} failed: ${e.message}`));
+    }
+  }
+  await creators.markNotified(app.id, { email: sentEmail, inbox: sentInbox });
+  audit(req, `${body.accept ? 'accepted' : 'denied'} creator application ${app.id} (${app.handle || app.name})${r.creator ? ` as ${r.creator.code}` : ''}${r.account ? `, attached ${r.account.username}` : ''}${sentEmail ? ', notified by email' : sentInbox ? ', told in their inbox' : ', no address to notify'}`);
+  return {
+    ...r,
+    notified: { email: sentEmail, inbox: sentInbox },
+  };
 }, { perm: 'creators.manage' });
 route(
   'POST',
