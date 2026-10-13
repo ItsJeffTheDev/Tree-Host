@@ -202,10 +202,22 @@ class Billing {
       if (plans.length) await this.savePlans();
     }
     // Same for the founding plan: deployments whose saved plans predate it get it exactly once.
-    if (plans.length && !this.settings.foundingAdded && !this.plans.some((p) => p.founding)) this.plans.push({ ...FOUNDING_PLAN });
+    // Match by plan ID, not the founding flag: a saved row that lost its flags (staff edited
+    // plans in the console, or an older build saved the row) would otherwise block the
+    // canonical FOUNDING_PLAN — leaving the live plan without its cap, unitsLeft and
+    // sold-out tracking. Re-stamp the flags onto the saved row instead.
+    const savedFounding = this.plans.find((p) => p.id === FOUNDING_PLAN.id);
+    if (plans.length && !this.settings.foundingAdded && !savedFounding) this.plans.push({ ...FOUNDING_PLAN });
     if (!this.settings.foundingAdded) {
       this.settings.foundingAdded = true;
       if (plans.length) await this.savePlans();
+    }
+    // The founding plan's identity fields are code-owned: whatever is saved can't drop the
+    // cap, the founding flag or the slot layout (the staff console still edits its price).
+    const live = this.plans.find((p) => p.id === FOUNDING_PLAN.id);
+    if (live && (live.founding !== true || live.capTotal !== FOUNDING_PLAN.capTotal || !live.slots || live.slots.servers !== FOUNDING_PLAN.slots.servers)) {
+      Object.assign(live, { founding: true, capTotal: FOUNDING_PLAN.capTotal, slots: { ...FOUNDING_PLAN.slots }, proxyRamMb: FOUNDING_PLAN.proxyRamMb, prioritySupport: true });
+      await this.savePlans();
     }
     if (!Array.isArray(this.settings.foundingCredits)) this.settings.foundingCredits = [];
     this.subs = Object.values((await store.load('subscriptions')) || {});
