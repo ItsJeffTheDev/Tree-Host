@@ -25,3 +25,4 @@ tools/stream-deck/deck-state.json
 
 # Private settings (Stripe test keys, Resend, admin emails). Never commit.
 test-site.env
+__pycache__/
