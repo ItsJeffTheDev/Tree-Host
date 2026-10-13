@@ -1751,6 +1751,266 @@ async function adminPromos(body) {
   );
 }
 
+// ---------- Creators tab (src/creators.js; mockups C–F) ----------
+
+const CREATOR_PAYOUT_METHODS = [
+  ['paypal', 'PayPal'],
+  ['iban', 'IBAN / bank transfer'],
+  ['giftcard', 'Gift card'],
+];
+
+function creatorBalanceHtml(c) {
+  if (c.stats.balanceCents >= 0) return money(c.stats.balanceCents);
+  return `<span style="color:#f08a84;font-weight:700">${money(c.stats.balanceCents)}</span><div class="small muted">net against future commission</div>`;
+}
+
+function creatorTierBadge(tier) {
+  return `<span class="badge ${tier.id === 'gold' ? 'yellow' : tier.id === 'silver' ? 'blue' : ''}">${esc(tier.label)} ${tier.percent}%</span>`;
+}
+
+async function adminCreators(body, sub) {
+  if (sub) return creatorLedger(body, sub);
+  const d = await api('GET', '/api/admin/creators');
+  body.innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+      <p class="muted" style="margin:0 0 10px;max-width:620px">The creator (affiliate) program. A creator shares their personal link — <code>?ref=CODE</code> — and earns a % of every referred customer's first payment. An optional viewer discount code gives their audience % off at checkout.</p>
+      <button class="btn primary" id="cr-add">+ Add creator</button>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="stat-num">${d.totals.creators}</div><div class="stat-label">creators</div></div>
+      <div class="stat"><div class="stat-num">${d.totals.signups}</div><div class="stat-label">referred signups</div></div>
+      <div class="stat"><div class="stat-num">${d.totals.payingReferrals}</div><div class="stat-label">paying referrals</div></div>
+      <div class="stat"><div class="stat-num">${money(d.totals.earnedCents)}</div><div class="stat-label">commission earned (all time)</div></div>
+      <div class="stat"><div class="stat-num">${money(d.totals.balanceCents)}</div><div class="stat-label">unpaid balances</div></div>
+    </div>
+    <div class="card" style="overflow-x:auto">
+      ${
+        d.creators.length
+          ? `<table>
+        <thead><tr><th>Creator</th><th>Code</th><th>Tier</th><th>Signups</th><th>Paying</th><th>Earned</th><th>Balance</th><th>Viewer code</th><th>Status</th><th></th></tr></thead>
+        <tbody>${d.creators
+          .map(
+            (c) => `<tr>
+          <td><b>${esc(c.name)}</b>${c.handle ? `<div class="small muted">${esc(c.handle)}${c.platform ? ` · ${esc(c.platform)}` : ''}</div>` : ''}</td>
+          <td><code class="copy" data-copy="${esc(c.code)}" title="Click to copy the code">${esc(c.code)}</code><div><a class="small" href="#" data-link="${esc(c.code)}">copy link</a></div></td>
+          <td>${creatorTierBadge(c.tier)}</td>
+          <td>${c.stats.signups}</td>
+          <td>${c.stats.payingReferrals}</td>
+          <td>${money(c.stats.earnedCents)}</td>
+          <td>${creatorBalanceHtml(c)}</td>
+          <td class="small">${c.viewerCode ? `<code class="copy" data-copy="${esc(c.viewerCode.code)}" title="Click to copy">${esc(c.viewerCode.code)}</code><div class="muted">${c.viewerCode.percentOff}% off${c.viewerCode.active ? '' : ' · paused'}</div>` : '<span class="muted">-</span>'}</td>
+          <td>${c.status === 'active' ? '<span class="badge green">active</span>' : '<span class="badge red">disabled</span>'}</td>
+          <td class="actions-cell" style="white-space:nowrap">
+            <button class="btn sm" data-ledger="${esc(c.code)}">Ledger</button>
+            <button class="btn sm" data-edit="${esc(c.code)}">Edit</button>
+            <button class="btn sm" data-payout="${esc(c.code)}">Mark payout</button>
+            <button class="btn sm danger" data-toggle="${esc(c.code)}" data-disable="${c.status === 'active' ? 1 : 0}">${c.status === 'active' ? 'Disable' : 'Enable'}</button>
+          </td>
+        </tr>`,
+          )
+          .join('')}</tbody></table>`
+          : '<p class="muted" style="margin:0">No creators yet. Add the first one and send them their link.</p>'
+      }
+    </div>
+    <p class="hint small" style="margin-top:8px">Balances are real money owed — payouts are sent by hand (PayPal, bank transfer or gift card) and marked here, which is what keeps the ledger and the audit log truthful. A negative balance means a refund clawed back more than was left after a payout; it clears against future commission.</p>`;
+  $('#cr-add', body).addEventListener('click', () => creatorModal(null, () => adminCreators(body)));
+  $$('[data-copy]', body).forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
+  $$('[data-link]', body).forEach((el) =>
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigator.clipboard.writeText(`${location.origin}/?ref=${el.dataset.link}`).then(() => toast('Referral link copied'));
+    }),
+  );
+  $$('[data-ledger]', body).forEach((b) => b.addEventListener('click', () => (location.hash = `#creators/${b.dataset.ledger}`)));
+  $$('[data-edit]', body).forEach((b) => b.addEventListener('click', () => creatorModal(d.creators.find((c) => c.code === b.dataset.edit), () => adminCreators(body))));
+  $$('[data-payout]', body).forEach((b) => b.addEventListener('click', () => payoutModal(d.creators.find((c) => c.code === b.dataset.payout), () => adminCreators(body))));
+  $$('[data-toggle]', body).forEach((b) =>
+    b.addEventListener('click', () => {
+      const off = b.dataset.disable === '1';
+      if (off && !confirm(`Disable ${b.dataset.toggle}? Their link stops attributing new signups and their viewer code pauses. Stats, ledger and balance are kept, and payouts stay possible.`)) return;
+      attempt(async () => {
+        const row = await api('DELETE', `/api/admin/creators/${encodeURIComponent(b.dataset.toggle)}`);
+        toast(`Creator ${row.code} ${row.status === 'active' ? 're-enabled' : 'disabled'}`);
+        adminCreators(body);
+      });
+    }),
+  );
+}
+
+/** Add/Edit creator modal (mockup D). `existing` null = create; otherwise edit (code immutable). */
+function creatorModal(existing, done) {
+  const editing = !!existing;
+  const { root, close } = openModal(`
+    <h2>${editing ? 'Edit creator' : 'Add creator'}</h2>
+    <p class="muted" style="margin-top:-6px">The code is what their audience puts in <code>?ref=</code>. Keep it short and easy to say out loud in videos.</p>
+    <form id="cr-form" class="stack">
+      <label class="field">Name<input type="text" name="name" maxlength="40" value="${esc(existing?.name || '')}" placeholder="Alex" required></label>
+      <div class="row" style="gap:10px">
+        <label class="field" style="flex:1">Channel handle<input type="text" name="handle" maxlength="40" value="${esc(existing?.handle || '')}" placeholder="@sparkbuilds"></label>
+        <label class="field" style="flex:1">Platform<input type="text" name="platform" maxlength="20" value="${esc(existing?.platform || '')}" placeholder="YouTube"></label>
+      </div>
+      <label class="field">Creator code
+        <input type="text" name="code" maxlength="32" value="${esc(existing?.code || '')}" placeholder="SPARK" style="text-transform:uppercase;max-width:220px" ${editing ? 'readonly class="readonly"' : ''}>
+        <span class="small muted">${editing ? 'The code never changes — renaming it would break attribution on every link already shared.' : 'A–Z, 0–9 and dashes, 3–32 characters, unique (a collision with a channel name or promo code is rejected).'}</span>
+      </label>
+      <div class="row" style="gap:10px;align-items:flex-end">
+        <label class="field" style="flex:1">Viewer discount code ${editing && existing.viewerCode ? `<span class="small muted">(exists: ${esc(existing.viewerCode.code)})</span>` : '<span class="small muted">(optional)</span>'}
+          <input type="text" name="vcode" maxlength="32" value="${esc(existing?.viewerCode?.code || '')}" placeholder="SPARK10" style="text-transform:uppercase" ${editing && existing.viewerCode ? 'readonly' : ''}>
+        </label>
+        <label class="field" style="width:110px">% off<input type="number" name="pct" min="1" max="99" value="${existing?.viewerCode?.percentOff ?? 10}" style="width:100px"></label>
+      </div>
+      ${editing && existing.viewerCode ? `<label class="row small" style="gap:6px;align-items:center"><input type="checkbox" name="vactive" ${existing.viewerCode.active ? 'checked' : ''}> viewer code active</label>` : ''}
+      <label class="field">Internal note <span class="small muted">(only staff see this)</span><input type="text" name="note" maxlength="200" value="${esc(existing?.note || '')}" placeholder="SMP series starting March — expect a spike"></label>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${editing ? 'Save changes' : 'Create creator'}</button></div>
+    </form>`);
+  $('#cr-form', root).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const bodyReq = {
+      name: f.name,
+      handle: f.handle,
+      platform: f.platform,
+      note: f.note,
+    };
+    if (!editing) {
+      bodyReq.code = f.code;
+      if (f.vcode.trim()) bodyReq.viewerCode = { code: f.vcode.trim(), percentOff: Number(f.pct) };
+    } else if (existing.viewerCode) {
+      bodyReq.viewerCode = { percentOff: Number(f.pct), active: !!f.vactive };
+    } else if (f.vcode.trim()) {
+      bodyReq.viewerCode = { code: f.vcode.trim(), percentOff: Number(f.pct) };
+    }
+    attempt(async () => {
+      const row = editing
+        ? await api('PUT', `/api/admin/creators/${encodeURIComponent(existing.code)}`, bodyReq)
+        : await api('POST', '/api/admin/creators', bodyReq);
+      toast(`Creator ${row.code} ${editing ? 'updated' : 'created'}${row.viewerCode ? ` — viewer code ${row.viewerCode.code} at ${row.viewerCode.percentOff}% off` : ''}`);
+      close();
+      done();
+    });
+  });
+}
+
+/** Mark-payout modal (mockup E). Amount is capped at the balance with a live "after saving" preview. */
+function payoutModal(creator, done) {
+  const bal = creator.stats.balanceCents;
+  const { root, close } = openModal(`
+    <h2>Mark payout · ${esc(creator.name)}</h2>
+    <p class="muted" style="margin-top:-6px">Record a payout you sent by hand. This is the audit trail: who was paid, how much, how.</p>
+    <form id="pay-form" class="stack">
+      <label class="field">Amount (USD) <span class="small muted">balance is ${money(bal)}${bal < 0 ? ' — negative, clear it against future commission first' : ''}</span>
+        <input type="number" name="amount" min="0" step="0.01" value="${(Math.max(0, bal) / 100).toFixed(2)}" style="max-width:180px">
+      </label>
+      <div class="field">Method
+        <div class="row" style="gap:6px" id="pay-methods">
+          ${CREATOR_PAYOUT_METHODS.map(([v, l], i) => `<label class="row" style="gap:5px;align-items:center"><input type="radio" name="method" value="${v}" ${i === 0 ? 'checked' : ''}> ${l}</label>`).join('')}
+        </div>
+      </div>
+      <label class="field">Reference <span class="small muted">(PayPal transaction id, IBAN last 4, …)</span><input type="text" name="reference" maxlength="100" placeholder="PAYID-8KJ2194A" required></label>
+      <label class="field">Note (optional)<input type="text" name="note" maxlength="200" placeholder="March earnings, paid in full"></label>
+      <div class="hint small" id="pay-preview"></div>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save payout</button></div>
+    </form>`);
+  const amountEl = $('[name=amount]', root);
+  const preview = $('#pay-preview', root);
+  const update = () => {
+    const cents = Math.round(parseFloat(amountEl.value || '0') * 100);
+    const after = bal - cents;
+    preview.innerHTML = cents > bal
+      ? `<span style="color:#f08a84">That is more than the ${money(bal)} balance. Payouts are capped at the balance.</span>`
+      : `After saving: balance <b>${money(after)}</b> · the ledger gains a payout entry of <b>-${money(cents)}</b>.`;
+  };
+  amountEl.addEventListener('input', update);
+  update();
+  $('#pay-form', root).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const cents = Math.round(parseFloat(f.amount || '0') * 100);
+    if (!(cents > 0)) return toast('Enter an amount above zero.', 'error');
+    if (cents > bal) return toast(`That is more than the creator's balance of ${money(bal)}.`, 'error');
+    attempt(async () => {
+      const row = await api('POST', `/api/admin/creators/${encodeURIComponent(creator.code)}/payout`, {
+        amountCents: cents,
+        method: f.method,
+        reference: f.reference,
+        note: f.note,
+      });
+      toast(`Marked a ${money(cents)} payout to ${row.code} — balance now ${money(row.stats.balanceCents)}`);
+      close();
+      done();
+    });
+  });
+}
+
+/** Per-creator detail view (mockup F): stat row, funnel bars, ledger table newest-first, Load more cursor. */
+async function creatorLedger(body, code, before) {
+  const d = await api('GET', `/api/admin/creators/${encodeURIComponent(code)}/ledger${before ? `?before=${encodeURIComponent(before)}` : ''}`);
+  let list = body.querySelector('.cr-ledger-rows');
+  if (!list) {
+    body.innerHTML = `
+      <p><a href="#creators">← Back to all creators</a></p>
+      <h2 style="margin:6px 0 2px">${esc(d.creator.code)}</h2>
+      <div class="stat-row" style="margin-top:10px">
+        <div class="stat"><div class="stat-num" data-fv="linkPageviews">0</div><div class="stat-label">link pageviews</div></div>
+        <div class="stat"><div class="stat-num" data-fv="signups">0</div><div class="stat-label">signups</div></div>
+        <div class="stat"><div class="stat-num" data-fv="firstPayments">0</div><div class="stat-label">paying referrals</div></div>
+        <div class="stat"><div class="stat-num">${money(d.funnel.earnedCents)}</div><div class="stat-label">earned (all time)</div></div>
+        <div class="stat"><div class="stat-num">${money(d.creator.balanceCents)}</div><div class="stat-label">balance owed</div></div>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:8px">Funnel — link → signup → first payment</h3>
+        <div id="cr-funnel"></div>
+        <p class="hint small" style="margin:8px 0 0">Pageviews and signups are attributed by the <code>${esc(d.creator.code)}</code> ref parameter; a referral counts as paying on their first payment.</p>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h3 style="margin-bottom:8px">Ledger</h3>
+        <table>
+          <thead><tr><th>When</th><th>Type</th><th>Detail</th><th>Amount</th><th>Balance after</th></tr></thead>
+          <tbody class="cr-ledger-rows"></tbody>
+        </table>
+        <p class="cr-more hidden" style="margin:10px 0 0"><button class="btn sm" id="cr-more">Load more</button></p>
+      </div>`;
+    const fx = (v) => (v > 0 ? Math.max(2, Math.round((v / Math.max(1, d.funnel.linkPageviews)) * 100)) : 0);
+    const steps = [
+      ['link pageviews', d.funnel.linkPageviews, ''],
+      ['signups', d.funnel.signups, 'blue'],
+      ['first payments', d.funnel.firstPayments, 'green'],
+    ];
+    const maxV = Math.max(1, d.funnel.linkPageviews);
+    $('#cr-funnel', body).innerHTML = steps
+      .map(([label, v, cls]) => `<div class="row" style="gap:8px;align-items:center;margin:4px 0">
+        <span class="small" style="width:120px">${label}</span>
+        <div style="flex:1;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;overflow:hidden"><div class="${cls}" style="height:16px;width:${Math.max(1, Math.round((v / maxV) * 100))}%;background:${cls === 'green' ? 'rgba(52,199,123,.6)' : cls === 'blue' ? 'rgba(74,158,255,.6)' : 'var(--muted)'}"></div></div>
+        <b class="small" style="width:40px;text-align:right">${v}</b></div>`)
+      .join('');
+    list = body.querySelector('.cr-ledger-rows');
+  }
+  list.insertAdjacentHTML(
+    'beforeend',
+    d.entries
+      .map((e) => {
+        const det = e.type === 'commission'
+          ? `${esc(e.detail.username || 'a customer')} · ${esc(e.detail.planName || 'a plan')}${e.detail.discountCents ? ` (−${money(e.detail.discountCents)} discount)` : ''} · ${e.detail.percent}% ${esc(e.detail.tierAtPost || '')}`
+          : e.type === 'clawback'
+            ? `commission refunded — the ${e.detail.percent ? `${e.detail.percent}% ${esc(e.detail.tierAtPost || '')} commission` : 'commission'} for a ${esc(e.detail.planName || 'referred payment')} was reversed`
+            : `${esc({ paypal: 'PayPal', iban: 'bank transfer', giftcard: 'gift card', other: 'other' }[e.detail.method] || e.detail.method || 'payout')} · ref ${esc(e.detail.reference || '-')}${e.detail.note ? ` · ${esc(e.detail.note)}` : ''}`;
+        return `<tr>
+          <td class="small">${new Date(e.at).toLocaleString()}</td>
+          <td><span class="badge ${e.type === 'commission' ? 'green' : e.type === 'clawback' ? 'yellow' : 'red'}">${esc(e.type)}</span></td>
+          <td class="small">${det}</td>
+          <td class="small" style="color:${e.amountCents < 0 ? '#f08a84' : '#6fe0a5'}">${e.amountCents < 0 ? '−' : '+'}${money(Math.abs(e.amountCents))}</td>
+          <td class="small">${money(e.balanceAfterCents)}</td>
+        </tr>`;
+      })
+      .join(''),
+  );
+  const more = $('#cr-more', body);
+  if (d.hasMore && d.cursor) {
+    more?.closest('.cr-more').classList.remove('hidden');
+    more.onclick = () => creatorLedger(body, code, d.cursor);
+  } else if (more) more.closest('.cr-more').classList.add('hidden');
+}
+
 async function adminPlans(body) {
   const d = await api('GET', '/api/admin/billing');
   // Memory sizes to price: every plan's size (servers), so each plan can be compared like for like.

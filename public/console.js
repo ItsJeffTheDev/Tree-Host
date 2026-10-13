@@ -11,6 +11,7 @@ const CONSOLE_SECTIONS = [
   { id: 'billing', icon: 'card', label: 'Billing', perm: 'billing.view', render: (b) => adminBilling(b) },
   { id: 'plans', icon: 'box', label: 'Plans', perm: 'billing.manage', render: (b) => adminPlans(b) },
   { id: 'promos', icon: 'ticket', label: 'Promo codes', perm: 'promos.manage', render: (b) => adminPromos(b) },
+  { id: 'creators', icon: 'star', label: 'Creators', perm: 'creators.manage', render: (b, sub) => adminCreators(b, sub) },
   { id: 'actions', icon: 'scroll', label: 'Action logs', perm: 'moderation.view', render: (b, sub) => consoleActions(b, sub) },
   { id: 'roles', icon: 'key', label: 'Roles & permissions', perm: 'console.access', render: consoleRoles },
   { id: 'audit', icon: 'receipt', label: 'Audit log', perm: 'audit.view', render: consoleAudit },
