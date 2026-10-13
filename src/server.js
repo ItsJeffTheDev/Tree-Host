@@ -1797,6 +1797,34 @@ route('POST', '/api/admin/creators/:code/payout', async (req, res, p) => {
   audit(req, `marked a ${(body.amountCents / 100).toFixed(2)} payout to creator ${row.code} (ref ${body.reference})`);
   return row;
 }, { perm: 'creators.manage' });
+/** Attach an EXISTING account to a creator (daniel: "someone might already have an account").
+ *  Normally attribution happens only at signup (applyRef); this lets staff credit an account
+ *  that signed up before the creator shared their link. remove:true clears the attribution.
+ *  Earnings count from attach time on — money already in a ledger stays with the creator who
+ *  earned it when the account is switched or detached. */
+route('POST', '/api/admin/creators/:code/attach', async (req, res, p) => {
+  const body = await readJson(req);
+  const login = String(body.username || body.email || '').trim().toLowerCase();
+  const u = login ? auth.users.find((x) => (x.username || '').toLowerCase() === login || (x.email || '').toLowerCase() === login) : null;
+  if (!u) throw httpError(404, 'No account matches that username or email.');
+  if (body.remove) {
+    const prev = u.creatorCode || null;
+    u.creatorCode = null;
+    u.creatorId = null;
+    await auth.save();
+    audit(req, `detached ${u.username} from creator ${prev || 'nothing'} (past commission stays in ${prev || 'no'} ledger)`);
+    return { username: u.username, creatorCode: null };
+  }
+  const c = creators.byCode(p.code);
+  if (!c) throw httpError(400, `Unknown creator code ${String(p.code).toUpperCase()}.`);
+  if (c.status !== 'active') throw httpError(400, `Creator ${c.code} is disabled — enable them before attaching accounts.`);
+  const prev = u.creatorCode || null;
+  u.creatorCode = c.code;
+  u.creatorId = c.id;
+  await auth.save();
+  audit(req, `attached ${u.username} to creator ${c.code}${prev && prev !== c.code ? ` (was ${prev} — past commission stays in ${prev}'s ledger)` : ''}${prev === c.code ? ' (already attached — no change)' : ''}`);
+  return { username: u.username, creatorCode: c.code };
+}, { perm: 'creators.manage' });
 route(
   'POST',
   '/api/billing/webhook',

@@ -402,4 +402,60 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   const plainSubs = (await call('crejunk', 'GET', '/api/billing')).data.subscriptions;
   expect('E15b full-price sub: percentOff null', plainSubs[0].percentOff, null);
   expect('E15b full-price sub: discountCents 0', plainSubs[0].discountCents, 0);
+
+  // ------------------------------------------------------------------
+  // E16 (CREATORS-T18): attach an EXISTING account to a creator
+  // daniel: "someone might already have an account" — attribution normally happens only at
+  // signup (applyRef); staff can credit an account that missed the link.
+  // ------------------------------------------------------------------
+  const sparkBefore = await creatorRow('SPARK');
+  await signup('creattach1'); // signed up with NO ref
+  expect('E16 starts unattributed', (await me('creattach1')).creatorCode, null);
+  // Attach by USERNAME, any case.
+  const a1 = await asOwner('POST', '/api/admin/creators/SPARK/attach', { username: 'CREATTACH1' });
+  expect('E16 attach by username -> 200', a1.status, 200);
+  expect('E16 attach returns the public shape', JSON.stringify(a1.data), '{"username":"creattach1","creatorCode":"SPARK"}');
+  expect('E16 me() shows the code right away', (await me('creattach1')).creatorCode, 'SPARK');
+  // The earnings panel works immediately: /api/creators/me is live for the attached account.
+  const mine1 = (await asUser('creattach1', 'GET', '/api/creators/me')).data;
+  expect('E16 /api/creators/me works after attach', mine1.found, true);
+  expect('E16 me exposes their creator code', mine1.code, 'SPARK');
+  // Attach by EMAIL, case-insensitive.
+  await signup('creattach2');
+  const a2 = await asOwner('POST', '/api/admin/creators/VIEWY/attach', { email: 'CREATTACH2@EXAMPLE.COM' });
+  expect('E16 attach by email (any case) -> 200', a2.status, 200);
+  expect('E16 email attach returns the code', a2.data.creatorCode, 'VIEWY');
+  expect('E16 ref field untouched by attach', (await me('creattach2')).ref, null);
+  // Guards.
+  const noUser = await asOwner('POST', '/api/admin/creators/SPARK/attach', { username: 'nobody-here' });
+  expect('E16 unknown user -> 404', noUser.status, 404);
+  const noCode = await asOwner('POST', '/api/admin/creators/NOSUCHCODE/attach', { username: 'creattach1' });
+  expect('E16 unknown creator code -> 400', noCode.status, 400);
+  expect('E16 admin creates a creator to disable', (await asOwner('POST', '/api/admin/creators', { name: 'AttachD', code: 'ATTACHD' })).status, 200);
+  expect('E16 disable ATTACHD', (await asOwner('DELETE', '/api/admin/creators/ATTACHD')).status, 200);
+  const dis = await asOwner('POST', '/api/admin/creators/ATTACHD/attach', { username: 'creattach1' });
+  expect('E16 attach to a disabled creator -> 400', dis.status, 400);
+  // Switching overwrites the old attribution; money already earned stays in the old ledger.
+  const sw = await asOwner('POST', '/api/admin/creators/ADMINC/attach', { username: 'creattach1' });
+  expect('E16 switch creator -> 200', sw.status, 200);
+  expect('E16 me() shows the new code', (await me('creattach1')).creatorCode, 'ADMINC');
+  expect('E16 old creator stats untouched by the switch', JSON.stringify((await creatorRow('SPARK')).stats), JSON.stringify(sparkBefore.stats));
+  // Idempotent: attaching the same creator again is fine.
+  expect('E16 attach same creator again -> 200', (await asOwner('POST', '/api/admin/creators/ADMINC/attach', { username: 'creattach1' })).status, 200);
+  // Earnings count from attach time on: their first payment now pays ADMINC, not SPARK.
+  await buy('creattach1', 'sapling');
+  const admEntry = (await commissionsFor('ADMINC', (await call('creattach1', 'GET', '/api/billing')).data.subscriptions[0].id))[0];
+  expect('E16 commission goes to the NEW creator', !!admEntry, true);
+  expect('E16 commission at the new creator tier (Bronze 10% x $5)', admEntry.amountCents, 50);
+  expect('E16 SPARK earned nothing from the switched account', (await creatorRow('SPARK')).stats.earnedCents, sparkBefore.stats.earnedCents);
+  // Remove clears the attribution; /api/creators/me goes back to found:false.
+  const rm = await asOwner('POST', '/api/admin/creators/ADMINC/attach', { username: 'creattach1', remove: true });
+  expect('E16 remove -> 200', rm.status, 200);
+  expect('E16 remove returns a null code', rm.data.creatorCode, null);
+  expect('E16 me() cleared', (await me('creattach1')).creatorCode, null);
+  expect('E16 earnings panel gone after remove', (await asUser('creattach1', 'GET', '/api/creators/me')).data.found, false);
+  // The audit line records the attach (and the switch's "past earnings stay" note).
+  const audit16 = (await asOwner('GET', '/api/admin/audit')).data;
+  expect('E16 audit line for the attach', audit16.some((a) => a.text.includes('attached creattach1 to creator ADMINC')), true);
+  expect('E16 audit line notes past money stays', audit16.some((a) => /attached creattach1 to creator ADMINC \(was SPARK/.test(a.text)), true);
 };

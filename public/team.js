@@ -1378,7 +1378,7 @@ async function adminPeople(body) {
     const list = all
       .filter((u) => (filter === 'all' ? true : filter === 'staff' ? !CUSTOMER_ROLES.includes(u.role) : filter === 'youtubers' ? u.role === 'youtuber' : CUSTOMER_ROLES.includes(u.role)))
       .filter((u) => !q || u.username.toLowerCase().includes(q) || (u.email || '').includes(q));
-    $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th></th></tr></thead><tbody>${list
+    $('#ppl-list', body).innerHTML = `<table><thead><tr><th>User</th><th>Role</th><th>Plans</th><th>Creator</th><th></th></tr></thead><tbody>${list
       .map(
         (u) => `<tr data-user-id="${esc(u.id)}">
           <td><b class="clickable-user" data-view-details="${esc(u.id)}">${esc(u.username)}</b>${u.lifetime ? ' <span class="badge lifetime-badge" title="Has a Lifetime plan">Lifetime</span>' : ''}${u.prioritySupport ? ' <span class="badge yellow" title="Priority support">Priority</span>' : ''}${restrictionBadge(u.restriction)}${u.linked && u.linked.length ? ` <span class="badge blue" title="Used on the same device as: ${esc(u.linked.map((l) => l.username).join(', '))}">${u.linked.length} linked</span>` : ''}
@@ -1389,11 +1389,13 @@ async function adminPeople(body) {
               : `<span class="badge ${ROLE_BADGE[u.role] || ''}">${esc(u.roleLabel || ROLE_LABEL[u.role] || u.role)}</span>`
           }</td>
           <td class="small">${u.activePlans.length ? esc(u.activePlans.join(', ')) : '<span class="muted">none</span>'}${u.servers ? ` · ${u.servers} server${u.servers > 1 ? 's' : ''}` : ''}</td>
+          <td class="small">${u.creatorCode ? `<span class="badge green" title="This account's first payments earn for this creator" data-creator="${esc(u.creatorCode)}">${ic('star')} ${esc(u.creatorCode)}</span>` : '<span class="muted">—</span>'}</td>
           <td class="actions-cell">${(() => {
             const isMe = u.id === me.id;
             const manage = canManage && outranks(u);
             const items = [
               `<button class="btn sm" data-view-details="${esc(u.id)}">${ic('info')} View Details</button>`,
+              hasPerm('creators.manage') ? `<button class="btn sm" data-attach="${esc(u.id)}">${ic('star')} Attach to creator</button>` : '',
               !isMe && hasPerm('promos.manage') ? `<button class="btn sm" data-code="${esc(u.id)}">${ic('ticket')} Give a free server code</button>` : '',
               !isMe && canGrant ? `<button class="btn sm" data-grant="${esc(u.id)}">Give a free plan now</button>` : '',
               manage
@@ -1465,6 +1467,9 @@ async function adminPeople(body) {
       }),
     );
     $$('[data-msg]', body).forEach((b) => b.addEventListener('click', () => openSendMessage(all.find((x) => x.id === b.dataset.msg))));
+    $$('[data-attach]', body).forEach((b) =>
+      b.addEventListener('click', () => openAttachCreator(all.find((x) => x.id === b.dataset.attach), reload)),
+    );
     $$('[data-legacy]', body).forEach((b) =>
       b.addEventListener('click', () =>
         attempt(async () => {
@@ -1870,6 +1875,51 @@ async function adminPromos(body) {
 
 // ---------- Creators tab (src/creators.js; mockups C–F) ----------
 
+/** Attach an existing account to a creator (People page action). Dropdown of active creators,
+ *  Attach to switch/attach, Remove to clear — both hit POST /api/admin/creators/:code/attach. */
+async function openAttachCreator(user, done) {
+  let creators = [];
+  try {
+    creators = (await api('GET', '/api/admin/creators')).creators.filter((c) => c.status === 'active');
+  } catch {}
+  if (!creators.length) return toast('Add an active creator first.', 'error');
+  const { root, close } = openModal(`
+    <h2>${ic('star')} Attach to creator</h2>
+    <p class="muted" style="margin-top:-6px"><b>${esc(user.username)}</b>'s future first payments earn commission for the picked creator.
+      ${user.creatorCode ? `They are attached to <code>${esc(user.creatorCode)}</code> right now.` : 'They are not earning for anyone right now.'}
+      Past earnings already in a ledger stay with the creator who earned them.</p>
+    <form id="attach-form" class="stack">
+      <label class="field">Creator
+        <select name="code">${creators.map((c) => `<option value="${esc(c.code)}" ${c.code === user.creatorCode ? 'selected' : ''}>${esc(c.name)} (${esc(c.code)})</option>`).join('')}</select>
+      </label>
+      <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button>
+        ${user.creatorCode ? '<button type="button" class="btn danger" id="attach-remove">Remove</button>' : ''}
+        <button class="btn primary">Attach</button></div>
+    </form>`);
+  $('#attach-form', root).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const code = new FormData(e.target).get('code');
+    attempt(async () => {
+      const r = await api('POST', `/api/admin/creators/${encodeURIComponent(code)}/attach`, { username: user.username });
+      toast(`${r.username} — now earning for ${r.creatorCode}`);
+      close();
+      done();
+    });
+  });
+  const rm = $('#attach-remove', root);
+  if (rm)
+    rm.addEventListener('click', () =>
+      attempt(async () => {
+        // remove:true bypasses the :code lookup (nothing to resolve), but the path still needs one.
+        await api('POST', `/api/admin/creators/${encodeURIComponent(user.creatorCode)}/attach`, { username: user.username, remove: true });
+        toast(`${user.username} is no longer earning for ${user.creatorCode}`);
+        close();
+        done();
+      }),
+    );
+}
+
+
 const CREATOR_PAYOUT_METHODS = [
   ['paypal', 'PayPal'],
   ['iban', 'IBAN / bank transfer'],
@@ -1911,6 +1961,13 @@ async function adminCreators(body, sub) {
         </label>
         <button class="btn sm" id="cr-share-copycode" disabled>Copy code</button>
         <button class="btn sm" id="cr-share-add">+ Add creator</button>
+      </div>
+      <div class="row" style="gap:10px;align-items:flex-end;margin-top:8px">
+        <label class="field" style="flex:1;min-width:220px">Attach an existing account
+          <input type="text" id="cr-attach-user" placeholder="username or email" style="max-width:260px">
+        </label>
+        <button class="btn sm" id="cr-attach" disabled>Attach</button>
+        <span class="small muted" style="max-width:340px">Give an account that signed up without the link this creator's earnings — e.g. someone who already had an account. Future commission goes to the picked creator; what past earnings already in a ledger stay there.</span>
       </div>
     </div>
     <div class="stat-row">
@@ -1971,6 +2028,19 @@ async function adminCreators(body, sub) {
     copyBtns[1].disabled = !(c && c.viewerCode);
   };
   pick.addEventListener('change', syncShare);
+  const attachBtn = $('#cr-attach', body);
+  const attachInput = $('#cr-attach-user', body);
+  attachInput.addEventListener('input', () => (attachBtn.disabled = !(pick.value && attachInput.value.trim())));
+  attachBtn.addEventListener('click', () => {
+    const code = pick.value;
+    attempt(async () => {
+      const r = await api('POST', `/api/admin/creators/${encodeURIComponent(code)}/attach`, { username: attachInput.value.trim() });
+      toast(`${r.username} — now earning for ${r.creatorCode}`);
+      attachInput.value = '';
+      attachBtn.disabled = true;
+      adminCreators(body);
+    });
+  });
   copyBtns[0].addEventListener('click', () => navigator.clipboard.writeText(shareLink.value).then(() => toast('Referral link copied')));
   copyBtns[1].addEventListener('click', () => navigator.clipboard.writeText(shareCode.value).then(() => toast('Viewer code copied')));
   $$('[data-copy]', body).forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
