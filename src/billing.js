@@ -209,7 +209,20 @@ class Billing {
     }
     if (!Array.isArray(this.settings.foundingCredits)) this.settings.foundingCredits = [];
     this.subs = Object.values((await store.load('subscriptions')) || {});
-    this.promos = Object.values((await store.load('promos')) || {});
+    // The Realtime Database drops empty arrays: a promo saved with uses: [] loads back with
+    // uses: undefined, and publicPromo()'s p.uses.length then throws — which surfaced as a
+    // mysterious 400 on GET /api/admin/promos and broke the whole Promo codes page. Normalize
+    // every record on load (and write the repair back once so the DB self-heals).
+    let promosFixed = false;
+    this.promos = Object.values((await store.load('promos')) || {}).map((p) => {
+      const fixed = { ...p };
+      if (!Array.isArray(fixed.uses)) { fixed.uses = []; promosFixed = true; }
+      if (fixed.maxUses === undefined) { fixed.maxUses = 1; promosFixed = true; }
+      if (fixed.active === undefined) { fixed.active = true; promosFixed = true; }
+      if (!fixed.code) { fixed.code = 'BROKEN-' + Math.random().toString(36).slice(2, 8).toUpperCase(); promosFixed = true; }
+      return fixed;
+    });
+    if (promosFixed) await this.savePromos();
     this.donations = Object.values((await store.load('donations')) || {});
   }
 
