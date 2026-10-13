@@ -2168,8 +2168,16 @@ async function adminCreators(body, sub) {
       reviewedBox.style.display = open ? '' : 'none';
       reviewedToggle.textContent = `${apps.reviewed.length} reviewed${open ? '' : ' (hidden)'}`;
     });
-  $$('[data-app-accept]', body).forEach((b) => b.addEventListener('click', () => applicationAcceptModal(apps.pending.find((a) => a.id === b.dataset.appAccept), () => adminCreators(body))));
-  $$('[data-app-deny]', body).forEach((b) => b.addEventListener('click', () => applicationDenyModal(apps.pending.find((a) => a.id === b.dataset.appDeny), () => adminCreators(body))));
+  $$('[data-app-accept]', body).forEach((b) => b.addEventListener('click', () => {
+    const app = apps.pending.find((a) => a.id === b.dataset.appAccept);
+    if (!app) return toast('That application was just reviewed — refresh to see the latest.', 'error');
+    applicationAcceptModal(app, () => adminCreators(body));
+  }));
+  $$('[data-app-deny]', body).forEach((b) => b.addEventListener('click', () => {
+    const app = apps.pending.find((a) => a.id === b.dataset.appDeny);
+    if (!app) return toast('That application was just reviewed — refresh to see the latest.', 'error');
+    applicationDenyModal(app, () => adminCreators(body));
+  }));
   $$('[data-copy]', body).forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
   $$('[data-link]', body).forEach((el) =>
     el.addEventListener('click', (e) => {
@@ -2197,6 +2205,7 @@ async function adminCreators(body, sub) {
  *  Account attach: pick from the account list (GET /api/team/users, admin-only) or type an email
  *  manually for people without an account. */
 async function applicationAcceptModal(app, done) {
+  if (!app) return;
   let accounts = [];
   try {
     accounts = (await api('GET', '/api/team/users')).filter((u) => !u.role || u.role === 'customer' || CUSTOMER_ROLES.includes(u.role));
@@ -2241,6 +2250,7 @@ async function applicationAcceptModal(app, done) {
 
 /** Deny-application modal: reason (strongly encouraged) + optional email for a no-account applicant. */
 function applicationDenyModal(app, done) {
+  if (!app) return;
   const { root, close } = openModal(`
     <h2>Deny ${esc(app.name)}</h2>
     <p class="muted" style="margin-top:-6px">The application is closed. They can apply again later.</p>
