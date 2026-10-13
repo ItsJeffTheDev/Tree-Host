@@ -181,6 +181,8 @@ class Billing {
       metric: () => {}, // funnel counters (set by server.js; fire-and-forget)
       serversOf: () => [], // [{ id, name, kind }] of the servers using a subscription (set by server.js)
       borrowedMb: () => 0, // memory used by running extra servers beyond what their plans reserve (set by server.js)
+      commission: () => {}, // creator-program commission on the first payment (set by server.js; fire-and-forget)
+      commissionRefund: () => {}, // creator-program clawback on a refund (set by server.js; fire-and-forget)
     };
   }
 
@@ -391,6 +393,8 @@ class Billing {
       freeUntil: s.freeUntil || null,
       freeLength: !s.free ? null : s.freeDays !== undefined ? durationText(s.freeDays) : s.freeUntil ? null : 'lifetime',
       promoCode: s.promoCode || null,
+      percentOff: s.percentOff || null,
+      discountCents: s.discountCents || 0,
       cancelAtPeriodEnd: !!s.cancelAtPeriodEnd,
       pastDueSince: s.pastDueSince || null,
       canceledAt: s.canceledAt || null,
@@ -419,10 +423,33 @@ class Billing {
     return s;
   }
 
+  /**
+   * Validates the viewer code entered at checkout (a creator program discount). Returns null when no code
+   * was given, otherwise { code, percentOff, discountCents }: the amount off this one purchase. s.priceCents
+   * keeps the list price; the Stripe session just charges the discounted unit_amount (one discount source —
+   * Stripe-side promo entry is disabled for that session).
+   */
+  viewerDiscount(viewerCode, plan) {
+    const raw = String(viewerCode || '').trim();
+    if (!raw) return null;
+    const p = this.promo(raw);
+    if (p && p.planId) throw httpError(400, `${p.code} is a free-plan code — redeem it in Billing instead of using it at checkout.`);
+    const bad = () => httpError(400, "That code doesn't work any more.");
+    if (!p || !p.active) throw bad();
+    if (p.expiresAt && Date.now() > p.expiresAt) throw bad();
+    if (p.uses.length >= p.maxUses) throw bad();
+    if (p.percentOff == null) throw bad();
+    const discountCents = Math.round((plan.priceCents * p.percentOff) / 100);
+    return { code: p.code, percentOff: p.percentOff, discountCents: Math.min(discountCents, plan.priceCents) };
+  }
+
   /** Starts a purchase. Returns { url } to send the customer to (Stripe Checkout, or straight back in demo mode). */
-  async checkout(user, planId, origin, consent) {
+  async checkout(user, planId, origin, consent, viewerCode) {
     const plan = this.plan(planId);
     if (!plan || !plan.active) throw httpError(404, 'That plan is not available.');
+    // A creator's viewer code takes a percent off this one purchase. Validated here so an expired or
+    // used-up code never starts a discounted checkout; free-plan codes belong in Billing's redeem box.
+    const discount = this.viewerDiscount(viewerCode, plan);
     if (this.freeMb() < reserveMb(plan)) throw httpError(409, `${plan.name} is sold out right now. Try a smaller plan or check back soon.`, 'SOLD_OUT');
     if (plan.founding && this.foundingSold() >= this.foundingCap()) {
       throw httpError(409, 'Every Founding Lifetime spot is taken. The launch fund and monthly plans are still open.', 'SOLD_OUT');
@@ -436,6 +463,11 @@ class Billing {
     // Abandoned checkouts don't hold capacity forever.
     this.subs = this.subs.filter((s) => !(s.status === 'pending' && Date.now() - s.createdAt > 86400000));
     const s = this.newSub(user, plan);
+    if (discount) {
+      s.promoCode = discount.code;
+      s.percentOff = discount.percentOff;
+      s.discountCents = discount.discountCents;
+    }
     // Proof of what the customer agreed to (auto-renewal laws ask for this; kept with the subscription).
     s.consent = {
       version: CONSENT_VERSION,
@@ -473,7 +505,7 @@ class Billing {
             quantity: 1,
             price_data: {
               currency: CURRENCY,
-              unit_amount: plan.priceCents,
+              unit_amount: plan.priceCents - (s.discountCents || 0),
               product_data: { name: `Tree Host ${plan.name}: ${plan.slots ? `${plan.slots.servers} servers + ${plan.slots.proxies} proxies, ` : ''}paid once` },
             },
           },
@@ -491,7 +523,9 @@ class Billing {
       expires_at: Math.floor(Date.now() / 1000) + 31 * 60,
       customer: user.stripeCustomerId || undefined,
       customer_email: user.stripeCustomerId ? undefined : user.email || undefined,
-      allow_promotion_codes: 'true',
+      // One discount source (the viewer code already priced into the line item); Stripe-side promo entry
+      // stays open only for checkouts without a code.
+      allow_promotion_codes: s.discountCents ? undefined : 'true',
       custom_text: { submit: { message: `Renews automatically every month at the price above until you cancel. Cancel any time in Billing on Tree Host; you keep the plan until the end of the month you paid for.` } },
       metadata: { subId: s.id, userId: user.id },
       subscription_data: { metadata: { subId: s.id, userId: user.id, planId: plan.id } },
@@ -500,7 +534,7 @@ class Billing {
           quantity: 1,
           price_data: {
             currency: CURRENCY,
-            unit_amount: plan.priceCents,
+            unit_amount: plan.priceCents - (s.discountCents || 0),
             recurring: { interval: 'month' },
             product_data: { name: `Tree Host ${plan.name}: ${+(plan.ramMb / 1024).toFixed(1)} GB Minecraft server` },
           },
@@ -531,6 +565,9 @@ class Billing {
       this.hooks.metric('checkoutCompleted');
       this.hooks.notify('billing', s, `bought a ${s.planName} server`);
       if (this.hooks.sendEmail) this.hooks.sendEmail('planActive', this.hooks.userById(s.userId), s).catch(() => {});
+      // Creator commission on the first payment. The creators module double-guards (marker + ledger lookup
+      // by subId), but this is the single choke point: webhook retries and double-confirms can't re-enter.
+      try { this.hooks.commission(s); } catch {} // fire-and-forget: never throws into billing
     }
     if (s.planId === 'founding-lifetime' && (was === 'pending' || !this.settings.foundingCredits.some((c) => c.subId === s.id))) {
       // A founder badge for a founding purchase: a credit line the founders() totals read like a donation.
@@ -572,6 +609,7 @@ class Billing {
       months: Math.round(promoDays(p) / 30),
       maxUses: p.maxUses,
       uses: p.uses.length,
+      percentOff: p.percentOff == null ? null : p.percentOff,
       redeemedBy: p.uses.map((u) => ({ userId: u.userId, at: u.at })),
       note: p.note || '',
       forUserId: p.forUserId || null,
@@ -586,22 +624,30 @@ class Billing {
   /**
    * Creates a code. Leave `code` empty to get a random one like TREE-7K2P-QX9M.
    * forUserId: the code only works for that one account (and only once).
+   * percentOff (1-99): a discount code with no planId — a creator program viewer code. It is not
+   * redeemable for a free plan; customers enter it at checkout (see viewerDiscount()).
    */
-  async createPromo({ code, planId, months, days, maxUses, note, expiresAt, forUserId }, by) {
+  async createPromo({ code, planId, months, days, maxUses, note, expiresAt, forUserId, percentOff }, by) {
     if (forUserId && !this.hooks.userById(forUserId)) throw httpError(404, 'That account does not exist.');
-    const plan = this.plan(planId);
-    if (!plan) throw httpError(400, 'Pick a plan for this code.');
+    if (percentOff != null && planId) throw httpError(400, 'A discount code is not tied to a plan — leave the plan empty.');
+    const discount = percentOff != null ? Math.round(Number(percentOff)) : null;
+    if (discount != null && !(discount >= 1 && discount <= 99)) throw httpError(400, 'The discount must be between 1 and 99 percent.');
+    const plan = discount == null ? this.plan(planId) : null;
+    if (discount == null && !plan) throw httpError(400, 'Pick a plan for this code.');
     let c = cleanCode(code);
     if (code && c.length < 4) throw httpError(400, 'Codes need at least 4 letters or numbers.');
     if (!c) do c = randomCode(); while (this.promo(c));
     if (this.promo(c)) throw httpError(400, `The code ${c} already exists.`);
     const p = {
       code: c,
-      planId: plan.id,
-      days: toDays({ days, months }),
-      maxUses: forUserId ? 1 : Math.max(1, Math.min(10000, Math.round(Number(maxUses) || 1))),
+      planId: plan ? plan.id : null,
+      percentOff: discount,
+      days: plan ? toDays({ days, months }) : 0,
+      maxUses: discount != null
+        ? Math.max(1, Math.min(10000, Math.round(Number(maxUses) || 10000)))
+        : forUserId ? 1 : Math.max(1, Math.min(10000, Math.round(Number(maxUses) || 1))),
       forUserId: forUserId || null,
-      note: String(note || '').slice(0, 100),
+      note: String(note || (discount != null ? `creator:${c}` : '')).slice(0, 100),
       expiresAt: expiresAt ? Number(new Date(expiresAt)) || null : null,
       active: true,
       uses: [],
@@ -626,6 +672,7 @@ class Billing {
     const p = this.promo(code);
     const nope = "That code doesn't work. Check the spelling, or ask whoever gave it to you.";
     if (!p || !p.active) throw httpError(404, nope);
+    if (p.percentOff != null) throw httpError(400, `${p.code} is a discount for a paid plan — enter it at checkout, not here.`);
     if (p.expiresAt && Date.now() > p.expiresAt) throw httpError(410, 'That code has expired.');
     if (p.uses.length >= p.maxUses) throw httpError(410, 'That code has already been used.');
     if (p.forUserId && p.forUserId !== user.id) throw httpError(403, 'This code is for a different account. Sign in with the account it was made for.');
@@ -1012,6 +1059,8 @@ class Billing {
           const before = this.settings.foundingCredits.length;
           this.settings.foundingCredits = this.settings.foundingCredits.filter((c) => c.subId !== s.id);
           if (this.settings.foundingCredits.length !== before) this.savePlans().catch(() => {});
+          // Claw the creator's commission back too (same guard as the credit: only when something was paid).
+          try { this.hooks.commissionRefund(s); } catch {} // fire-and-forget
           this.hooks.notify('billing', s, `${s.planName} purchase was refunded, so the plan ended`);
         }
         break;
