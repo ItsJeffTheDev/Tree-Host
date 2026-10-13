@@ -223,8 +223,27 @@ class Auth {
     return y;
   }
 
+  /**
+   * Applies ?ref= attribution to a new user: static channels and active creator codes are kept
+   * verbatim, everything else is 'other' (refValue). When the ref resolves to an active creator
+   * (via the passed registry hook) the account is attributed to them for good — commissions and
+   * stats read user.creatorCode/creatorId from then on. With no creators registered this is
+   * exactly the old single-arg behavior.
+   */
+  applyRef(user, body, opts = {}) {
+    const codes = Array.isArray(opts.creatorCodes) ? opts.creatorCodes : [];
+    user.ref = refValue(body.ref, { creatorCodes: codes });
+    const byCode = typeof opts.creatorByCode === 'function' ? opts.creatorByCode : null;
+    const c = byCode && user.ref ? byCode(user.ref) : null;
+    if (c && c.status === 'active') {
+      user.creatorCode = c.code;
+      user.creatorId = c.id;
+    }
+    return user;
+  }
+
   /** Public sign-up: creates a customer account right away. */
-  async signup(body, ip) {
+  async signup(body, ip, opts = {}) {
     if (!this.settings.allowSignup) throw httpError(403, 'Sign-ups are closed right now. Please try again later.');
     if (!body.acceptTerms) throw httpError(400, 'Please accept the Terms of Service and Privacy Policy.');
     const birthYear = this.checkAge(body);
@@ -237,7 +256,7 @@ class Auth {
     user.birthYear = birthYear;
     // Where the visitor came from (?ref=discord etc.), sanitized against the allowlist. A bad
     // or missing ref never fails the signup: refValue returns 'other' for junk, null for absent.
-    user.ref = refValue(body.ref);
+    this.applyRef(user, body, opts);
     await this.save();
     return { user, token: await this.createSession(user) };
   }
@@ -408,7 +427,7 @@ class Auth {
     await this.save();
   }
 
-  async acceptInvite(body, ip) {
+  async acceptInvite(body, ip, opts = {}) {
     this.checkRate([`invite:${ip}`]);
     const invite = this.findInvite(body.invite);
     if (!invite) {
@@ -423,7 +442,7 @@ class Auth {
     }
     const user = await this.createUser(body, invite.role);
     if (birthYear) user.birthYear = birthYear;
-    user.ref = refValue(body.ref);
+    this.applyRef(user, body, opts);
     this.invites = this.invites.filter((i) => i !== invite);
     await this.save();
     return { token: await this.createSession(user), user, invite };
@@ -607,7 +626,7 @@ class Auth {
    * TREEHOST_ADMIN_EMAILS become admins (only once Firebase has verified the email); invite links make support staff.
    * Returns { token } or { needsProfile: true, email, suggested }.
    */
-  async firebaseLogin(body, ip) {
+  async firebaseLogin(body, ip, opts = {}) {
     this.checkRate([`fb:${ip}`]);
     const id = await firebase.verifyIdToken(body.idToken);
     let user = this.findByFirebase(id.uid);
@@ -666,8 +685,8 @@ class Auth {
       createdAt: Date.now(),
       lastLogin: Date.now(),
       hasDemoServer: false,
-      ref: refValue(body.ref),
     };
+    this.applyRef(user, body, opts);
     this.users.push(user);
     if (invite) this.invites = this.invites.filter((i) => i !== invite);
     await this.save();

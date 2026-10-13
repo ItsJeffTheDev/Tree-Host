@@ -32,6 +32,7 @@ const { TestSite } = require('./testsite');
 const TEST_SITE = process.env.TREEHOST_TEST_SITE === '1';
 let testSite = null; // src/testsite.js (see main)
 const { Moderation, TYPES, REASONS } = require('./moderation');
+const { Creators } = require('./creators');
 const MOTD = require('./motd');
 const backups = require('./backups');
 const modrinth = require('./modrinth');
@@ -79,6 +80,7 @@ const staffNotices = new StaffNotices();
 const players = new Players();
 const moderation = new Moderation();
 const metrics = new Metrics();
+const creators = new Creators();
 manager.teamMode = TEAM;
 // A test site on this PC (http://localhost...) may run customer servers without Docker; the real site never does.
 if (HOSTED && /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/')) manager.allowUnsafe = true;
@@ -191,6 +193,8 @@ billing.hooks.deleteServer = async (id) => {
   await manager.remove(id);
 };
 billing.hooks.userById = (id) => auth.userById(id);
+billing.hooks.commission = (s) => { try { creators.postCommission(s); } catch {} };
+billing.hooks.commissionRefund = (s) => { try { creators.clawback(s); } catch {} };
 billing.hooks.metric = (type, extra) => { try { metrics.count(type, extra); } catch {} };
 billing.hooks.notify = (kind, sub, text) => activity.log(kind, (auth.userById(sub.userId) || {}).username || sub.donorName || 'A customer', text);
 billing.hooks.email = (user, subject, paragraphs) => {
@@ -200,6 +204,36 @@ billing.hooks.email = (user, subject, paragraphs) => {
 billing.hooks.sendEmail = (kind, user, sub) => {
   const baseUrl = auth.settings.baseUrl || PUBLIC_URL || 'https://treehost.online';
   return user && user.email ? sendEmail(user.email, EMAIL[kind](user, sub, baseUrl)) : Promise.resolve(false);
+};
+
+// ---------- creators <-> everything ----------
+// Every hook is fire-and-forget safe by contract: a throw here must never fail a signup,
+// a promo edit or a billing call. Viewers' percent-off promo codes are minted through
+// billing.createPromo so there is exactly one code pipeline (GAP-2).
+creators.hooks.userById = (id) => auth.userById(id);
+creators.hooks.promoExists = (code) => !!billing.promo(code);
+creators.hooks.createPromo = (body, by) => billing.createPromo(body, by);
+creators.hooks.updateViewerPromo = async (code, patch) => {
+  const p = billing.promo(code);
+  if (!p) return null;
+  if (patch.percentOff !== undefined) p.percentOff = Math.max(1, Math.min(99, Math.round(Number(patch.percentOff)) || p.percentOff));
+  if (patch.active !== undefined) p.active = !!patch.active;
+  await billing.savePromos();
+  return billing.publicPromo(p);
+};
+creators.hooks.viewerPromo = (code) => {
+  const p = billing.promo(code);
+  return p ? { code: p.code, percentOff: p.percentOff, active: !!p.active } : null;
+};
+creators.hooks.metricsMaps = () => ({ pvRef: metrics.decodeMap(metrics.totals.pvRef), signupRef: metrics.decodeMap(metrics.totals.signupRef) });
+creators.hooks.notice = (n) => { if (TEAM) staffNotices.add(n); };
+creators.hooks.activity = (kind, who, text) => { try { activity.log(kind, who, text); } catch {} };
+creators.hooks.email = (kind, payload) => {
+  if (kind !== 'creatorApplication' || !mail.enabled()) return Promise.resolve(false);
+  return mail.send(EMAILS.promo, 'New creator application', [
+    `**${payload.name}** (${payload.platform || 'unknown platform'}, ${payload.handle || 'no handle'}) applied to the creator program:`,
+    payload.message,
+  ], null, { heading: 'New creator application', replyTo: EMAILS.promo });
 };
 
 // ---------- emails (the layout is in mail.js) ----------
@@ -756,7 +790,7 @@ route(
     if (!TEAM) throw httpError(400, 'Accounts only exist on a hosted Tree Host.');
     const body = await readJson(req);
     if (body.username) regionCheck(req); // only when a new account is being made
-    const r = await auth.firebaseLogin(body, clientIp(req));
+    const r = await auth.firebaseLogin(body, clientIp(req), { creatorCodes: creators.activeCodes(), creatorByCode: (c) => creators.byCode(c) });
     if (!r.token) return r;
     if (r.created) {
       activity.log('people', r.user.username, r.user.role === 'customer' ? 'signed up' : `joined as ${rbac.role(r.user.role).label}${r.invite ? ' with an invite link' : ''}`);
@@ -793,7 +827,7 @@ route(
     passwordAuthOnly();
     regionCheck(req);
     const body = await readJson(req);
-    const { token, user, invite } = await auth.acceptInvite(body, clientIp(req));
+    const { token, user, invite } = await auth.acceptInvite(body, clientIp(req), { creatorCodes: creators.activeCodes(), creatorByCode: (c) => creators.byCode(c) });
     activity.log('people', user.username, `joined as ${rbac.role(user.role).label} with an invite link`);
     await inviteUsed(user, invite);
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': await signInCookies(req, token) });
@@ -808,9 +842,9 @@ route(
   async (req, res) => {
     passwordAuthOnly();
     const body = await readJson(req);
-    const { user, token } = await auth.signup(body, clientIp(req));
+    const { user, token } = await auth.signup(body, clientIp(req), { creatorCodes: creators.activeCodes(), creatorByCode: (c) => creators.byCode(c) });
     activity.log('people', user.username, 'signed up');
-    try { metrics.count('signup', { ref: body && body.ref }); } catch {}
+    try { metrics.count('signup', { ref: body && body.ref, creatorCodes: creators.activeCodes() }); } catch {}
     if (user.email && mail.enabled()) welcomeEmail(req, user).catch((e) => console.error(`[mail] welcome email failed: ${e.message}`));
     sendJson(res, 200, { ok: true }, { 'Set-Cookie': await signInCookies(req, token) });
     return HANDLED;
@@ -1640,7 +1674,7 @@ route('POST', '/api/billing/checkout', async (req) => {
   regionCheck(req, true);
   const body = await readJson(req);
   const consent = { ...(body.consent || {}), ip: clientIp(req), userAgent: req.headers['user-agent'] };
-  return billing.checkout(req.user, body.planId, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req), consent);
+  return billing.checkout(req.user, body.planId, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req), consent, body.viewerCode);
 });
 route('POST', '/api/billing/confirm', async (req) => billing.publicSub(await billing.confirmCheckout(req.user, (await readJson(req)).sessionId, auth)));
 route('POST', '/api/billing/portal', async (req) => billing.portal(req.user, PUBLIC_URL || auth.settings.baseUrl || publicOrigin(req)));
@@ -1689,6 +1723,42 @@ route('DELETE', '/api/admin/promos/:code', async (req, res, p) => {
   audit(req, `disabled promo code ${c.code}`);
   return c;
 }, { perm: 'promos.manage' });
+
+// ---------- Creator program (staff: creators.manage) ----------
+route('GET', '/api/admin/creators', () => creators.adminList(), { perm: 'creators.manage' });
+route('POST', '/api/admin/creators', async (req) => {
+  const body = await readJson(req);
+  const row = await creators.create(body, req.user.username);
+  audit(req, `created creator ${row.code} (${row.name}${row.viewerCode ? `, viewer code ${row.viewerCode.code} at ${row.viewerCode.percentOff}% off` : ''})`);
+  return row;
+}, { perm: 'creators.manage' });
+route('PUT', '/api/admin/creators/:code', async (req, res, p) => {
+  const body = await readJson(req);
+  const row = await creators.edit(p.code, body, req.user.username);
+  audit(req, `updated creator ${row.code}`);
+  return row;
+}, { perm: 'creators.manage' });
+route('DELETE', '/api/admin/creators/:code', async (req, res, p) => {
+  const c = creators.byCode(p.code);
+  if (!c) throw httpError(404, 'Creator not found');
+  const disable = c.status === 'active';
+  const row = await creators.setStatus(p.code, disable, req.user.username);
+  audit(req, `${disable ? 'disabled' : 're-enabled'} creator ${row.code}`);
+  return row;
+}, { perm: 'creators.manage' });
+route('GET', '/api/admin/creators/:code/ledger', async (req, res, p, q) => {
+  const c = creators.byCode(p.code);
+  if (!c) throw httpError(404, 'Creator not found');
+  const page = creators.ledgerFor(p.code, { before: q.get('before') || undefined });
+  return { ...page, funnel: creators.funnelFor(c) };
+}, { perm: 'creators.manage' });
+route('POST', '/api/admin/creators/:code/payout', async (req, res, p) => {
+  const body = await readJson(req);
+  await creators.markPayout(p.code, body, req.user.username);
+  const row = creators.row(creators.byCode(p.code));
+  audit(req, `marked a ${(body.amountCents / 100).toFixed(2)} payout to creator ${row.code} (ref ${body.reference})`);
+  return row;
+}, { perm: 'creators.manage' });
 route(
   'POST',
   '/api/billing/webhook',
@@ -2343,7 +2413,7 @@ route('POST', '/api/metrics/event', async (req, res) => {
       if (!res.headersSent) sendJson(res, 400, { error: 'Bad request' });
       return HANDLED;
     }
-    metrics.count('pageview', { path: body.path, referrerHost: body.referrerHost, ref: body.ref, host: req.headers.host, beacon: true });
+    metrics.count('pageview', { path: body.path, referrerHost: body.referrerHost, ref: body.ref, host: req.headers.host, beacon: true, creatorCodes: creators.activeCodes() });
     if (!res.headersSent) { res.writeHead(204); res.end(); }
   } catch {
     // A bad JSON body → 400; anything else silent. The beacon can never produce a 5xx.
@@ -2356,6 +2426,15 @@ route('GET', '/api/metrics/social', () => metrics.social({
   foundingUnitsLeft: billing.foundingUnitsLeft ? billing.foundingUnitsLeft() : null,
   foundingCapTotal: billing.foundingCap ? billing.foundingCap() : null,
 }), { public: true });
+
+// ---------- Creator program (public) ----------
+// The lookup is rate-limited per IP and answers the identical { found: false } shape+timing for
+// unknown AND disabled codes (GAP-1): the code is the credential, so no existence oracle.
+route('GET', '/api/creators/lookup', (req, res, p, q) => {
+  creators.checkLookupRate(clientIp(req));
+  return creators.lookup(q.get('code') || '');
+}, { public: true });
+route('POST', '/api/creators/apply', async (req) => creators.apply(await readJson(req), clientIp(req)), { public: true });
 
 route('GET', '/api/admin/metrics', () => ({
   ...metrics.adminSummary({ founding: billing.foundingUnitsLeft ? { sold: billing.foundingSold ? billing.foundingSold() : 0, capTotal: billing.foundingCap(), unitsLeft: billing.foundingUnitsLeft() } : null }),
@@ -3993,6 +4072,7 @@ const PAGES = {
   '/support': 'support.html',
   '/about': 'about.html',
   '/investors': 'investors.html',
+  '/creators': 'creators.html',
   '/terms': 'terms.html',
   '/privacy': 'privacy.html',
 };
@@ -4318,6 +4398,7 @@ async function main() {
     auth.signupCode = env('SIGNUP_CODE', '');
     auth.allowFirstAdmin = !auth.adminEmails.size && (!HOSTED || /^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(PUBLIC_URL + '/'));
     await billing.init();
+    await creators.init();
     await moderation.init();
     await supportChat.load();
     setInterval(() => expireActions().catch((e) => console.error(`Moderation check failed: ${e.message}`)), 60 * 1000);

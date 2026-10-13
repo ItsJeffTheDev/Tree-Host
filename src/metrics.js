@@ -166,12 +166,12 @@ class Metrics {
   }
 
   /** Count one event. Returns nothing, never throws, never awaits a save. */
-  count(type, { path, ref, referrerHost, host, beacon } = {}) {
+  count(type, { path, ref, referrerHost, host, beacon, creatorCodes } = {}) {
     try {
       if (!EVENT_TYPES.includes(type)) return;
       const now = Date.now();
       const day = dayKey(now);
-      const rv = refValue(ref);
+      const rv = refValue(ref, { creatorCodes });
       let rh = null;
       let p = null;
       if (type === 'pageview') {
