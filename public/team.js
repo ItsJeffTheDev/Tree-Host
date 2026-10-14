@@ -2023,7 +2023,7 @@ function creatorTierBadge(tier) {
 /** Applications review: its own console page (filter tabs pending / approved / denied / all). */
 async function adminApplications(body, filter) {
   filter = ['pending', 'approved', 'denied'].includes(filter) ? filter : 'pending';
-  const apps = await api('GET', '/api/admin/creators/applications').catch(() => ({ pending: [], reviewed: [] }));
+  const apps = await api('GET', '/api/admin/creators/applications?_=' + Date.now()).catch(() => ({ pending: [], reviewed: [] }));
   const all = [...apps.pending.map((a) => ({ ...a, outcome: 'pending' })), ...apps.reviewed.map((a) => ({ ...a, outcome: a.accepted ? 'approved' : 'denied' }))];
   const counts = { pending: apps.pending.length, approved: all.filter((a) => a.outcome === 'approved').length, denied: all.filter((a) => a.outcome === 'denied').length, all: all.length };
   const shown = filter === 'all' ? all : all.filter((a) => a.outcome === filter);
@@ -2059,17 +2059,28 @@ async function adminApplications(body, filter) {
           : `<p class="muted small" style="margin:6px 0">No ${filter === 'all' ? '' : filter + ' '}applications.</p>`
     }
     </div>`;
-  $$('[data-app-accept]', body).forEach((b) => b.addEventListener('click', () => {
-    const app = apps.pending.find((a) => a.id === b.dataset.appAccept);
-    if (!app) return toast('That application was just reviewed — refresh to see the latest.', 'error');
-    applicationAcceptModal(app, () => adminApplications(body, filter));
-  }));
-  $$('[data-app-deny]', body).forEach((b) => b.addEventListener('click', () => {
-    const app = apps.pending.find((a) => a.id === b.dataset.appDeny);
-    if (!app) return toast('That application was just reviewed — refresh to see the latest.', 'error');
-    applicationDenyModal(app, () => adminApplications(body, filter));
-  }));
+  const findApp = (id) => apps.pending.find((a) => a.id === id) || apps.reviewed.find((a) => a.id === id);
+  // Delegated: one listener on the body container, so buttons work even if the list
+  // re-renders under them (and a stale id gets a clear message instead of a crash).
+  body.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-app-accept], [data-app-deny]');
+    if (!b || !body.contains(b)) return;
+    const app = findApp(b.dataset.appAccept || b.dataset.appDeny);
+    if (!app) return toast('That application is no longer in the list — refresh to see the latest.', 'error');
+    if (app.reviewed) {
+      toast(`Already ${app.accepted ? 'approved' : 'denied'}${app.by ? ` by ${app.by}` : ''}.`, 'error');
+      return adminApplications(body, filter);
+    }
+    const after = () => adminApplications(body, filter);
+    if (b.dataset.appAccept) applicationAcceptModal(app, after);
+    else applicationDenyModal(app, after);
+  });
   $$('[data-copy]', body).forEach((el) => el.addEventListener('click', () => navigator.clipboard.writeText(el.dataset.copy).then(() => toast('Copied'))));
+  // Re-fetch when the tab (or console section) regains focus: a decision made elsewhere
+  // updates this list without a manual refresh.
+  const onFocus = () => { if (!document.hidden) adminApplications(body, filter).catch(() => {}); };
+  document.addEventListener('visibilitychange', onFocus, { once: true });
+  window.addEventListener('focus', onFocus, { once: true });
 }
 
 async function adminCreators(body, sub) {
