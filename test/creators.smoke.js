@@ -218,19 +218,19 @@ step('C-APPLY + rate limits', async () => {
   m.hooks.notice = (n) => notices.push(n);
   let emailed = 0;
   m.hooks.email = async () => { emailed++; };
-  const r = await m.apply({ name: 'Alex', handle: '@sp', platform: 'YouTube', message: 'I make SMP series' }, '1.2.3.4');
+  const r = await m.apply({ name: 'Alex', email: 'alex@example.com', handle: '@sp', platform: 'YouTube', message: 'I make SMP series' }, '1.2.3.4');
   assert.deepEqual(r, { ok: true });
   assert.equal(m.applications.length, 1);
   assert.equal(m.creators.length, 0); // never creates a creator record
   assert.equal(notices.length, 1);
   assert.equal(notices[0].section, 'people');
   assert.equal(emailed, 1);
-  await assert.rejects(() => m.apply({ name: 'B' }, '1.2.3.4'), (e) => e.status === 400); // no message
+  await assert.rejects(() => m.apply({ name: 'B', email: 'b@example.com' }, '1.2.3.4'), (e) => e.status === 400); // no message
   // rate limit: APPLY_MAX per window
-  for (let i = 0; i < 10; i++) await m.apply({ name: 'X', message: 'hi' }, '5.6.7.8');
-  await assert.rejects(() => m.apply({ name: 'X', message: 'hi' }, '5.6.7.8'), (e) => e.status === 429);
+  for (let i = 0; i < 10; i++) await m.apply({ name: 'X', email: 'x@example.com', message: 'hi' }, '5.6.7.8');
+  await assert.rejects(() => m.apply({ name: 'X', email: 'x@example.com', message: 'hi' }, '5.6.7.8'), (e) => e.status === 429);
   // long message capped at 500
-  await m.apply({ name: 'C', message: 'x'.repeat(2000) }, '9.9.9.9');
+  await m.apply({ name: 'C', email: 'c@example.com', message: 'x'.repeat(2000) }, '9.9.9.9');
   assert.ok(m.applications.at(-1).message.length <= 500);
   m.checkLookupRate('1.1.1.1'); // does not throw under the limit
   for (let i = 0; i < 10; i++) m.checkLookupRate('2.2.2.2');

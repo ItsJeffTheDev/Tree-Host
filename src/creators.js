@@ -19,6 +19,7 @@ const TIER_LADDER = [
 const RATE_WINDOW = 15 * 60 * 1000;
 const APPLY_MAX = 10; // applications per IP per window, like signup
 const LOOKUP_MAX = 10;
+const APPLY_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/; // same shape as auth.js account emails
 const LEDGER_PAGE = 500;
 const PAYOUT_HINT = 'Email promotion@treehost.online to request your payout.';
 const CODE_RE = /^[A-Z0-9-]{3,32}$/;
@@ -572,17 +573,22 @@ class Creators {
    * Public application. Never creates a creator record — a staff notice + activity entry
    * (and an email when mail is on) are the whole outcome. Message capped at 500 chars (GAP-6).
    */
-  async apply({ name, handle, platform, message } = {}, ip) {
+  async apply({ name, handle, platform, message, email } = {}, ip) {
     this.checkRate([`apply:${ip}`], APPLY_MAX);
     this.recordRate(`apply:${ip}`);
     const nm = stripControls(name).trim().slice(0, 40);
     if (!nm) throw httpError(400, 'Enter your name.');
+    // Contact email (required): staff need a way to reach applicants without an account.
+    const mail = stripControls(email).trim().toLowerCase();
+    if (!mail) throw httpError(400, 'Enter your email address so we can get back to you.');
+    if (mail.length > 254 || !APPLY_EMAIL_RE.test(mail)) throw httpError(400, 'That email address does not look right.');
     const msg = stripControls(message).trim().slice(0, 500);
     if (!msg) throw httpError(400, 'Tell us a bit about your channel and audience.');
     const app = {
       id: newId('app'),
       at: Date.now(),
       name: nm,
+      email: mail,
       handle: stripControls(handle).trim().slice(0, 40),
       platform: stripControls(platform).trim().slice(0, 20),
       message: msg,
@@ -616,7 +622,7 @@ class Creators {
   applicationsList() {
     const byNewest = (a, b) => b.at - a.at || (a.id < b.id ? 1 : -1);
     const appRow = (a) => ({
-      id: a.id, at: a.at, name: a.name, handle: a.handle, platform: a.platform, message: a.message,
+      id: a.id, at: a.at, name: a.name, email: a.email || null, handle: a.handle, platform: a.platform, message: a.message,
       reviewed: !!a.reviewed,
       ...(a.reviewed ? {
         accepted: !!a.accepted, reason: a.reason || null, by: a.by || null, decidedAt: a.decidedAt || null,

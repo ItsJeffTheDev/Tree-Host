@@ -188,6 +188,9 @@ def run(page):
     # The apply form actually works (public POST /api/creators/apply).
     page.fill('#a-name', 'Browser Tester')
     page.fill('#a-handle', '@browsertester')
+    check('creators page: email field is required type=email',
+          page.evaluate("() => { const e = document.getElementById('a-email'); return !!e && e.type === 'email' && e.required && e.autocomplete === 'email'; }"))
+    page.fill('#a-email', 'browser.tester@example.com')
     page.select_option('#a-platform', 'YouTube')
     page.fill('#a-message', 'Browser suite application - I make SMP survival series.')
     page.click('#a-go')

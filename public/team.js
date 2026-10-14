@@ -2020,9 +2020,14 @@ function creatorTierBadge(tier) {
   return `<span class="badge ${tier.id === 'gold' ? 'yellow' : tier.id === 'silver' ? 'blue' : ''}">${esc(tier.label)} ${tier.percent}%</span>`;
 }
 
+/** Applicant contact email from the application form (mailto), or "no email" on legacy rows. */
+const appEmail = (a) => (a.email
+  ? `<a class="app-email" href="mailto:${esc(a.email)}">${esc(a.email)}</a>`
+  : '<span class="app-email muted">no email</span>');
+
 /** Applications review: its own console page (filter tabs pending / approved / denied / all). */
 async function adminApplications(body, filter) {
-  filter = ['pending', 'approved', 'denied'].includes(filter) ? filter : 'pending';
+  filter = ['pending', 'approved', 'denied', 'all'].includes(filter) ? filter : 'pending';
   const apps = await api('GET', '/api/admin/creators/applications?_=' + Date.now()).catch(() => ({ pending: [], reviewed: [] }));
   const all = [...apps.pending.map((a) => ({ ...a, outcome: 'pending' })), ...apps.reviewed.map((a) => ({ ...a, outcome: a.accepted ? 'approved' : 'denied' }))];
   const counts = { pending: apps.pending.length, approved: all.filter((a) => a.outcome === 'approved').length, denied: all.filter((a) => a.outcome === 'denied').length, all: all.length };
@@ -2040,6 +2045,7 @@ async function adminApplications(body, filter) {
           ? `<div class="row" style="gap:10px;align-items:flex-start;border-top:1px solid rgba(128,128,128,.2);padding:10px 0;flex-wrap:wrap">
               <div style="flex:1;min-width:220px">
                 <b>${esc(a.name)}</b> ${a.handle ? `<span class="muted">${esc(a.handle)}</span>` : ''}${a.platform ? ` <span class="badge">${esc(a.platform)}</span>` : ''}${a.handle ? ` <a class="small" href="${socialUrl(a)}" target="_blank" rel="noopener">view channel ↗</a>` : ''}
+                <div class="small" style="margin-top:2px">${appEmail(a)}</div>
                 <div class="small" style="margin-top:2px">${esc(a.message)}</div>
                 <div class="small muted">applied ${new Date(a.at).toLocaleDateString()} · suggested code <code class="copy" data-copy="${esc(a.suggestedCode)}">${esc(a.suggestedCode)}</code></div>
               </div>
@@ -2051,11 +2057,12 @@ async function adminApplications(body, filter) {
           : `<div class="row small" style="gap:8px;border-top:1px solid rgba(128,128,128,.2);padding:8px 0;align-items:center;flex-wrap:wrap">
               <span class="badge ${a.outcome === 'approved' ? 'green' : 'red'}">${a.outcome === 'approved' ? 'Approved' : 'Denied'}</span>
               <b>${esc(a.name)}</b>${a.handle ? ` <span class="muted">${esc(a.handle)}</span>` : ''}
+              ${appEmail(a)}
               <span class="muted">decided ${a.decidedAt ? new Date(a.decidedAt).toLocaleDateString() : '?'}${a.by ? ` by ${esc(a.by)}` : ''}</span>
               ${a.creatorCode ? `<span>code <code class="copy" data-copy="${esc(a.creatorCode)}">${esc(a.creatorCode)}</code></span>` : ''}
               ${a.reason ? `<span class="muted" style="flex-basis:100%">reason: ${esc(a.reason)}</span>` : ''}
               <span class="muted">${a.notifiedEmail ? 'emailed' : ''}${a.notifiedEmail && a.notifiedInbox ? ' + ' : ''}${a.notifiedInbox ? 'inboxed' : ''}${!a.notifiedEmail && !a.notifiedInbox ? 'not notified (no address)' : ''}</span>
-            </div>`)
+            </div>`).join('')
           : `<p class="muted small" style="margin:6px 0">No ${filter === 'all' ? '' : filter + ' '}applications.</p>`
     }
     </div>`;
@@ -2119,6 +2126,7 @@ async function applicationAcceptModal(app, done) {
   const { root, close } = openModal(`
     <h2>Accept ${esc(app.name)}</h2>
     ${app.handle ? `<p class="muted" style="margin-top:-6px"><a href="${socialUrl(app)}" target="_blank" rel="noopener">Open their channel ↗</a></p>` : ''}
+    <p class="small" style="margin-top:-6px">Contact: ${appEmail(app)}</p>
     <p class="muted" style="margin-top:-6px">Creates creator <code>${esc(app.suggestedCode)}</code> (editable) and sends them their link and code.</p>
     <form id="cr-app-accept" class="stack">
       <label class="field">Creator code<input type="text" name="code" maxlength="32" value="${esc(app.suggestedCode)}" style="text-transform:uppercase"></label>
@@ -2127,8 +2135,8 @@ async function applicationAcceptModal(app, done) {
           ${accounts.map((u) => `<option value="${esc(u.username)}">${esc(u.username)}${u.email ? ` · ${esc(u.email)}` : ''}</option>`).join('')}
         </select>
       </label>
-      <label class="field">…or their email if they have no account <span class="muted small">(the welcome email goes here)</span>
-        <input type="email" name="email" placeholder="them@example.com">
+      <label class="field">…or their email if they have no account <span class="muted small">(the welcome email goes here; defaults to the one on the application)</span>
+        <input type="email" name="email" placeholder="them@example.com" value="${esc(app.email || '')}">
       </label>
       <label class="field">Note to include <span class="muted small">(optional)</span>
         <input type="text" name="reason" maxlength="200" placeholder="Welcome aboard!">
@@ -2176,12 +2184,13 @@ function applicationDenyModal(app, done) {
     <h2>Deny ${esc(app.name)}</h2>
     ${app.handle ? `<p class="muted" style="margin-top:-6px"><a href="${socialUrl(app)}" target="_blank" rel="noopener">Open their channel ↗</a> before deciding.</p>` : '<p class="muted" style="margin-top:-6px">The application is closed. They can apply again later.</p>'}
     ${app.handle ? '' : '<p class="muted" style="margin-top:-6px">The application is closed. They can apply again later.</p>'}
+    <p class="small" style="margin-top:-6px">Contact: ${appEmail(app)}</p>
     <form id="cr-app-deny" class="stack">
       <label class="field">Reason <span class="muted small">(goes into the decline email)</span>
         <textarea name="reason" rows="3" maxlength="500" placeholder="We're focusing on channels with a bigger audience right now."></textarea>
       </label>
-      <label class="field">Email to notify <span class="muted small">(only for applicants without a Tree Host account)</span>
-        <input type="email" name="email" placeholder="them@example.com">
+      <label class="field">Email to notify <span class="muted small">(defaults to the one on the application)</span>
+        <input type="email" name="email" placeholder="them@example.com" value="${esc(app.email || '')}">
       </label>
       <div class="modal-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn danger">Deny application</button></div>
     </form>`);

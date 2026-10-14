@@ -392,8 +392,8 @@ test('C-MET-001: refValue creator-code extension (case-insensitive, backward com
 
 /** An application in the registry, applied as if from the public form. Returns the RAW stored
  *  record (not the list row) so state transitions can be asserted directly. */
-async function applied(m, { name = 'Alex', handle = '@sparkbuilds', platform = 'YouTube', message = 'I make modpack videos' } = {}) {
-  await m.apply({ name, handle, platform, message }, '1.2.3.4');
+async function applied(m, { name = 'Alex', email = 'alex@example.com', handle = '@sparkbuilds', platform = 'YouTube', message = 'I make modpack videos' } = {}) {
+  await m.apply({ name, email, handle, platform, message }, '1.2.3.4');
   return m.applications[m.applications.length - 1];
 }
 
@@ -419,10 +419,10 @@ test('C-APP-001: apply gets an id; listApplications splits pending/reviewed newe
   assert.equal(m.applicationsList().reviewed[0].name, 'Bo');
   // suggestion: junk handle falls back to the name, nothing usable at all -> CREATOR
   const m3 = newCreators();
-  await m3.apply({ name: 'Casey', handle: '!!!', platform: '', message: 'm' }, '5.5.5.5');
+  await m3.apply({ name: 'Casey', email: 'casey@example.com', handle: '!!!', platform: '', message: 'm' }, '5.5.5.5');
   assert.equal(m3.applicationsList().pending[0].suggestedCode, 'CASEY');
   const m4 = newCreators();
-  await m4.apply({ name: '###', handle: '', platform: '', message: 'm' }, '5.5.5.6');
+  await m4.apply({ name: '###', email: 'x@example.com', handle: '', platform: '', message: 'm' }, '5.5.5.6');
   assert.equal(m4.applicationsList().pending[0].suggestedCode, 'CREATOR');
 });
 
@@ -512,4 +512,32 @@ test('C-APP-004: guards — unknown id 404, double review 409, missing decision 
   assert.equal(row.notifiedInbox, false);
   assert.equal(row.accepted, true);
   await assert.rejects(() => m.markNotified('app_nope', { email: true }), (e) => e.status === 404);
+});
+
+// C-APP-005: the contact email on applications (CREATORS-T23)
+test('C-APP-005: apply requires a valid contact email; stored trimmed + lowercased; legacy rows list email null', async () => {
+  const m = newCreators();
+  const base = { name: 'Eve', platform: 'YouTube', message: 'hi' };
+  const bad = async (email, ip) => assert.rejects(() => m.apply({ ...base, email }, ip), (e) => e.status === 400 && /email/i.test(e.message));
+  await bad(undefined, '7.0.0.1');
+  await bad('   ', '7.0.0.2');
+  await bad('nope', '7.0.0.3');
+  await bad('a@b', '7.0.0.4');
+  await bad('a b@example.com', '7.0.0.5');
+  await bad(`${'e'.repeat(250)}@example.com`, '7.0.0.6');
+  assert.equal(m.applications.length, 0); // nothing stored on a reject
+  await m.apply({ ...base, email: '  Eve.Mail@Example.COM ' }, '7.0.0.7');
+  assert.equal(m.applications[0].email, 'eve.mail@example.com');
+  assert.equal(m.applicationsList().pending[0].email, 'eve.mail@example.com');
+  // A legacy application (stored before the field existed) still lists, with email null.
+  m.applications.push({ id: 'app_legacy00000', at: 1, name: 'Old', handle: '', platform: '', message: 'm', reviewed: false });
+  assert.equal(m.applicationsList().pending.find((a) => a.id === 'app_legacy00000').email, null);
+  await m.review('app_legacy00000', { accept: false }, 'owner');
+  assert.equal(m.applicationsList().reviewed[0].email, null);
+});
+
+test('C-APP-006: rate limiting still applies before email validation', async () => {
+  const m = newCreators();
+  for (let i = 0; i < 10; i++) await m.apply({ name: 'X', email: 'bad', message: 'hi' }, '8.8.8.8').catch(() => {});
+  await assert.rejects(() => m.apply({ name: 'X', email: 'x@example.com', message: 'hi' }, '8.8.8.8'), (e) => e.status === 429);
 });

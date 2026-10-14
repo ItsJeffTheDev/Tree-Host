@@ -232,7 +232,7 @@ creators.hooks.activity = (kind, who, text) => { try { activity.log(kind, who, t
 creators.hooks.email = (kind, payload) => {
   if (kind !== 'creatorApplication' || !mail.enabled()) return Promise.resolve(false);
   return mail.send(EMAILS.promo, 'New creator application', [
-    `**${payload.name}** (${payload.platform || 'unknown platform'}, ${payload.handle || 'no handle'}) applied to the creator program:`,
+    `**${payload.name}** (${payload.platform || 'unknown platform'}, ${payload.handle || 'no handle'}, ${payload.email || 'no email'}) applied to the creator program:`,
     payload.message,
   ], null, { heading: 'New creator application', replyTo: EMAILS.promo });
 };
@@ -1845,10 +1845,10 @@ route('POST', '/api/admin/creators/applications/:id/review', async (req, res, p)
   const r = await creators.review(p.id, body, by);
   const app = r.application;
   const base = PUBLIC_URL || auth.settings.baseUrl || 'https://treehost.online';
-  // Who hears about it: the attached account's email, else a staff-entered address for people
-  // with no account (both on accept and deny). No address and no account → skip silently,
-  // recorded on the application.
-  const email = (r.account && r.account.email) || String(body.email || '').trim() || null;
+  // Who hears about it: the attached account's email, else a staff-entered address, else the
+  // contact email from the application itself (both on accept and deny). Legacy applications
+  // with none of those and no account → skip silently, recorded on the application.
+  const email = (r.account && r.account.email) || String(body.email || '').trim() || app.email || null;
   let sentEmail = false, sentInbox = false;
   if (body.accept) {
     const link = `${base}/${r.creator.code}`;

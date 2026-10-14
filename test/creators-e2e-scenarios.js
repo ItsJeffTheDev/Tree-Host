@@ -296,7 +296,7 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   // ------------------------------------------------------------------
   const limitIp = { 'X-Forwarded-For': '10.13.99.99' };
   const apply = (body) => call('creapply', 'POST', '/api/creators/apply', body, limitIp);
-  expect('E12 apply accepted', (await apply({ name: 'Alex Applied', handle: '@alex', platform: 'YouTube', message: 'I make SMP series' })).data.ok, true);
+  expect('E12 apply accepted', (await apply({ name: 'Alex Applied', email: 'alex@example.com', handle: '@alex', platform: 'YouTube', message: 'I make SMP series' })).data.ok, true);
   expect('E12 no creator record created', await creatorRow('ALEXAPPLIED'), null);
   const notices = (await call('creowner', 'GET', '/api/staff/notices')).data.items;
   const notice = notices.find((n) => n.title === 'New creator application');
@@ -306,8 +306,8 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   const activity = (await call('creowner', 'GET', '/api/activity')).data;
   expect('E12 activity entry logged', activity.some((a) => /creator application/.test(a.text)), true);
   // 10 per window per IP: the 1 accepted + 9 more pass, the 11th is 429.
-  for (let i = 0; i < 9; i++) await apply({ name: `A${i}`, message: 'hi' });
-  const tooMany = await apply({ name: 'Late', message: 'hi' });
+  for (let i = 0; i < 9; i++) await apply({ name: `A${i}`, email: `a${i}@example.com`, message: 'hi' });
+  const tooMany = await apply({ name: 'Late', email: 'late@example.com', message: 'hi' });
   expect('E12 11th apply -> 429', tooMany.status, 429);
   // Lookup limit is separate and already 1 used (E9); burn it from the same IP.
   for (let i = 0; i < 10; i++) await fetch(B0 + '/api/creators/lookup?code=SPARK', { headers: limitIp });
@@ -316,7 +316,18 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   // Other IPs are untouched: the limit is per IP, not global.
   expect('E12 other IPs still fine', (await fetch(B0 + '/api/creators/lookup?code=SPARK', { headers: { 'X-Forwarded-For': '10.13.98.98' } })).status, 200);
   // An over-long message is capped, not rejected.
-  await asUser('creafter2', 'POST', '/api/creators/apply', { name: 'Capper', message: 'x'.repeat(2000) });
+  await asUser('creafter2', 'POST', '/api/creators/apply', { name: 'Capper', email: 'capper@example.com', message: 'x'.repeat(2000) });
+  // E12b (CREATORS-T23): the contact email is required and validated (own IP: 400s still count).
+  const emailIp = { 'X-Forwarded-For': '10.13.97.97' };
+  const applyE = (email) => call('creapply', 'POST', '/api/creators/apply', { name: 'Eve Mail', platform: 'YouTube', message: 'hi', ...(email === undefined ? {} : { email }) }, emailIp);
+  const noEmail = await applyE(undefined);
+  expect('E12b missing email -> 400', noEmail.status, 400);
+  expect('E12b missing email message', /email/i.test(noEmail.data.error || ''), true);
+  expect('E12b blank email -> 400', (await applyE('   ')).status, 400);
+  expect('E12b bad email -> 400', (await applyE('not-an-email')).status, 400);
+  expect('E12b email without a TLD -> 400', (await applyE('eve@localhost')).status, 400);
+  expect('E12b over-long email -> 400', (await applyE(`${'e'.repeat(250)}@example.com`)).status, 400);
+  expect('E12b valid email -> 200', (await applyE('  Eve.Mail@Example.COM ')).status, 200);
   expect('E12 message capped at 500', true, true);
 
   // ------------------------------------------------------------------
@@ -471,7 +482,7 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   const emailsBefore = () => sentEmails.length;
 
   // Perms first: developer gets 403 on both routes, customer 403, signed-out 401.
-  const applyBody = { name: 'Nina Nights', handle: '@ninaplays', platform: 'Twitch', message: 'Variety streams, 4k average viewers, happy to feature Tree Host on stream.' };
+  const applyBody = { name: 'Nina Nights', email: ' Nina@Example.com ', handle: '@ninaplays', platform: 'Twitch', message: 'Variety streams, 4k average viewers, happy to feature Tree Host on stream.' };
   expect('E19 owner lists applications -> 200', (await asOwner('GET', '/api/admin/creators/applications')).status, 200);
   expect('E19 developer lists applications -> 403', (await call('credev', 'GET', '/api/admin/creators/applications')).status, 403);
   expect('E19 developer reviews -> 403', (await call('credev', 'POST', '/api/admin/creators/applications/app_x/review', { accept: true })).status, 403);
@@ -484,6 +495,8 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   expect('E19 apply landed pending', apps1.pending.length >= 1, true);
   const app1 = apps1.pending.find((a) => a.handle === '@ninaplays');
   expect('E19 application has an id', /^app_/.test(app1.id), true);
+  expect('E19 contact email stored trimmed + lowercased and listed', app1.email, 'nina@example.com');
+  expect('E19b valid email listed for the E12b applicant', apps1.pending.some((a) => a.name === 'Eve Mail' && a.email === 'eve.mail@example.com'), true);
   expect('E19 suggested code from the handle', app1.suggestedCode, 'NINAPLAYS');
   expect('E19 no decision yet', app1.reviewed, false);
   expect('E19 unknown application -> 404', (await asOwner('POST', '/api/admin/creators/applications/app_nope/review', { accept: true })).status, 404);
@@ -492,7 +505,7 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   expect('E19 still pending after the failures', (await asOwner('GET', '/api/admin/creators/applications')).data.pending.some((a) => a.id === app1.id), true);
 
   // --- E20: deny with a reason -> email attempted (no account), no creator created ---
-  await call('creapply2', 'POST', '/api/creators/apply', { name: 'Ollie Small', handle: '@olliesmall', platform: 'YouTube', message: 'Tiny channel but growing fast.' }, sendAs('creapply2'));
+  await call('creapply2', 'POST', '/api/creators/apply', { name: 'Ollie Small', email: 'ollie@example.com', handle: '@olliesmall', platform: 'YouTube', message: 'Tiny channel but growing fast.' }, sendAs('creapply2'));
   const app2 = (await asOwner('GET', '/api/admin/creators/applications')).data.pending.find((a) => a.handle === '@olliesmall');
   const mailBefore20 = emailsBefore();
   const deny = await asOwner('POST', `/api/admin/creators/applications/${app2.id}/review`, { accept: false, reason: 'We look for channels with a bigger audience right now.', email: 'creapply2@example.com' });
@@ -538,19 +551,20 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   expect('E19 accept audit line', (await asOwner('GET', '/api/admin/audit')).data.some((a) => a.text.includes(`accepted creator application ${app1b.id}`) && a.text.includes('NINAPLAYS') && a.text.includes('attached crehasacct')), true);
   expect('E19 no second creator from the deny', (await creatorRow('OLLIESMALL')), null);
 
-  // --- accept WITHOUT any notification target: skipped, recorded ---
-  await call('creapply3', 'POST', '/api/creators/apply', { name: 'Pat Quiet', handle: '@patquiet', platform: 'Kick', message: 'Small streamer, big plans.' }, sendAs('creapply3'));
+  // --- accept with no account/staff email: defaults to the application's contact email ---
+  await call('creapply3', 'POST', '/api/creators/apply', { name: 'Pat Quiet', email: 'pat@example.com', handle: '@patquiet', platform: 'Kick', message: 'Small streamer, big plans.' }, sendAs('creapply3'));
   const app3 = (await asOwner('GET', '/api/admin/creators/applications')).data.pending.find((a) => a.handle === '@patquiet');
   const mailBefore3 = emailsBefore();
   const acc3 = await asOwner('POST', `/api/admin/creators/applications/${app3.id}/review`, { accept: true });
-  expect('E19 accept without account/email -> 200', acc3.status, 200);
+  expect('E19 accept without account/staff email -> 200', acc3.status, 200);
   expect('E19 creator still created', acc3.data.creator.code, 'PATQUIET');
-  expect('E19 no email target -> skipped', acc3.data.notified.email, false);
-  expect('E19 skip noted in the audit line', (await asOwner('GET', '/api/admin/audit')).data.some((a) => a.text.includes('PATQUIET') && a.text.includes('no address to notify')), true);
-  expect('E19 no email sent for the quiet accept', sentEmails.length, mailBefore3);
+  expect('E19 application email notified', acc3.data.notified.email, true);
+  expect('E19 welcome sent to the application email', sentEmails.slice(mailBefore3).some((m) => m.to === 'pat@example.com' && m.text.includes('/PATQUIET')), true);
+  expect('E19 notified noted in the audit line', (await asOwner('GET', '/api/admin/audit')).data.some((a) => a.text.includes('PATQUIET') && a.text.includes('notified by email')), true);
+  expect('E19 reviewed row keeps the email', (await asOwner('GET', '/api/admin/creators/applications')).data.reviewed.some((a) => a.id === app3.id && a.email === 'pat@example.com' && a.notifiedEmail), true);
 
   // --- accept with a manual email, no account (the no-account acceptance email) ---
-  await call('creapply4', 'POST', '/api/creators/apply', { name: 'Mona Mail', handle: '@monamail', platform: 'YouTube', message: 'Tutorial channel, 20k subs.' }, sendAs('creapply4'));
+  await call('creapply4', 'POST', '/api/creators/apply', { name: 'Mona Mail', email: 'mona.app@example.com', handle: '@monamail', platform: 'YouTube', message: 'Tutorial channel, 20k subs.' }, sendAs('creapply4'));
   const app4 = (await asOwner('GET', '/api/admin/creators/applications')).data.pending.find((a) => a.handle === '@monamail');
   const acc4 = await asOwner('POST', `/api/admin/creators/applications/${app4.id}/review`, { accept: true, email: 'mona@example.com' });
   expect('E19 accept with a manual email -> 200', acc4.status, 200);
@@ -559,4 +573,14 @@ module.exports = async function run({ call, expect, signup, login, me, consent, 
   expect('E19 email sent to the manual address', acc4.data.notified.email, true);
   const mona = emailsTo('mona@example.com')[emailsTo('mona@example.com').length - 1];
   expect('E19 manual-email welcome carries the link', mona.text.includes('/MONAMAIL'), true);
+  expect('E19 staff-typed email wins over the application email', emailsTo('mona.app@example.com').length, 0);
+
+  // --- E20b: deny with no staff email -> decline goes to the application's contact email ---
+  await call('creapply5', 'POST', '/api/creators/apply', { name: 'Dee Nied', email: 'dee@example.com', handle: '@deenied', platform: 'TikTok', message: 'Short clips.' }, sendAs('creapply5'));
+  const app5 = (await asOwner('GET', '/api/admin/creators/applications')).data.pending.find((a) => a.handle === '@deenied');
+  const deny5 = await asOwner('POST', `/api/admin/creators/applications/${app5.id}/review`, { accept: false, reason: 'Not a fit yet.' });
+  expect('E20b deny -> 200', deny5.status, 200);
+  expect('E20b decline emailed', deny5.data.notified.email, true);
+  const dee = emailsTo('dee@example.com')[emailsTo('dee@example.com').length - 1];
+  expect('E20b decline sent to the application email', !!dee && dee.text.includes('Not a fit yet'), true);
 };

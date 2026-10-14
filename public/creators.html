@@ -197,6 +197,8 @@
             <label class="d-field"><span>Channel handle</span>
               <input type="text" id="a-handle" maxlength="40" placeholder="@yourchannel" autocomplete="off"></label>
           </div>
+          <label class="d-field" style="margin-top:14px"><span>Email <span class="muted">(so we can get back to you)</span></span>
+            <input type="email" id="a-email" maxlength="254" placeholder="you@example.com" autocomplete="email" required></label>
           <label class="d-field" style="margin-top:14px"><span>Where do you post?</span>
             <select id="a-platform" required>
               <option value="">Choose a platform…</option>
@@ -245,11 +247,19 @@
     const msg = $('#a-message'), count = $('#a-count');
     const left = () => { const n = 500 - msg.value.length; count.textContent = `${n} character${n === 1 ? '' : 's'} left`; count.classList.toggle('over', n < 0); };
     msg.addEventListener('input', left); left();
+    // Signed in with an email on the account? Prefill it (still editable).
+    const aEmail = $('#a-email');
+    const prefillEmail = () => fetch('/api/auth/me').then((r) => r.json()).then((me) => {
+      if (me && me.user && me.user.email && !aEmail.value) aEmail.value = me.user.email;
+    }).catch(() => {});
+    prefillEmail();
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       aErr.hidden = true; aOk.hidden = true;
-      const body = { name: $('#a-name').value.trim(), handle: $('#a-handle').value.trim(), platform: $('#a-platform').value, message: msg.value.trim() };
+      const body = { name: $('#a-name').value.trim(), email: aEmail.value.trim(), handle: $('#a-handle').value.trim(), platform: $('#a-platform').value, message: msg.value.trim() };
       if (!body.name) return show(aErr, 'Enter your name.');
+      if (!body.email) return show(aErr, 'Enter your email address so we can get back to you.');
+      if (body.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(body.email)) return show(aErr, 'That email address does not look right.');
       if (!body.platform) return show(aErr, 'Choose where you post.');
       if (body.message.length > 500) return show(aErr, 'Keep the message under 500 characters.');
       aGo.disabled = true; aGo.textContent = 'Sending…';
@@ -258,7 +268,7 @@
         const d = await r.json().catch(() => ({}));
         if (r.status === 429) show(aErr, 'Too many applications from your network right now — try again in a little while.');
         else if (!r.ok) show(aErr, d.error || 'Something went wrong. Try again, or email the team.');
-        else { aOk.hidden = false; aOk.innerHTML = '<b>Application sent — thank you!</b> We review every application by hand, usually within a couple of days. We\'ll get back to you by email.'; form.reset(); left(); }
+        else { aOk.hidden = false; aOk.innerHTML = '<b>Application sent — thank you!</b> We review every application by hand, usually within a couple of days. We\'ll get back to you by email.'; form.reset(); left(); prefillEmail(); }
       } catch { show(aErr, 'Could not reach the server. Check your connection and try again.'); }
       aGo.disabled = false; aGo.textContent = 'Send application';
     });
