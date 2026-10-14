@@ -92,9 +92,13 @@ class Rbac {
     // Permissions added after the roles were saved get their default setting (saved roles list what they knew).
     const known = new Set(saved._known ? Object.values(saved._known) : FIRST_PERMISSIONS);
     let added = false;
+    // The Realtime Database drops empty arrays (and then the empty object around them): a role
+    // saved with every permission removed loads back as missing. Roles listed in _roles were
+    // saved, so a missing entry there means "no permissions" — not "use the defaults".
+    const savedIds = new Set(saved._roles ? Object.values(saved._roles) : []);
     for (const r of this.roles) {
-      const s = saved[r.id];
-      if (!s || r.locked || !s.permissions) continue;
+      const s = r.locked ? null : saved[r.id] && saved[r.id].permissions ? saved[r.id] : savedIds.has(r.id) ? { permissions: [] } : null;
+      if (!s) continue;
       const def = DEFAULT_ROLES.find((d) => d.id === r.id).permissions || [];
       const fresh = def.filter((p) => !known.has(p));
       r.permissions = [...new Set([...Object.values(s.permissions).filter((p) => PERMISSION_IDS.has(p)), ...fresh])];
@@ -113,7 +117,7 @@ class Rbac {
   }
 
   save() {
-    const out = { _known: [...PERMISSION_IDS], _rev: Math.max(...Object.keys(REVOKED).map(Number)) };
+    const out = { _known: [...PERMISSION_IDS], _rev: Math.max(...Object.keys(REVOKED).map(Number)), _roles: this.roles.filter((r) => !r.locked).map((r) => r.id) };
     for (const r of this.roles) if (!r.locked) out[r.id] = { permissions: r.permissions };
     return store.save('roles', out);
   }
