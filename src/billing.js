@@ -882,7 +882,12 @@ class Billing {
 
   /** Other hosts' regular monthly prices for the "compare your plan" chart. Staff keep them current in the Staff Console. */
   competitors() {
-    return this.settings.competitors || { checkedAt: DEFAULT_COMPETITORS_CHECKED, hosts: DEFAULT_COMPETITORS };
+    const c = this.settings.competitors;
+    if (!c) return { checkedAt: DEFAULT_COMPETITORS_CHECKED, hosts: DEFAULT_COMPETITORS };
+    // The Realtime Database drops empty objects/arrays: a flat-price host (Realms) saved with prices: {}
+    // loads back without prices, and the Why page's h.prices[ramMb] then threw — leaving the
+    // "How we compare" box empty. A saved list emptied by staff loses hosts entirely.
+    return { ...c, hosts: Object.values(c.hosts || {}).map((h) => ({ ...h, prices: h.prices || {} })) };
   }
 
   async setCompetitors({ hosts, checkedAt }) {
