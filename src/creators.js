@@ -68,6 +68,17 @@ class Creators {
     this.creators = Object.values(d.creators || {});
     this.ledger = Object.values(d.ledger || {});
     this.applications = Object.values(d.applications || {});
+    // Applications created before ids existed (early T19 data) have no id — the review
+    // buttons then carry "undefined" and every click says "no longer in the list" while
+    // the row is right there. Backfill once and persist.
+    let idsAdded = 0;
+    for (const a of this.applications) {
+      if (!a.id) { a.id = newId('app'); idsAdded++; }
+    }
+    if (idsAdded) {
+      console.log(`  Migrated ${idsAdded} creator application${idsAdded === 1 ? '' : 's'} to ids.`);
+      await this.save();
+    }
     this.settings = { ...this.settings, ...(d.settings || {}) };
     for (const c of this.creators) this.normalize(c);
     this.reconcile();
