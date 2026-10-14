@@ -4509,6 +4509,12 @@ const server = http.createServer(async (req, res) => {
       const result = await r.handler(req, res, params, url.searchParams);
       if (result !== HANDLED) sendJson(res, 200, result === undefined ? { ok: true } : result);
     } catch (e) {
+      // A TypeError/ReferenceError is a bug in Tree Host, not a bad request (e.g. a record loaded from the
+      // Realtime Database without an empty array): log it with the route and answer 500, not a puzzling 400.
+      if ((e instanceof TypeError || e instanceof ReferenceError) && !e.status) {
+        console.error(`[Tree Host] ${req.method} ${url.pathname} crashed: ${e.stack || e.message}`);
+        e.status = 500;
+      }
       if (!res.headersSent) sendJson(res, e.status || 400, { error: publicMessage(e, req.user), code: e.code, ...(e.methods ? { methods: e.methods } : {}) });
     }
     return;
