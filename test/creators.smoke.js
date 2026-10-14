@@ -225,7 +225,8 @@ step('C-APPLY + rate limits', async () => {
   assert.equal(notices.length, 1);
   assert.equal(notices[0].section, 'people');
   assert.equal(emailed, 1);
-  await assert.rejects(() => m.apply({ name: 'B', email: 'b@example.com' }, '1.2.3.4'), (e) => e.status === 400); // no message
+  await m.apply({ name: 'B', email: 'b@example.com' }, '1.2.3.4'); // message is optional
+  assert.equal(m.applications.at(-1).message, '');
   // rate limit: APPLY_MAX per window
   for (let i = 0; i < 10; i++) await m.apply({ name: 'X', email: 'x@example.com', message: 'hi' }, '5.6.7.8');
   await assert.rejects(() => m.apply({ name: 'X', email: 'x@example.com', message: 'hi' }, '5.6.7.8'), (e) => e.status === 429);

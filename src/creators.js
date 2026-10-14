@@ -583,7 +583,7 @@ class Creators {
     if (!mail) throw httpError(400, 'Enter your email address so we can get back to you.');
     if (mail.length > 254 || !APPLY_EMAIL_RE.test(mail)) throw httpError(400, 'That email address does not look right.');
     const msg = stripControls(message).trim().slice(0, 500);
-    if (!msg) throw httpError(400, 'Tell us a bit about your channel and audience.');
+    // The message is optional (the form says so); name + email are what staff need.
     const app = {
       id: newId('app'),
       at: Date.now(),
