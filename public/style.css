@@ -224,6 +224,7 @@ tr.disabled td:not(.actions-cell) { opacity: .5; }
 .welcome h1 { font-size: 26px; margin: 0 0 10px; }
 .welcome p { color: var(--muted); }
 .welcome ol { text-align: left; color: var(--muted); line-height: 1.8; }
+.welcome .row { flex-wrap: wrap; justify-content: center; }
 
 /* ---------- modal ---------- */
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: grid; place-items: center; z-index: 50; padding: 20px; }
@@ -305,6 +306,8 @@ details summary { cursor: pointer; font-weight: 600; }
   .main { overflow: visible; }
   .files, .grid2, .grid3 { grid-template-columns: 1fr; }
   .srv-header { padding: 14px 14px 0; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }  /* the server tabs scroll sideways, not the whole page */
+  .tab { flex: none; }
   .tab-body { padding: 14px; overflow: visible; }
   .tab-body.console-mode { min-height: 75vh; }
   .console-wrap { min-height: 55vh; }

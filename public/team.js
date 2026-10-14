@@ -1571,7 +1571,7 @@ async function adminPeople(body) {
       <select id="ppl-filter" style="max-width:180px"><option value="all">Everyone</option><option value="customers">Customers</option><option value="youtubers">YouTubers</option><option value="staff">Support & admins</option></select>
       <span class="muted small">${all.length} account${all.length === 1 ? '' : 's'}</span>
     </div>
-    <div id="ppl-list"></div>
+    <div id="ppl-list" style="overflow-x:auto"></div>
     ${
       canRoles && invitable.length
         ? `<div class="card stack" style="margin-top:14px" id="inv-card">
