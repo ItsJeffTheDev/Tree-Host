@@ -37,7 +37,7 @@ const { Creators } = require('./creators');
 const MOTD = require('./motd');
 const backups = require('./backups');
 const modrinth = require('./modrinth');
-const { Metrics } = require('./metrics');
+const { Metrics, refValue } = require('./metrics');
 
 const env = (name, fallback) => process.env[`TREEHOST_${name}`] ?? process.env[`MCPT_${name}`] ?? fallback;
 // Production: the public website address (e.g. https://treehost.online). Turns on accounts, billing and the landing page.
@@ -4359,8 +4359,11 @@ async function serveStatic(req, res, pathname) {
   pathname = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname;
   // Creator links: treehost.online/CHANCSMP (a bare path segment, no file extension) is a
   // creator code — redirect to /?ref=CODE so the page capture and analytics work as usual.
-  // Only for requests that would otherwise 404: real pages and files always win.
+  // Only for requests that would otherwise 404: real pages and files always win. Only real refs
+  // (an active creator code or a known channel) redirect: a typo like /login or /pricng gets the 404
+  // page instead of silently landing on the homepage with a junk ref.
   if (pathname.length > 1 && !path.extname(pathname) && !PAGES[pathname] && /^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$/.test(pathname.slice(1))
+      && !['other', null].includes(refValue(pathname.slice(1), { creatorCodes: creators.activeCodes() }))
       && !(await require('./util').exists(path.join(PUBLIC, `${pathname.slice(1)}.html`)))
       && !(await require('./util').exists(path.join(PUBLIC, pathname.slice(1))))) {
     res.writeHead(302, { Location: `/?ref=${encodeURIComponent(pathname.slice(1).toUpperCase())}` });
